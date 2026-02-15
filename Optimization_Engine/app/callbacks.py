@@ -12,6 +12,73 @@ from opt_engine.types import Constraints, SamplingConfig
 
 
 def register_callbacks(app: Dash) -> None:
+    help_style_base: dict[str, object] = {
+        "marginTop": "6px",
+        "marginBottom": "8px",
+        "padding": "8px",
+        "border": "1px solid #ddd",
+        "borderRadius": "6px",
+        "background": "#fafafa",
+        "fontSize": "12px",
+        "color": "#333",
+        "whiteSpace": "pre-wrap",
+    }
+
+    def _help_style(n_clicks: int | None) -> dict[str, object]:
+        is_open = (int(n_clicks or 0) % 2) == 1
+        return {**help_style_base, "display": "block" if is_open else "none"}
+
+    @callback(
+        Output("help_scenario", "style"),
+        Output("help_mode", "style"),
+        Output("help_lambda_manual", "style"),
+        Output("help_lambda_min", "style"),
+        Output("help_lambda_max", "style"),
+        Output("help_lambda_steps", "style"),
+        Output("help_v_max", "style"),
+        Output("help_a_fwd_max", "style"),
+        Output("help_a_brake_max", "style"),
+        Output("help_a_lat_max", "style"),
+        Output("help_samples_per_segment", "style"),
+        Input("info_scenario", "n_clicks"),
+        Input("info_mode", "n_clicks"),
+        Input("info_lambda_manual", "n_clicks"),
+        Input("info_lambda_min", "n_clicks"),
+        Input("info_lambda_max", "n_clicks"),
+        Input("info_lambda_steps", "n_clicks"),
+        Input("info_v_max", "n_clicks"),
+        Input("info_a_fwd_max", "n_clicks"),
+        Input("info_a_brake_max", "n_clicks"),
+        Input("info_a_lat_max", "n_clicks"),
+        Input("info_samples_per_segment", "n_clicks"),
+    )
+    def _toggle_help(
+        info_scenario: int | None,
+        info_mode: int | None,
+        info_lambda_manual: int | None,
+        info_lambda_min: int | None,
+        info_lambda_max: int | None,
+        info_lambda_steps: int | None,
+        info_v_max: int | None,
+        info_a_fwd_max: int | None,
+        info_a_brake_max: int | None,
+        info_a_lat_max: int | None,
+        info_samples_per_segment: int | None,
+    ):
+        return (
+            _help_style(info_scenario),
+            _help_style(info_mode),
+            _help_style(info_lambda_manual),
+            _help_style(info_lambda_min),
+            _help_style(info_lambda_max),
+            _help_style(info_lambda_steps),
+            _help_style(info_v_max),
+            _help_style(info_a_fwd_max),
+            _help_style(info_a_brake_max),
+            _help_style(info_a_lat_max),
+            _help_style(info_samples_per_segment),
+        )
+
     @callback(
         Output("fig_3d", "figure"),
         Output("fig_speed", "figure"),
@@ -89,4 +156,3 @@ def register_callbacks(app: Dash) -> None:
 
             empty = go.Figure()
             return empty, empty, empty, f"ERROR: {e}"
-
