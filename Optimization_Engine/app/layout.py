@@ -155,6 +155,64 @@ def build_layout(*, scenario_options: list[dict[str, str]]) -> html.Div:
                             ),
                             dcc.Slider(id="a_lat_max", min=0.1, max=30.0, step=0.1, value=4.0, **slider_common),
                             html.Hr(),
+                            html.H4("Optional constraints", style={"margin": "8px 0 0 0"}),
+                            *_label_with_info(
+                                label="Hard turn limit",
+                                info_id="info_use_r_min",
+                                help_id="help_use_r_min",
+                                help_text="Hard turn limit: If enabled, the path is infeasible if curvature κ(s) exceeds κ_max anywhere (equivalently turning radius r(s)=1/κ(s) drops below r_min).",
+                            ),
+                            dcc.Checklist(
+                                id="use_r_min",
+                                options=[{"label": "Enabled", "value": "on"}],
+                                value=[],
+                            ),
+                            *_label_with_info(
+                                label="r_min (m)",
+                                info_id="info_r_min_m",
+                                help_id="help_r_min_m",
+                                help_text="r_min: Minimum turning radius (meters). Enables κ_max = 1/r_min feasibility check when Hard turn limit is enabled.",
+                            ),
+                            dcc.Slider(id="r_min_m", min=0.5, max=200.0, step=0.5, value=10.0, **slider_common),
+                            *_label_with_info(
+                                label="Tilt coupling (θ_max → a_lat_max)",
+                                info_id="info_use_theta_max",
+                                help_id="help_use_theta_max",
+                                help_text="Tilt coupling: If enabled, derive a_lat_max from θ_max via a_lat_max = g*tan(θ_max) instead of using the a_lat_max slider.",
+                            ),
+                            dcc.Checklist(
+                                id="use_theta_max",
+                                options=[{"label": "Enabled", "value": "on"}],
+                                value=[],
+                            ),
+                            *_label_with_info(
+                                label="θ_max (deg)",
+                                info_id="info_theta_max_deg",
+                                help_id="help_theta_max_deg",
+                                help_text="θ_max: Maximum tilt angle (degrees). When enabled, sets lateral acceleration limit to a_lat_max = 9.81*tan(θ_max).",
+                            ),
+                            dcc.Slider(id="theta_max_deg", min=1.0, max=89.0, step=0.5, value=35.0, **slider_common),
+                            *_label_with_info(
+                                label="Heading constrained (yaw-rate cap)",
+                                info_id="info_heading_constrained",
+                                help_id="help_heading_constrained",
+                                help_text="Heading constrained: If enabled, add a yaw-rate cap assuming yaw follows direction of travel in XY: v(s) ≤ ψ̇_max / |dψ/ds|.",
+                            ),
+                            dcc.Checklist(
+                                id="heading_constrained",
+                                options=[{"label": "Enabled", "value": "on"}],
+                                value=[],
+                            ),
+                            *_label_with_info(
+                                label="ψ̇_max (deg/s)",
+                                info_id="info_yaw_rate_max_dps",
+                                help_id="help_yaw_rate_max_dps",
+                                help_text="ψ̇_max: Maximum yaw rate (degrees per second). When Heading constrained is enabled, this becomes a speed cap via v ≤ ψ̇_max/|dψ/ds|.",
+                            ),
+                            dcc.Slider(
+                                id="yaw_rate_max_dps", min=1.0, max=720.0, step=1.0, value=120.0, **slider_common
+                            ),
+                            html.Hr(),
                             *_label_with_info(
                                 label="samples_per_segment",
                                 info_id="info_samples_per_segment",

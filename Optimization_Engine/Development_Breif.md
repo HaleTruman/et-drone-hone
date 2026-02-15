@@ -1,351 +1,167 @@
-# Optimization Engine Development Brief (Waypoint + Kinematic Constraints)
+# Optimization Engine — Remaining Development Brief
 
-## What we’re building
+This document tracks **only the remaining work** for the Optimization Engine MVP, now that the initial scaffold (curve + speed-profile + λ search + Dash UI) exists.
 
-We’re building a small, self-contained “optimization engine” inside an existing repo that takes a set of 3D waypoints (dots the drone must pass through) plus a small set of kinematic/vehicle limits, then computes and visualizes the **fastest feasible** trajectory family. The key output is not only a geometric curve in space, but also the **speed profile** along that curve (because once constraints exist, the time-optimal solution depends on both geometry and timing). The tool must be interactive: changing constraints (sliders) should update the path and show how “optimal” shifts.
+## Locked decisions (do not change)
 
-This should live in a subfolder so it can evolve independently of Unreal work. It should be runnable locally from VS Code with one command and render an interactive 3D visualization in a browser.
+- Waypoints are **exactly interpolated** (the path must pass through every waypoint, in order).
+- Start/end speed are **free** (no enforced \(v(0)=0\) or \(v(L)=0\)).
+- Input waypoints are **Unreal coordinates in cm** by default; internal computation uses **meters** after conversion.
+- Full **XYZ** is used (not a 2D-only model).
 
-## Core concept in math terms
+## Remaining MVP items (priority order)
 
-We treat the route as a curve \(r(s)\) in 3D parameterized by arc length \(s\), with a speed profile \(v(s)\). Waypoints are constraints like \(r(s_i) \approx P_i\) (or exactly equal for the initial version). From the curve we compute curvature \(\kappa(s)\) numerically. A minimal physical model gives a speed limit from turning capability:
-\[
-v(s) \le \min\left(v_{\max}, \sqrt{\frac{a_{\text{lat,max}}}{|\kappa(s)| + \epsilon}}\right)
-\]
-Then we apply forward acceleration and braking limits to produce a feasible \(v(s)\) (forward/backward pass). Total traversal time is:
-\[
-T = \int_0^L \frac{1}{v(s)}\,ds
-\]
-We then choose a curve family (with a “smooth ↔ angular” dial parameter) and search for parameters that minimize \(T\) under constraints.
+### 1) Unreal coordinate parity (beyond cm→m)
 
-## Inputs, outputs, and constraints
+Current state: `coords_unreal.py` only handles unit scaling (cm→m); axes/handedness are treated as identity.
 
-### Inputs
-Waypoints are a list of 3D points in world coordinates. We assume a fixed visit order for MVP. Vehicle constraints below are user-adjustable (defaults provided).
+Remaining:
+- Confirm the exact Unreal→Plotly/internal axis mapping desired (if any), and implement it in one place.
+- Add a small test that validates the mapping and scaling.
+- Document the chosen convention in `README.md` and scenario schema comments.
 
-| Symbol | Meaning | Notes for MVP |
-|---|---|---|
-| \(v_{\max}\) | maximum speed cap | global speed upper bound |
-| \(a_{\text{fwd,max}}\) | maximum forward (longitudinal) acceleration | limits ramp-up of speed |
-| \(a_{\text{brake,max}}\) | maximum braking (longitudinal deceleration) | limits slow-down approaching turns |
-| \(a_{\text{lat,max}}\) | maximum lateral acceleration (turning capability) | ties speed to curvature |
-| \(\kappa_{\max}\) / \(r_{\min}\) | maximum curvature / minimum turning radius | optional hard geometry constraint (may be derived) |
-| \(\theta_{\max}\) | maximum tilt angle | usually couples to \(a_{\text{lat,max}}\) if gravity is modeled |
-| \(\dot\psi_{\max}\) | maximum yaw rate | only matters if heading must follow motion direction |
+### 2) “Constraint binding” detection + visualization
 
-### Outputs
-The engine must produce (1) a sampled 3D curve, (2) a speed profile over samples, (3) traversal time \(T\), (4) diagnostic curves like curvature \(\kappa(s)\), implied lateral acceleration \(a_{\text{lat}}(s)\), implied yaw rate \(\dot\psi(s)\), and whether/where constraints are active.
+Goal: the UI should clearly show **which constraint is binding and where** along the path.
 
-## Important modeling choices (avoid conceptual traps)
+Remaining:
+- Add per-sample flags for:
+  - `binding_vmax`
+  - `binding_curvature` (lateral accel cap)
+  - `binding_accel` (forward pass active)
+  - `binding_brake` (backward pass active)
+- Add a visualization:
+  - either a discrete “active constraint vs s” plot, or
+  - color-coded path segments / markers.
+- Update summary text to report **where** (approx indices / s positions) the constraints bind most strongly.
 
-Tilt angle, lateral acceleration, and gravity are coupled in real flight. If gravity is modeled, a common relationship is \(a_{\text{lat}} \approx g\tan(\theta)\), so \(\theta_{\max}\) implies a max lateral acceleration. For a “vacuum-like” kinematic MVP, we can treat \(a_{\text{lat,max}}\) as primary and use \(\theta_{\max}\) as an optional consistency check (or allow a user toggle: “derive \(a_{\text{lat,max}}\) from \(\theta_{\max}\) using \(g\)”).
+### 3) Diagnostics plots (human-friendly)
 
-Yaw rate matters only if we require the vehicle’s yaw (heading) to align with the direction of travel. The MVP should include a boolean: “heading-constrained.” If off, we ignore yaw rate. If on, we compute heading from the tangent direction in the XY plane: \(\psi(s)=\mathrm{atan2}(t_y,t_x)\) and approximate \(\dot\psi \approx \frac{d\psi}{dt} = \frac{d\psi}{ds}\,v(s)\).
+Remaining:
+- Add plot(s) for:
+  - implied lateral acceleration: \(a_{lat}(s) = v(s)^2 \kappa(s)\)
+  - implied longitudinal acceleration (from \(v^2\) differences over \(\Delta s\))
+- (Optional but recommended) plot “speed caps”:
+  - `v_kappa(s)` and `v_cap(s)` overlaid with `v(s)` for explainability.
 
-## Approach for MVP
+### 4) Optional constraints (described in brief, not implemented)
 
-### Curve family (the “dial”)
-Implement one simple curve family with a single smoothness dial \(\lambda\) so the user can slide between angular-ish and fluid. MVP recommendation: build a spline through waypoints and scale tangents by \(\lambda\).
+These should be implemented as toggles (defaults off) so the base MVP remains simple.
 
-A workable choice is a cubic Hermite spline (or Catmull–Rom converted to Hermite). Compute nominal tangents from waypoint neighbors, then scale:
-\[
-m_i(\lambda) = \lambda \cdot m_i^{\text{base}}
-\]
-Small \(\lambda\) produces tighter, more corner-like behavior; larger \(\lambda\) produces broader, smoother arcs. This gives the user a direct “fluid ↔ angular” dial without solving a heavy global optimizer.
+Spec (Name: Description : math term : function in calculation):
+- `kappa_max / r_min`: Hard geometric turning limit (path infeasible if too “tight”) : `κ(s) ≤ κ_max` (equiv. `r(s)=1/κ(s) ≥ r_min`) : feasibility check (reject/penalize λ) + highlight violations along the sampled path.
+- `theta_max → a_lat_max` coupling: Use max tilt angle to derive lateral acceleration capability : `a_lat_max = g * tan(θ_max)` : sets/overrides `a_lat_max`, which then drives curvature speed cap `v_kappa(s) = √(a_lat_max/(|κ(s)|+ε))`.
+- `heading_constrained / yaw_rate_max`: Enforce yaw follows direction of travel and yaw-rate is limited : `ψ(s)=atan2(t_y,t_x)`, `ψ̇(s)≈(dψ/ds)*v(s)`, require `|ψ̇|≤ψ̇_max` ⇒ `v(s)≤ψ̇_max/|dψ/ds|` : adds an additional pointwise speed cap (min with existing caps) and/or a feasibility flag where violated.
 
-### Feasible speed profile along a curve
-Once a curve is sampled into points \(r_k\) with cumulative arc lengths \(s_k\), compute curvature \(\kappa_k\) numerically (finite differences on the tangent direction). Compute curvature-limited speed \(v^{\kappa}_k\). Then enforce longitudinal acceleration constraints using a standard forward/backward pass:
+Implementation requirements:
+- Provide UI toggles and show derived quantities (e.g., derived `a_lat_max` when `theta_max` coupling is enabled).
+- Use explicit units: `κ` in `1/m`, `r_min` in `m`, `θ_max` in `deg` (convert to rad), `ψ̇_max` in `rad/s`.
+- Default all optional constraints to **off**, preserving baseline behavior.
 
-Forward pass (accel):
-\[
-v_{k+1} \le \sqrt{v_k^2 + 2 a_{\text{fwd,max}} \Delta s_k}
-\]
+## End-to-end integration plan (careful + accurate)
 
-Backward pass (braking):
-\[
-v_{k} \le \sqrt{v_{k+1}^2 + 2 a_{\text{brake,max}} \Delta s_k}
-\]
+This section describes how to introduce the optional constraints into the codebase without breaking existing behavior, and how to expose them in the UI with clear diagnostics.
 
-Finally clamp by \(v_{\max}\) and curvature-based limits. Then compute total time by summing \(\Delta t_k = \Delta s_k / v_k\).
+### Step A — Data model and toggles
 
-### “Optimization”
-For MVP, do not introduce a full nonlinear optimizer. Use a small parameter search over \(\lambda\) (and optionally a turn-radius clamp) and select the best feasible solution. This is robust, explainable, and easy to visualize.
+1) Extend `Constraints` (and/or add a new `OptionalConstraints` struct) with:
+- `kappa_max_1pm: float | None` and/or `r_min_m: float | None`
+- `use_theta_max: bool`, `theta_max_deg: float`, `g_mps2: float = 9.81`
+- `heading_constrained: bool`, `yaw_rate_max_rps: float`
+- (Optional) `curvature_mode: "3d" | "xy"` (default to `"3d"` unless we later decide yaw should drive `"xy"` curvature)
 
-## Visualization requirement (open source)
+2) Add validation helpers:
+- enforce positive numeric ranges, sensible theta range (e.g. `0 < θ_max < 89°`)
+- forbid simultaneous contradictory settings (e.g. both `kappa_max_1pm` and `r_min_m` if we choose one canonical input)
 
-Use a lightweight open-source stack that runs locally and renders interactive 3D. Recommended: Python + Plotly + Dash (MIT-licensed) so we can have sliders for constraints and immediate re-render of the curve, waypoints, and diagnostics. The UI should show the path in 3D with waypoints as markers, plus secondary plots for speed vs arc length and curvature vs arc length, and a single number for total time.
+### Step B — Geometry signals needed for the new constraints
 
-## Repo layout (subfolder)
+Add (and unit-test) geometry helpers to compute:
 
-Create a subfolder at repo root, for example:
+1) **3D curvature** `κ(s)` (already present) and optionally **XY-only curvature** if `curvature_mode="xy"` is introduced.
 
-`optimization_engine/`
-- `README.md` (how to run, what it does)
-- `pyproject.toml` (or `requirements.txt`) for dependencies
-- `src/opt_engine/` (core computation)
-- `app/` (Dash app entrypoint)
-- `data/` (example waypoint scenarios in JSON)
-- `tests/` (small unit tests for curvature + speed-profile pass)
-- `artifacts/` (optional output exports: sampled curve JSON/CSV)
+2) **Heading** and **heading derivative** along arc length:
+- compute tangent in XY plane: `t_xy = (t_x, t_y)`
+- compute heading `ψ(s)=atan2(t_y, t_x)` where `||t_xy|| > eps`
+- unwrap `ψ` (to avoid `π ↔ -π` discontinuity spikes)
+- compute `dψ/ds` via central differences on unwrapped `ψ` vs `s`
 
-The module boundaries should be clean: path generation (spline + sampling), curvature + diagnostics, speed-profile solver, feasibility checks, and visualization app.
+Numerical edge cases to handle explicitly:
+- near-vertical segments where `||t_xy||` is ~0 (heading undefined): carry forward last valid `ψ` or mark as undefined and treat yaw cap as `∞` there.
+- ensure `s` is strictly increasing (guard tiny `Δs` with eps).
 
-## MVP acceptance criteria
+### Step C — Integrate into the speed cap pipeline
 
-When the user provides 5–50 waypoints, the tool should render a 3D path through them and compute a time. Adjusting any of the core constraints should visibly change the chosen path parameters (at least \(\lambda\) and the speed profile) and update the time and diagnostic plots immediately. The tool should clearly show which constraint is “binding” (e.g., curvature-limited here, braking-limited there). The entire system should run with a single command from the repo (documented), and it should be easy to extend later into a more realistic dynamic model if needed.
+1) **θ coupling**:
+- if `use_theta_max`, compute `a_lat_max = g*tan(θ_max)` and use it for curvature speed cap.
+- show the derived `a_lat_max` in diagnostics/UI so it’s obvious what value is in effect.
 
-## Future extensions (explicitly not required for MVP)
+2) **yaw-rate speed cap** (only when `heading_constrained=True`):
+- compute `v_yaw(s) = ψ̇_max / max(|dψ/ds|, eps)`
+- update the pointwise cap: `v_cap(s) = min(v_max, v_kappa(s), v_yaw(s))`
 
-After MVP, we can add (1) soft waypoint regions instead of exact points, (2) obstacle avoidance, (3) full dynamic model with thrust/torque bounds, (4) global objective function minimization such as curvature-energy \(\int \kappa^2 ds\), and (5) export into Unreal as a SplineComponent-friendly format.
+3) **hard curvature feasibility**:
+- if `kappa_max_1pm` (or derived from `r_min_m`) is enabled:
+  - compute violations `|κ(s)| > κ_max`
+  - treat the curve as **infeasible** for optimization selection (time = `∞` / reject λ)
+  - still visualize the curve and highlight violations so the user understands why it was rejected
 
----
-
-# Detailed implementation brief (MVP)
-
-## Confirmed decisions (locked for MVP)
-
-- **Waypoint interpolation is exact**: the generated curve must pass through every waypoint, in order.
-- **Start/end speed are free**: there is no constraint like \(v(0)=0\) or \(v(L)=0\); the solver should maximize feasible speed subject to caps and accel/brake limits.
-- **UI responsiveness is not a constraint**: correctness/clarity over speed.
-
-## Scope and non-goals
-
-### In scope (MVP)
-
-- Ordered 3D waypoints \(\{P_i\}\) and a curve family \(r_\lambda(s)\) that interpolates them.
-- Kinematic constraints: \(v_{\max}\), \(a_{\text{fwd,max}}\), \(a_{\text{brake,max}}\), \(a_{\text{lat,max}}\).
-- Curvature estimation \(\kappa(s)\) from sampled curve points.
-- Time-optimal feasible speed profile along a **fixed** curve using a forward/backward pass.
-- A simple parameter search over \(\lambda\) to select the fastest curve variant.
-- Local interactive UI (Dash + Plotly) to visualize waypoints, the chosen path, and diagnostics.
-- A clear coordinate/units adapter so Unreal Engine coordinates can be imported later without rewrites.
-
-### Explicitly out of scope (MVP)
-
-- Obstacle avoidance, no-fly zones, collision checks.
-- Full dynamics (thrust/torque, drag), closed-loop control, stochastic effects.
-- Global nonlinear optimization over all spline control variables.
-
-## Repository / package layout (inside `Optimization_Engine/`)
-
-```
-Optimization_Engine/
-  README.md
-  requirements.txt
-  Development_Breif.md
-  run_app.py
-  run_optimize.py
-  data/
-    scenarios/
-      *.json
-  src/
-    opt_engine/
-      __init__.py
-      types.py
-      scenario_io.py
-      coords_unreal.py
-      spline.py
-      geometry.py
-      speed_profile.py
-      optimize.py
-      diagnostics.py
-      plotting.py
-  app/
-    dash_app.py
-    layout.py
-    callbacks.py
-  tests/
-    test_spline.py
-    test_geometry.py
-    test_speed_profile.py
-  artifacts/
-```
+### Step D — Optimization selection semantics
 
-## Data model
+To keep behavior predictable:
+- In `optimize_lambda_grid`, filter infeasible candidates first (geometry/yaw feasibility if we choose yaw as feasibility rather than cap).
+- If all candidates are infeasible, return the “least bad” result with a clear `status="infeasible"` and include violation details in diagnostics.
 
-### Waypoints and scenarios
+### Step E — Visualizations and UI additions
 
-- A **scenario** is a named set of ordered 3D waypoints plus metadata.
-- We will store scenarios as JSON under `data/scenarios/`.
+Add UI controls (toggles + sliders) with info tooltips:
+- `Enable kappa_max / r_min` + a numeric field (prefer `r_min` in meters for humans, derive `kappa_max=1/r_min`)
+- `Enable theta_max coupling` + `theta_max_deg` slider; show derived `a_lat_max`
+- `Heading constrained` toggle + `yaw_rate_max` slider
 
-#### Scenario JSON schema (MVP)
+Add plots/overlays:
+- Overlay caps on speed plot: `v(s)`, `v_cap(s)`, `v_kappa(s)`, and `v_yaw(s)` when enabled.
+- Add a “constraint active” plot or legend that indicates which constraint is binding at each `s`.
+- Highlight `kappa_max` violations directly on the 3D path (e.g., red markers) and/or on a κ plot threshold line.
 
-```json
-{
-  "name": "simple_demo",
-  "frame": "internal|unreal",
-  "units": "m|cm",
-  "waypoints": [
-    {"x": 0.0, "y": 0.0, "z": 0.0},
-    {"x": 2.0, "y": 1.0, "z": 0.5}
-  ]
-}
-```
+### Step F — Artifacts and tests
 
-Rules:
-- `waypoints` length must be \(\ge 2\).
-- Consecutive duplicates are invalid for MVP (they create zero-length segments).
-- `frame="unreal"` indicates the coordinates are in Unreal’s world axes conventions; `coords_unreal.py` converts to internal.
+Artifacts:
+- Export `ψ(s)`, `dψ/ds`, `v_yaw(s)`, `a_lat(s)` and violation masks when relevant.
 
-### Constraints
+Tests:
+- θ coupling: verify `a_lat_max` equals `g*tan(θ)` within tolerance.
+- yaw unwrapping: construct a path whose heading crosses `±π` and ensure `dψ/ds` is stable.
+- kappa feasibility: create a tight turn and verify it is flagged infeasible when `κ_max` is small.
 
-Constraints are user-tunable, with sensible defaults:
+### 5) Artifact exports
 
-- `v_max` (m/s)
-- `a_fwd_max` (m/s^2) — limits how quickly speed can increase
-- `a_brake_max` (m/s^2) — limits how quickly speed can decrease (use a positive value; it will be applied as a decel magnitude)
-- `a_lat_max` (m/s^2) — curvature-based turning capability
-- `kappa_epsilon` (1/m) — numerical stabilizer in \(v^\kappa\)
+Remaining:
+- Extend `run_optimize.py` to optionally export:
+  - CSV of samples: `x,y,z,s,kappa,v,v_cap,v_kappa`
+  - Plotly HTML snapshot of the 3D plot (and/or diagnostics)
+- Keep artifacts under `Optimization_Engine/artifacts/` with predictable filenames.
 
-## Coordinate and units conventions
+### 6) Numerical robustness pass
 
-### Internal convention (recommended)
+Remaining:
+- Align curvature estimation with the arc-length/tangent finite-difference approach (or explicitly document the chosen estimator).
+- Improve stability on:
+  - near-collinear points,
+  - very small \(\Delta s\),
+  - large coordinate magnitudes (common with cm inputs).
 
-- Internal computation uses **meters**.
-- Internal axes are simply \((x,y,z)\) with no enforced handedness; Plotly will render whatever we provide.
+### 7) Tests expansion
 
-### Unreal import (adapter)
+Remaining:
+- Unit tests for:
+  - Unreal conversion (cm→m + axis remap once defined)
+  - binding detection logic
+  - yaw-rate constraint logic (if implemented)
+- Add a small regression test that ensures time decreases when increasing `a_lat_max` (all else equal) for a curved scenario.
 
-Unreal typically uses:
-- Units: **centimeters**
-- Axes: **X forward, Y right, Z up** (left-handed overall convention)
+## Open confirmations (needed before implementing some remaining items)
 
-For MVP we implement conversion knobs:
-- `units_scale`: default `0.01` to convert cm → m
-- optional axis remap (kept identity for now unless needed later)
-
-The adapter exists so that when Unreal exports waypoint positions, we can ingest them by setting `frame="unreal", units="cm"`.
-
-## Curve generation (exact interpolation)
-
-We implement a spline family that **always** satisfies \(r(t_i)=P_i\).
-
-### Base spline
-
-Use piecewise cubic Hermite segments between each \((P_i, P_{i+1})\) with endpoint tangents \((m_i, m_{i+1})\).
-
-For \(u\in[0,1]\) (segment parameter), the Hermite curve is:
-
-\[
-r(u) = h_{00}(u)P_i + h_{10}(u)m_i + h_{01}(u)P_{i+1} + h_{11}(u)m_{i+1}
-\]
-
-with basis functions:
-\[
-h_{00}=2u^3-3u^2+1,\quad
-h_{10}=u^3-2u^2+u,\quad
-h_{01}=-2u^3+3u^2,\quad
-h_{11}=u^3-u^2
-\]
-
-### Smoothness dial \(\lambda\)
-
-Compute base tangents:
-- interior: \(m_i^{base}=0.5(P_{i+1}-P_{i-1})\)
-- endpoints: forward/backward difference
-
-Then scale tangents:
-\[
-m_i(\lambda) = \lambda \cdot m_i^{base}
-\]
-
-Changing \(\lambda\) modifies curvature but preserves exact waypoint interpolation.
-
-### Sampling
-
-Sample each segment at `samples_per_segment` points (uniform in \(u\) for MVP). Record:
-- sampled positions \(r_k\)
-- cumulative arc length \(s_k\)
-- segment lengths \(\Delta s_k\)
-
-## Geometry / curvature estimation
-
-Given sampled points \(r_k\) and arc lengths \(s_k\):
-
-- Approximate tangent direction with central differences:
-  - \(t_k \approx \mathrm{normalize}(r_{k+1}-r_{k-1})\)
-- Approximate curvature magnitude:
-  - \(\kappa_k \approx \left\lVert \frac{t_{k+1}-t_{k-1}}{s_{k+1}-s_{k-1}} \right\rVert\)
-
-Endpoints use one-sided approximations.
-
-## Speed profile solver (free boundary conditions)
-
-### Step 1: speed caps
-
-Curvature-based speed cap:
-\[
-v^\kappa_k = \sqrt{\frac{a_{\text{lat,max}}}{|\kappa_k|+\epsilon}}
-\]
-
-Global cap:
-\[
-v^{cap}_k = \min(v_{\max}, v^\kappa_k)
-\]
-
-### Step 2: forward / backward pass
-
-Let \(\Delta s_k = s_{k+1}-s_k\).
-
-Forward (acceleration-limited upper bound), with **free** start:
-- initialize \(v_0 = v^{cap}_0\)
-- propagate:
-\[
-v_{k+1} \leftarrow \min\left(v^{cap}_{k+1}, \sqrt{v_k^2 + 2 a_{\text{fwd,max}} \Delta s_k}\right)
-\]
-
-Backward (braking-limited), with **free** end:
-- initialize at end \(v_{N-1}\) from the forward result
-- propagate:
-\[
-v_{k} \leftarrow \min\left(v_{k}, \sqrt{v_{k+1}^2 + 2 a_{\text{brake,max}} \Delta s_k}\right)
-\]
-
-### Step 3: time and implied accelerations
-
-- \(\Delta t_k = \Delta s_k / \max(v_k, v_{min})\) with a small `v_min` to avoid division by zero
-- Total time \(T=\sum_k \Delta t_k\)
-- Optional diagnostics:
-  - implied longitudinal accel \(a_{long,k} \approx (v_{k+1}^2-v_k^2)/(2\Delta s_k)\)
-  - implied lateral accel \(a_{lat,k} \approx v_k^2 \kappa_k\)
-
-## Optimization loop (MVP)
-
-Search a small set of \(\lambda\) values over `[lambda_min, lambda_max]` with `lambda_steps`. For each:
-- generate curve samples
-- compute curvature
-- solve speed profile
-- compute \(T\)
-
-Pick the \(\lambda\) with minimal \(T\). Report best \(\lambda\) and diagnostics.
-
-## UI requirements (Dash)
-
-### Controls (MVP)
-
-- Scenario dropdown
-- `v_max`, `a_fwd_max`, `a_brake_max`, `a_lat_max` sliders
-- “Manual \(\lambda\)” vs “Optimize \(\lambda\)” toggle
-- \(\lambda\) slider (manual) OR `lambda_min/lambda_max/lambda_steps` (auto)
-- `samples_per_segment` slider
-
-### Visualizations
-
-- 3D plot:
-  - waypoints as markers (indexed labels)
-  - chosen path as a line (optionally color by speed)
-- 2D plots:
-  - speed \(v(s)\) vs \(s\)
-  - curvature \(\kappa(s)\) vs \(s\)
-- Summary text:
-  - best time \(T\), best \(\lambda\), max curvature, max speed, and where constraints bind (approx)
-
-## CLI utilities
-
-- `run_optimize.py`: run optimizer headless for a scenario and write `artifacts/*.json` (and optionally an HTML plot export).
-
-## Testing plan (lightweight)
-
-- `test_spline.py`: verify exact waypoint interpolation (curve samples include each waypoint at segment boundaries).
-- `test_geometry.py`: sanity-check curvature on a straight line (\(\kappa \approx 0\)).
-- `test_speed_profile.py`: verify forward/back pass respects accel/brake limits and caps.
+- Unreal axis/handedness: do we need a remap for display parity, or keep identity?
+- Lateral acceleration model: should curvature be computed from full 3D curvature magnitude, or curvature in the XY plane only?
+- Yaw constraint semantics: should yaw follow direction of travel (tangent), or be decoupled?
