@@ -31,7 +31,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--script",
-        default=str(Path("UE_Drone_Env_1/Scripts/create_red_sphere.py").resolve()),
+        default=str(Path("UE_Drone_Env_1/Scripts/create_red_sphere_course.py").resolve()),
         help="Path to UE Python script to run via -ExecutePythonScript",
     )
     parser.add_argument(
