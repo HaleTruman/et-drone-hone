@@ -13,21 +13,31 @@ et-drone-hone/
 │   │   └── free_space/                 # Known traversable regions.
 │   ├── optimizer/                      # Cost functions, constraints (physics + course_model), gradients, splines.
 │   └── planner/                        # Trajectory & path solver using physics + course_model + optimizer
-├── ue_automations/
-│   ├── extraction/                     # Export meshes, transforms, and metadata from UE.
-│   ├── course_build/                   # Generate/modify courses inside UE from specs.
-│   └── http_bridge/                    # Python utilities for in-engine HTTP control.
-├── unreal_project/                     # Unreal Engine project (sim world + operator).
+│
+│ #truman
+│
+├── UE_Automations/
+│   ├── run_unreal_editor.py/           # Run UE_Project_Scripts headless
+│   └── AGENTS.md/                      # md file to help with automation blockers
+│
+├── UE_Drone_Env_1/                     # Unreal Engine project (sim world + operator) - rename to unreal_project 
 │   ├── Config/                         # UE project configuration.
 │   ├── Content/                        # Maps/assets/course templates (UE-managed).
-│   └── Plugins/
-│       └── DroneHttpOperator/          # Blueprint/C++ HTTP operator endpoint.
+│   └── UE_Project_Scripts/
+│       ├── Content_Automation/         # UE content generation scripts
+│       ├── Data_Extractor/             # UE Data extraction for training
+│           └── Course_Coordinates/     # UE Extractor waypoints, directions, obstical cordinates
+│       └── Drone_HTTP_Blueprint/       # Blueprint/C++ HTTP operator endpoint.
+│
+│ #truman end
+│
 ├── model_training/
 │   ├── datasets/                       # Logged episodes, trajectories, sensor streams.
 │   ├── features/                       # Feature extraction for training/eval.
 │   ├── trainers/                       # Offline training loops (SL/RL/IL).
 │   └── eval/                           # Metrics, benchmarks, regression suites.
 ├── operator/
+│   ├── http_bridge/                    # Python utilities for in-engine HTTP control for unreal + any endpoint
 │   ├── runtime/                        # Live loop: perceive → plan → act → log.
 │   ├── models/                         # Inference wrappers + model artifacts.
 │   ├── optimizer/                      # Glue to call path_optimizer with beliefs.
