@@ -71,10 +71,10 @@ def build_layout(*, scenario_options: list[dict[str, str]]) -> html.Div:
                         style={"flex": "0 0 340px"},
                         children=[
                             *_label_with_info(
-                                label="Scenario",
+                                label="Course JSON",
                                 info_id="info_scenario",
                                 help_id="help_scenario",
-                                help_text="Scenario: Selects an ordered set of 3D waypoints to optimize through.",
+                                help_text="Course JSON: Selects an ordered set of 3D targets/waypoints to optimize through.",
                             ),
                             dcc.Dropdown(
                                 id="scenario_path",

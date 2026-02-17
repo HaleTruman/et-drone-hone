@@ -140,7 +140,7 @@ Remaining:
 - Extend `run_optimize.py` to optionally export:
   - CSV of samples: `x,y,z,s,kappa,v,v_cap,v_kappa`
   - Plotly HTML snapshot of the 3D plot (and/or diagnostics)
-- Keep artifacts under `Optimization_Engine/artifacts/` with predictable filenames.
+- Keep artifacts under `Path_Optimizer/artifacts/` with predictable filenames.
 
 ### 6) Numerical robustness pass
 

@@ -22,11 +22,36 @@ class Waypoint:
 
 
 @dataclass(frozen=True)
+class Vec3:
+    x: float
+    y: float
+    z: float
+
+    def as_np(self) -> np.ndarray:
+        return np.array([self.x, self.y, self.z], dtype=float)
+
+
+@dataclass(frozen=True)
+class Target:
+    actor_label: str
+    actor_path: str
+    position: Waypoint
+    axis_x: Vec3
+    axis_y: Vec3
+    axis_z: Vec3
+
+
+@dataclass(frozen=True)
 class Scenario:
     name: str
     frame: Frame
     units: Units
     waypoints: tuple[Waypoint, ...]
+    targets: tuple[Target, ...] | None = None
+    origin_target: Target | None = None
+    level: str | None = None
+    mesh: str | None = None
+    generated_at: str | None = None
 
 
 @dataclass(frozen=True)

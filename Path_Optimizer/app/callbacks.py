@@ -128,7 +128,7 @@ def register_callbacks(app: Dash) -> None:
         Input("samples_per_segment", "value"),
     )
     def _recompute(
-        scenario_path: str,
+        scenario_path: str | None,
         lambda_mode: str,
         lambda_manual: float,
         lambda_min: float,
@@ -146,8 +146,18 @@ def register_callbacks(app: Dash) -> None:
         yaw_rate_max_dps: float,
         samples_per_segment: int,
     ):
+        import plotly.graph_objects as go
+
+        empty = go.Figure()
+        if not scenario_path:
+            return empty, empty, empty, "No course selected."
+
+        scenario_file = Path(scenario_path)
+        if not scenario_file.is_file():
+            return empty, empty, empty, f"Course file not found: {scenario_path}"
+
         try:
-            scenario = load_scenario(Path(scenario_path))
+            scenario = load_scenario(scenario_file)
             use_r_min_enabled = "on" in (use_r_min or [])
             use_theta_enabled = "on" in (use_theta_max or [])
             heading_enabled = "on" in (heading_constrained or [])
@@ -230,7 +240,4 @@ def register_callbacks(app: Dash) -> None:
                 summary += f"yaw_rate_max_rps: {d.get('yaw_rate_max_rps'):.6g}\n"
             return fig_3d, fig_speed, fig_kappa, summary
         except Exception as e:  # noqa: BLE001
-            import plotly.graph_objects as go
-
-            empty = go.Figure()
             return empty, empty, empty, f"ERROR: {e}"
