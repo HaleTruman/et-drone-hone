@@ -53,7 +53,7 @@ et-drone-hone/
     ├── arbitration/                    # Choose: maneuver, replan, slow-recover, abort.
     └── safety/                         # Hard limits, geofences, failsafes, kill-switch.
 
-
+# not accurate
 ```mermaid
 flowchart TB
 

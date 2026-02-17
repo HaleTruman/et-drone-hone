@@ -56,3 +56,5 @@ UNREAL_EDITOR="/Users/Shared/Epic Games/UE_5.7/Engine/Binaries/Mac/UnrealEditor"
 - This runner uses `-ScriptErrorsAreFatal` so any UE Python exception will fail the run.
 - macOS quoting: do **not** manually add quotes inside the `-ExecutePythonScript=...` argument; pass it as `-ExecutePythonScript=/abs/path/script.py <args...>` and let Unreal’s macOS launcher quote the value, otherwise Unreal may parse an empty script and never run it.
 - If a run appears to hang and `/tmp/ue_automation.log` only shows macOS service/XPC errors, the editor may be blocked by a sandboxed/restricted execution environment; run the automation from a normal user session and clean up any stuck editor process before retrying (e.g. `pgrep -fl UnrealEditor` then `kill <pid>`).
+- Component API mismatch: in UE 5.7 Python, some component convenience methods may be missing (e.g. `StaticMeshComponent.get_component_location()`), so prefer actor transform APIs or fetch component transforms via properties.
+- Fatal-on-error cascades: when `-ScriptErrorsAreFatal` is set, a Python exception may be followed by a crash; diagnose using the *first* Python traceback in `/tmp/ue_automation.log`.
