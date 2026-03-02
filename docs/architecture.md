@@ -14,7 +14,7 @@ et-drone-hone/
 │   ├── optimizer/                      # Cost functions, constraints (physics + course_model), gradients, splines.
 │   └── planner/                        # Trajectory & path solver using physics + course_model + optimizer
 │
-│ #truman
+│ #Live UE
 │
 ├── UE_Automations/
 │   ├── run_unreal_editor.py/           # Run UE_Project_Scripts headless
@@ -29,7 +29,7 @@ et-drone-hone/
 │           └── Course_Coordinates/     # UE Extractor waypoints, directions, obstical cordinates
 │       └── Drone_HTTP_Blueprint/       # Blueprint/C++ HTTP operator endpoint.
 │
-│ #truman end
+│ #Live UE
 │
 ├── model_training/
 │   ├── datasets/                       # Logged episodes, trajectories, sensor streams.
@@ -45,114 +45,118 @@ et-drone-hone/
 ├── learning/
 │   ├── online/                         # Live adaptation and drift handling.
 │   └── calibration/                    # Camera pose + kinematics estimation routines.
-├── maneuvers/
-│   ├── library/                        # Macro-actions (commit-to-ring, snap-turn, etc.).
-│   └── selectors/                      # When to use maneuvers vs continuous planning.
 └── controller/
     ├── fusion/                         # Blend vision + map + priors into beliefs.
     ├── arbitration/                    # Choose: maneuver, replan, slow-recover, abort.
     └── safety/                         # Hard limits, geofences, failsafes, kill-switch.
 
-# not accurate
-```mermaid
-flowchart TB
 
-  subgraph ROOT[et-drone-hone]
-    README[README.md]
-    subgraph DOCS[docs]
-      SCOPE[scope.md]
-      ARCH[architecture.md]
-    end
-
-    subgraph PO[path_optimizer]
-      subgraph PHYS[physics]
-        PHYS_L[local]
-        PHYS_G[global]
-      end
-
-      subgraph CM[course_model]
-        CM_T[targets]
-        CM_O[obstacles]
-        CM_F[free_space]
-      end
-
-      OPT[optimizer]
-      PLAN[planner]
-
-      PHYS_L --> PHYS_G
-      PHYS_L --> OPT
-      PHYS_G --> OPT
-      CM_T --> OPT
-      CM_O --> OPT
-      CM_F --> OPT
-      OPT --> PLAN
-    end
-
-    subgraph UEA[ue_automations]
-      UEA_X[extraction]
-      UEA_B[course_build]
-      UEA_H[http_bridge]
-    end
-
-    subgraph UEP[unreal_project]
-      UEP_CFG[Config]
-      UEP_CNT[Content]
-      subgraph UEP_PLUG[Plugins]
-        UEP_HTTP[DroneHttpOperator]
-      end
-    end
-
-    subgraph MT[model_training]
-      MT_D[datasets]
-      MT_F[features]
-      MT_T[trainers]
-      MT_E[eval]
-    end
-
-    subgraph OP[operator]
-      OP_R[runtime]
-      OP_M[models]
-      OP_O[optimizer]
-      OP_I[interfaces]
-    end
-
-    subgraph LE[learning]
-      LE_O[online]
-      LE_C[calibration]
-    end
-
-    subgraph MV[maneuvers]
-      MV_L[library]
-      MV_S[selectors]
-    end
-
-    subgraph CT[controller]
-      CT_F[fusion]
-      CT_A[arbitration]
-      CT_S[safety]
-    end
-  end
-
-  %% Cross-module flow (high-level)
-  UEA_X --> CM
-  UEA_B --> UEP_CNT
-  UEA_H --> UEP_HTTP
-
-  CM --> PO
-  PHYS --> PO
-  PLAN --> OP_O
-  OP_O --> OP_R
-
-  LE_O --> OP_R
-  LE_C --> OP_R
-
-  MV_S --> CT_A
-  CT_F --> CT_A
-  CT_S --> CT_A
-  CT_A --> OP_R
-
-  OP_I --> UEP_HTTP
-  OP_R --> MT_D
-  MT_F --> MT_T
-  MT_T --> OP_M
-  MT_E --> MT_T
+│  # Furutre UE
+│
+├── UE_Tooling/
+│   ├── run_unreal.py                               # Run UE Project Scripts headless
+│   ├── Content_Generation/                          # Content generation scriptsr run through UE to build assets into Content
+│   │   ├── replace_red_spheres_with_red_toruses.py
+│   │   ├── ...
+│   │   └── create_red_sphere_course.py
+│   ├── Data_Interface/                              # TCP client + dataset writer (and/or file ingester)
+│   │   ├── Sampler_Manager.py
+│   │   ├── ...
+│   │   └── Sampler.py
+│   ├── Drone_Controller/                             # TCP client that sends commands (or later, operator runtime)
+│   │   ├── Drone_Spawner.py
+│   │   ├── ...
+│   │   └── Drone_Controller.py                       # TCP operator endpoint.
+│   ├── Config/
+│   │   ├── Data_Interface_Config/
+│   │   │   ├── SensorRigProfileConfig_Pose.yaml
+│   │   │   ├── SensorRigProfileConfig_Viewpoint.yaml
+│   │   │   └── SensorRigProfileConfig_Telemetry.yaml
+│   │   ├── Drone_Controller_Config/
+│   │   │   └── Config_DroneMovementTuning.yaml
+│   │   └── RunConfig.py                              # Payload SET_CONFIG JSON 
+│   │
+│   ├── WebSocket/
+│   │   ├── ws_bridge.py                 # One-process bridge: connect ↔ send SET_CONFIG/CMD ↔ recv OBS/STATUS
+│   │   ├── protocol.py                  # Message framing + types (SET_CONFIG, CMD, CAPTURE_NOW, OBS, ACK, ERROR)
+│   │   ├── schemas.py                   # JSON schema/validation + versioning (optional but nice)
+│   │   └── README.md                    # How to run locally + ports/URLs
+│   │
+│   └── AGENTS.md/                                    # md file to help with automation blockers
+│
+├── UE_Drone_Env_1/                                  # Unreal Engine project
+│   ├── Config/                                      # UE project configuration.
+│   ├── Plugins/
+│   │   └── DroneWebSocket/
+│   │      ├── DroneWebSocket.uplugin
+│   │      └── Source/
+│   │          └── DroneWebSocket/
+│   │              ├── DroneWebSocket.Build.cs           # Adds "WebSockets" dependency
+│   │              ├── Public/
+│   │              │   ├── WSClientComponent.h           # Blueprint ActorComponent: Connect/Send/Close + events
+│   │              │   └── WSProtocolTypes.h             # Structs/enums for SET_CONFIG/CMD/OBS (optional)
+│   │              └── Private/
+│   │                  ├── WSClientComponent.cpp
+│   │                  └── WSProtocolTypes.cpp
+│   │
+│   └── Content/                                     # Maps/assets/blueprints
+│       ├── Course_Content_/                         # Course assets
+│       │   ├── M_Red_Solid.uasset
+│       │   ├── ...
+│       │   └── SM_Sphere_1m.uasset
+│       │
+│       ├── Drone_Content/                               # “Drone kit” (portable, minimal dependencies)
+│       │   ├── Meshes/
+│       │   │   ├── SM_DroneBody.uasset                  # Drone mesh (visual body)
+│       │   │   └── SM_DroneCollisionProxy.uasset        # (optional) simple collision proxy for stable physics later
+│       │   ├── Materials/
+│       │   │   ├── M_DroneBody_Base.uasset              # (optional) base material for drone body
+│       │   │   └── MI_DroneBody_Default.uasset          # (optional) material instance for quick variations
+│       │   ├── Blueprints/
+│       │   │   ├── BP_DronePawn.uasset                  # The drone container that composes modules
+│       │   │   ├── BP_DroneSensors.uasset               # Sensor rig asset (mount transforms, camera mount(s))
+│       │   │   ├── BP_DroneMovement_6DOF.uasset         # Movement module (ActorComponent): applies cmd → motion
+│       │   │   └── BP_DroneTelemetrySampler.uasset      # Telemetry module (ActorComponent): samples pose/physics
+│       │   ├── Interfaces/
+│       │   │   ├── BPI_DronePoseProvider.uasset         # Contract: provide pose (+ velocity if available)
+│       │   │   ├── BPI_DroneViewpointProvider.uasset    # Contract: provide viewpoint transforms (+ camera params)
+│       │   │   ├── BPI_DroneTelemetryProvider.uasset    # Contract: provide extended telemetry (future-proof)
+│       │   │   └── BPI_DroneCommandReceiver.uasset      # Contract: accept normalized control commands
+│       │   └── Data/
+│       │       ├── DA_DroneMovementDefault.uasset        # Params: max speed, accel, rate limits, damping
+│       │       └── DA_SensorRigProfileDefault.uasset     # Params: default FOVs, mount offsets, names
+│       │
+│       ├── io/ 
+│       │   ├── Drone_Controller/
+│       │   │   ├── BP_DroneController.uasset                # DroneId → apply command → movement component TCP operator endpoint.
+│       │   │   └── BP_DroneSpawner.uasset                   # TCP operator endpoint.
+│       │   ├── Data_Interface/                              # Data extraction for training
+│       │   │   └── BP_SampleManager.uasset                  # Atomic snapshot: capture_id: telemetry, vision, pose, config, time
+│       │   └── Data_Config/
+│       │       ├── ST_RunConfig
+│       │       └── BP_SetDataConfig.uasset                  # RuntimeOverrideConfig, ApplyConfigNow(), accept a SET_CONFIG JSON payload TCP operator endpoint.
+│       │
+│       └── AGENTS.md/                                # md file to help with automation blockers
+│  # end Future UE
+│
+│   #Drafing
+│
+├── model_training/
+│   ├── datasets/                       # Logged episodes, trajectories, sensor streams (source of truth for offline).
+│   │   ├── runs/
+│   │   │   └── run_YYYYMMDD_HHMMSS/
+│   │   │       ├── images/             # PNGs per drone/viewpoint keyed by capture_id.
+│   │   │       ├── meta/               # observations.jsonl, captures.csv, episodes.jsonl.
+│   │   │       └── manifests/          # manifest.json, schema version, capture profiles used.
+│   │   └── schemas/                    # Dataset schema versions for backwards-compatible parsing.
+│   ├── features/                       # Feature extraction (CNN preproc, RL state vectors, embeddings).
+│   │   ├── build_cnn_tensors.py        # Load PNG+labels → normalized tensors → train-ready shards.
+│   │   ├── build_rl_state_frames.py    # observations.jsonl → pandas dataframe → stacked state frames.
+│   │   └── augmentations.py            # Controlled augments (crop/blur/noise) with deterministic seeds.
+│   ├── trainers/                       # Offline training loops (SL/RL/IL).
+│   │   ├── train_cnn.py                # Supervised vision training on disk datasets.
+│   │   ├── train_policy_rl.py          # RL training using state frames (+ optional vision features).
+│   │   └── train_imitation.py          # Imitation learning from expert trajectories.
+│   └── eval/                           # Metrics, benchmarks, regression suites.
+│       ├── eval_offline.py             # Offline eval on held-out runs (accuracy, success rate, drift).
+│       └── regressions/                # Golden runs and expected metrics to prevent silent breakage.
