@@ -113,8 +113,7 @@ et-drone-hone/
 │       │   │   ├── SM_DroneBody.uasset                  # Drone mesh (visual body)
 │       │   │   └── SM_DroneCollisionProxy.uasset        # (optional) simple collision proxy for stable physics later
 │       │   ├── Materials/
-│       │   │   ├── M_DroneBody_Base.uasset              # (optional) base material for drone body
-│       │   │   └── MI_DroneBody_Default.uasset          # (optional) material instance for quick variations
+│       │   │   └── M_DroneBody_Default.uasset          # material for drone.
 │       │   ├── Blueprints/
 │       │   │   ├── BP_DronePawn.uasset                  # The drone container that composes modules
 │       │   │   ├── BP_DroneSensors.uasset               # Sensor rig asset (mount transforms, camera mount(s))
