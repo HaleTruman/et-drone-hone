@@ -82,9 +82,12 @@ et-drone-hone/
 │   │   ├── schemas.py                   # JSON schema/validation + versioning (optional but nice)
 │   │   └── README.md                    # How to run locally + ports/URLs
 │   │
-│   └── AGENTS.md/                                    # md file to help with automation blockers
+│   └── AGENTS.md                                    # md file to help with automation blockers
 │
-├── UE_Drone_Env_1/                                  # Unreal Engine project
+├── UE_Drone_Env/                                  # Unreal Engine project
+│   ├── Config/                                      # UE project configuration.
+│   ├── AGENTS.md                                  
+│   ├── UE_TermsParams.md                            # small dictionary of Unreal Engine
 │   ├── Config/                                      # UE project configuration.
 │   ├── Plugins/
 │   │   └── DroneWebSocket/
@@ -133,10 +136,10 @@ et-drone-hone/
 │       │   ├── Data_Interface/                              # Data extraction for training
 │       │   │   └── BP_SampleManager.uasset                  # Atomic snapshot: capture_id: telemetry, vision, pose, config, time
 │       │   └── Data_Config/
-│       │       ├── ST_RunConfig
+│       │       ├── ST_RunConfig.uasset
 │       │       └── BP_SetDataConfig.uasset                  # RuntimeOverrideConfig, ApplyConfigNow(), accept a SET_CONFIG JSON payload TCP operator endpoint.
 │       │
-│       └── AGENTS.md/                                # md file to help with automation blockers
+│       └── AGENTS.md                                # md file to help with automation blockers
 │  # end Future UE
 │
 │   #Drafing
