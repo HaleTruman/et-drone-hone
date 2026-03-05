@@ -11,7 +11,7 @@ from opt_engine.scenario_io import discover_scenario_files
 
 def create_app() -> Dash:
     here = Path(__file__).resolve().parent
-    root_dir = here.parent
+    root_dir = here.parent.parent
     scenario_paths = discover_scenario_files(root_dir)
     scenario_options = [{"label": p.name, "value": str(p)} for p in scenario_paths]
 

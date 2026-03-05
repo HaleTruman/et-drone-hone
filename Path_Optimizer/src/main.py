@@ -9,15 +9,15 @@ from pathlib import Path
 
 def _ensure_src_on_path() -> None:
     here = Path(__file__).resolve().parent
-    src = here / "src"
-    if str(src) not in sys.path:
-        sys.path.insert(0, str(src))
+    if str(here) not in sys.path:
+        sys.path.insert(0, str(here))
 
 
 def _parse_args() -> argparse.Namespace:
     here = Path(__file__).resolve().parent
-    default_scenario = here / "data" / "scenarios" / "simple_demo.json"
-    default_out = here / "artifacts" / "last_result.json"
+    project_root = here.parent
+    default_scenario = project_root / "course_model" / "targets-SimBlank-20260216_194648.json"
+    default_out = project_root / "artifacts" / "last_result.json"
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
