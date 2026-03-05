@@ -16,11 +16,13 @@ When a scenario provides `targets[]` with `axis_z`, the optimized path must **en
 ### Definition
 
 For each target `i`:
+
 - `p_i` = target position (the path already interpolates this point exactly).
 - `d_i` = **unit** through-axis direction in internal coordinates (`axis_z`, possibly sign-flipped).
 - `t_i` = **unit** path tangent at the point `p_i` (direction of travel).
 
 Hard constraint (per target):
+
 - `angle(t_i, d_i) ≤ θ_gate_max`
 
 For now, treat this as a **hard feasibility constraint** (reject the candidate path if violated).
@@ -28,6 +30,7 @@ For now, treat this as a **hard feasibility constraint** (reject the candidate p
 ### Direction sign (deterministic)
 
 `axis_z` can be used in either sign (going “through” the hoop in either direction). We need a deterministic rule to pick the sign:
+
 - Default: choose the sign so the through-axis points roughly **toward the next segment of travel**.
 - Example rule:
   - For targets with a “next” target: flip `d_i` if `dot(d_i, p_{i+1} - p_i) < 0`
@@ -38,16 +41,19 @@ For now, treat this as a **hard feasibility constraint** (reject the candidate p
 ### 1) Constraints surface (engine + UI)
 
 Add a gate-axis constraint to `Constraints` with explicit units:
+
 - `gate_axis_enabled: bool` (default: `True` when `scenario.targets` are present)
 - `gate_axis_max_angle_deg: float` (hard threshold; start with a small default like `5.0`)
 
 Expose these in the Dash UI (even if default-on), so the user can:
+
 - see that the constraint is active,
 - widen/tighten `θ_gate_max` while debugging.
 
 ### 2) Axis conversion helper (coords)
 
 Add a dedicated function in `opt_engine/coords_unreal.py` to convert axes to internal coordinates:
+
 - **No scaling** (axes are unitless directions)
 - Apply any frame/handedness mapping in exactly one place (currently identity, but this prevents future drift).
 
@@ -56,18 +62,20 @@ Add a dedicated function in `opt_engine/coords_unreal.py` to convert axes to int
 The most robust “hard constraint” is to make the spline satisfy it **by construction**, not by hoping a λ grid happens to align tangents.
 
 Approach:
+
 - Extend the spline sampler to optionally accept **explicit per-waypoint tangents** (vector `m_i` at each waypoint).
 - When `gate_axis_enabled` and targets are available:
-  1) Compute a desired direction `d_i` per target from `axis_z` (normalize + sign rule).
-  2) Choose a tangent **magnitude** `|m_i|` (e.g., use the existing base-tangent magnitude and scale by λ).
-  3) Set `m_i = (|m_i| * λ) * d_i`.
-  4) Optional but recommended: clamp `|m_i|` relative to adjacent chord lengths to reduce cubic overshoot.
+  1. Compute a desired direction `d_i` per target from `axis_z` (normalize + sign rule).
+  2. Choose a tangent **magnitude** `|m_i|` (e.g., use the existing base-tangent magnitude and scale by λ).
+  3. Set `m_i = (|m_i| * λ) * d_i`.
+  4. Optional but recommended: clamp `|m_i|` relative to adjacent chord lengths to reduce cubic overshoot.
 
 Result: the spline’s derivative at each waypoint is aligned with `d_i`, so the gate-axis constraint is always satisfied (up to floating error).
 
 ### 4) Validation + diagnostics (still required)
 
 Even if enforced by construction, validate and report:
+
 - `gate_angle_max_deg` across all targets
 - `gate_violation_count`
 - Per-target angle errors (for debugging and future visualization)
@@ -77,6 +85,7 @@ If violations occur (due to numerical issues or malformed axes), mark the candid
 ### 5) Visualization (so we can verify correctness)
 
 Add a 3D overlay to the Plotly scene:
+
 - Draw each target’s through-axis arrow (from `p_i` in direction `d_i`).
 - Optionally color targets/segments red if they violate `θ_gate_max`.
 
@@ -85,6 +94,7 @@ This makes it obvious whether the optimizer is “threading” each hoop correct
 ### 6) Tests
 
 Add a unit test using the official `targets-SimBlank-20260216_194648.json`:
+
 - Build a path with a fixed λ and `gate_axis_enabled=True`.
 - At each target waypoint index, approximate tangent `t_i` from sampled points.
 - Assert `angle(t_i, d_i)` is ≤ `θ_gate_max` (or that `abs(dot(t_i, d_i))` is close to 1).
@@ -106,3 +116,16 @@ Also keep regression coverage for legacy `waypoints[]` scenarios (gate constrain
 - Should the gate-axis constraint apply to the first/last target in an “open” course (start/finish), or only to intermediate gates?
 - Is `axis_z` always the through-axis for every target mesh we’ll export, or do we need mesh-specific axis selection rules?
 - Do we also need a **clearance constraint** (stay within hoop opening radius) in addition to tangent alignment? (Not required yet, but likely soon.)
+
+# from devreadme (depreciated maybe)
+
+This will be the optimization code once phyiscls local global, plus course_model are abovable.
+
+it should output both the ideal path spline in json with a file name similar too Path_Optimizer/course_model/targets-SimBlank-20260216_194648.json
+it should follow this file path... UE_Drone_Env_1/UE_Project_Scripts/Content_Automation/optimized_path/dev-spline-example.json
+
+## Delivered JSON files
+
+- basic path optimized
+- done orientation along path (stable --> performant)
+- calulated drone inputs (global --> prop-local)

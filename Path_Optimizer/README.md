@@ -1,6 +1,7 @@
 # Path_Optimizer (Waypoint/Target Path + Kinematic Constraints)
 
 Local, self-contained optimization/visualization tool that:
+
 - loads ordered 3D waypoints/targets (Unreal export supported),
 - generates an **exactly interpolating** spline path family (smoothness dial \u03bb),
 - computes curvature and a **time-optimal feasible speed profile** along the curve under simple kinematic limits,
@@ -47,8 +48,8 @@ Path_Optimizer/
 
 ### Entrypoints
 
-- `Path_Optimizer/run_app.py` — runs the local UI; adds `Path_Optimizer/src` to `sys.path` so the engine can be imported without packaging.
-- `Path_Optimizer/run_optimize.py` — runs optimization headlessly from the CLI and writes a JSON artifact to `Path_Optimizer/artifacts/`.
+- `Path_Optimizer/app.py` — runs the local UI; adds `Path_Optimizer/src` to `sys.path` so the engine can be imported without packaging.
+- `Path_Optimizer/main.py` — runs optimization headlessly from the CLI and writes a JSON artifact to `Path_Optimizer/artifacts/`.
 
 ### UI (`Path_Optimizer/app/`)
 
@@ -83,7 +84,7 @@ From the repo root:
 python3 -m venv Path_Optimizer/.venv
 source Path_Optimizer/.venv/bin/activate
 python3 -m pip install -r Path_Optimizer/requirements.txt
-python3 Path_Optimizer/run_app.py
+python3 Path_Optimizer/app.py
 ```
 
 Then open the printed local URL in your browser.
@@ -91,6 +92,7 @@ Then open the printed local URL in your browser.
 ## Scenarios
 
 The UI dropdown looks for course files in:
+
 - `Path_Optimizer/course_model/*.json` (preferred)
 - `Path_Optimizer/data/scenarios/*.json` (fallback)
 
@@ -101,7 +103,10 @@ Legacy waypoint schema:
   "name": "simple_demo",
   "frame": "internal|unreal",
   "units": "m|cm",
-  "waypoints": [{"x":0,"y":0,"z":0}, {"x":2,"y":1,"z":0.5}]
+  "waypoints": [
+    { "x": 0, "y": 0, "z": 0 },
+    { "x": 2, "y": 1, "z": 0.5 }
+  ]
 }
 ```
 
@@ -119,18 +124,30 @@ Official Unreal course-target schema (preferred):
     {
       "actor_label": "RedSphere_1m_Course_01",
       "actor_path": "/Game/...",
-      "position_cm": {"x": 0, "y": 0, "z": 0},
-      "axis_x": {"x": 1, "y": 0, "z": 0},
-      "axis_y": {"x": 0, "y": 1, "z": 0},
-      "axis_z": {"x": 0, "y": 0, "z": 1}
+      "position_cm": { "x": 0, "y": 0, "z": 0 },
+      "axis_x": { "x": 1, "y": 0, "z": 0 },
+      "axis_y": { "x": 0, "y": 1, "z": 0 },
+      "axis_z": { "x": 0, "y": 0, "z": 1 }
     }
   ]
 }
 ```
 
 Notes:
+
 - Internal computations use meters; `units="cm"` inputs are scaled by `0.01`.
 - `frame="unreal"` is accepted for future Unreal integration; the MVP keeps axis mapping identity and focuses on consistent units.
+
+## Course Model
+
+`Path_Optimizer/course_model` will catch the course data from Unreal to be used in opptimizer. Course data will be located at `UE_Drone_Env_1/UE_Project_Scripts/Data_Extractor/Course_Coordinates`.
+
+waypoints
+axis xyz, xyz, order,
+
+obsticals
+
+free space
 
 ## Headless run
 
