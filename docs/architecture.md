@@ -16,49 +16,15 @@ et-drone-hone/
 │
 │ #Live UE
 │
-├── UE_Automations/
-│   ├── run_unreal_editor.py/           # Run UE_Project_Scripts headless
-│   └── AGENTS.md/                      # md file to help with automation blockers
-│
-├── UE_Drone_Env_1/                     # Unreal Engine project (sim world + operator) - rename to unreal_project 
-│   ├── Config/                         # UE project configuration.
-│   ├── Content/                        # Maps/assets/course templates (UE-managed).
-│   └── UE_Project_Scripts/
-│       ├── Content_Automation/         # UE content generation scripts
-│       ├── Data_Extractor/             # UE Data extraction for training
-│           └── Course_Coordinates/     # UE Extractor waypoints, directions, obstical cordinates
-│       └── Drone_HTTP_Blueprint/       # Blueprint/C++ HTTP operator endpoint.
-│
-│ #Live UE
-│
-├── model_training/
-│   ├── datasets/                       # Logged episodes, trajectories, sensor streams.
-│   ├── features/                       # Feature extraction for training/eval.
-│   ├── trainers/                       # Offline training loops (SL/RL/IL).
-│   └── eval/                           # Metrics, benchmarks, regression suites.
-├── operator/
-│   ├── http_bridge/                    # Python utilities for in-engine HTTP control for unreal + any endpoint
-│   ├── runtime/                        # Live loop: perceive → plan → act → log.
-│   ├── models/                         # Inference wrappers + model artifacts.
-│   ├── optimizer/                      # Glue to call path_optimizer with beliefs.
-│   └── interfaces/                     # UE sim IO, real-drone IO, logging shims.
-├── learning/
-│   ├── online/                         # Live adaptation and drift handling.
-│   └── calibration/                    # Camera pose + kinematics estimation routines.
-└── controller/
-    ├── fusion/                         # Blend vision + map + priors into beliefs.
-    ├── arbitration/                    # Choose: maneuver, replan, slow-recover, abort.
-    └── safety/                         # Hard limits, geofences, failsafes, kill-switch.
-
-
-│  # Furutre UE
-│
+├── UE_Automations/│                    # Unreal Engine project (removed legacy)
+├── UE_Drone_Env_1/                     # Unreal Engine project (removed legacy)
+││
 ├── UE_Tooling/
-│   ├── run_unreal.py                               # Run UE Project Scripts headless
-│   ├── Content_Generation/                          # Content generation scriptsr run through UE to build assets into Content
-│   │   ├── replace_red_spheres_with_red_toruses.py
+│   ├── run_unreal.py                                # Run UE Scripts headless
+│   ├── Content_Generation/                          # Content-gen scripts via run_unreal.py. typically, run-once persisted
+│   │   ├── create_random_torus_course.py
 │   │   ├── ...
-│   │   └── create_red_sphere_course.py
+│   │   └── create_basic_light_source.py
 │   ├── Data_Interface/                              # TCP client + dataset writer (and/or file ingester)
 │   │   ├── Sampler_Manager.py
 │   │   ├── ...
@@ -112,7 +78,7 @@ et-drone-hone/
 │   ├── Content/                                   # Maps/assets/blueprints
 │   │   ├── Collections/                           # UE-managed content collections (generated)
 │   │   ├── Developers/                            # UE per-user/dev content area (generated)
-│   │   ├── Course_Content_/                       # Course assets
+│   │   ├── Course_Content/                        # Course assets
 │   │   │   ├── M_Red_Solid.uasset
 │   │   │   ├── ...
 │   │   │   └── SM_Sphere_1m.uasset
@@ -150,9 +116,8 @@ et-drone-hone/
 │   ├── DerivedDataCache/                          # Derived asset cache (generated)
 │   ├── Intermediate/                              # Intermediate build artifacts (generated)
 │   └── Saved/                                     # Logs/autosaves/runtime files (generated)
-│  # end Future UE
 │
-│   #Drafing
+│   #DRAFTING
 │
 ├── model_training/
 │   ├── datasets/                       # Logged episodes, trajectories, sensor streams (source of truth for offline).
@@ -173,3 +138,17 @@ et-drone-hone/
 │   └── eval/                           # Metrics, benchmarks, regression suites.
 │       ├── eval_offline.py             # Offline eval on held-out runs (accuracy, success rate, drift).
 │       └── regressions/                # Golden runs and expected metrics to prevent silent breakage.
+│
+├── operator/
+│   ├── http_bridge/                    # Python utilities for in-engine HTTP control for unreal + any endpoint
+│   ├── runtime/                        # Live loop: perceive → plan → act → log.
+│   ├── models/                         # Inference wrappers + model artifacts.
+│   ├── optimizer/                      # Glue to call path_optimizer with beliefs.
+│   └── interfaces/                     # UE sim IO, real-drone IO, logging shims.
+├── learning/
+│   ├── online/                         # Live adaptation and drift handling.
+│   └── calibration/                    # Camera pose + kinematics estimation routines.
+└── controller/
+    ├── fusion/                         # Blend vision + map + priors into beliefs.
+    ├── arbitration/                    # Choose: maneuver, replan, slow-recover, abort.
+    └── safety/                         # Hard limits, geofences, failsafes, kill-switch.
