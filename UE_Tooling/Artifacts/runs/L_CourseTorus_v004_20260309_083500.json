@@ -1,0 +1,109 @@
+{
+  "run_name": "L_CourseTorus_v004_20260309_083500",
+  "course_name": "L_CourseTorus",
+  "version_id": "v004",
+  "timestamp": "20260309_083500",
+  "created_at_utc": "2026-03-09T15:44:04.524386+00:00",
+  "status": "success",
+  "return_code": 0,
+  "command": [
+    "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+    "/Users/trumanhale/et-drone-hone/UE_Tooling/run_unreal.py",
+    "--script",
+    "/Users/trumanhale/et-drone-hone/UE_Tooling/Content_Generation/Course_Content/Maps/gen_l_coursetorus.py",
+    "--log",
+    "/tmp/L_CourseTorus_v004_20260309_083500.log",
+    "--timeout-seconds",
+    "300",
+    "--",
+    "--asset-dir",
+    "/Game/Course_Content/L_CourseTorus_v004_20260309_083500",
+    "--level",
+    "/Game/Course_Content/L_CourseTorus_v004_20260309_083500/Maps/L_CourseTorus",
+    "--material-name",
+    "M_CourseTorus_Red",
+    "--mesh-name",
+    "SM_CourseTorus_1mOpening",
+    "--light-blueprint-name",
+    "BP_CourseLight_Main",
+    "--count",
+    "28",
+    "--x-min-cm",
+    "-4500.0",
+    "--x-max-cm",
+    "4500.0",
+    "--y-min-cm",
+    "-600.0",
+    "--y-max-cm",
+    "600.0",
+    "--ground-z-cm",
+    "0.0",
+    "--ground-offset-cm",
+    "180.0",
+    "--z-jitter-cm",
+    "300.0"
+  ],
+  "log_path": "/tmp/L_CourseTorus_v004_20260309_083500.log",
+  "ue_paths": {
+    "asset_dir": "/Game/Course_Content/L_CourseTorus_v004_20260309_083500",
+    "level_path": "/Game/Course_Content/L_CourseTorus_v004_20260309_083500/Maps/L_CourseTorus",
+    "material_name": "M_CourseTorus_Red",
+    "mesh_name": "SM_CourseTorus_1mOpening",
+    "light_blueprint_name": "BP_CourseLight_Main"
+  },
+  "scripts": [
+    {
+      "path": "/Users/trumanhale/et-drone-hone/UE_Tooling/Content_Generation/Course_Content/asset_assembly.py",
+      "script_name": "asset_assembly",
+      "script_version": "1.0.0",
+      "script_date": "2026-03-09",
+      "file_mtime_utc": "2026-03-09T14:59:15.120544+00:00"
+    },
+    {
+      "path": "/Users/trumanhale/et-drone-hone/UE_Tooling/Content_Generation/Course_Content/Materials/gen_m_coursetorus_red.py",
+      "script_name": "gen_m_coursetorus_red",
+      "script_version": "1.0.0",
+      "script_date": "2026-03-09",
+      "file_mtime_utc": "2026-03-09T14:59:24.001073+00:00"
+    },
+    {
+      "path": "/Users/trumanhale/et-drone-hone/UE_Tooling/Content_Generation/Course_Content/Meshes/gen_sm_coursetorus_1mopening.py",
+      "script_name": "gen_sm_coursetorus_1mopening",
+      "script_version": "1.0.0",
+      "script_date": "2026-03-09",
+      "file_mtime_utc": "2026-03-09T14:59:29.300824+00:00"
+    },
+    {
+      "path": "/Users/trumanhale/et-drone-hone/UE_Tooling/Content_Generation/Course_Content/Course_Blueprints/gen_bp_courselight_main.py",
+      "script_name": "gen_bp_courselight_main",
+      "script_version": "1.0.0",
+      "script_date": "2026-03-09",
+      "file_mtime_utc": "2026-03-09T15:01:14.658193+00:00"
+    },
+    {
+      "path": "/Users/trumanhale/et-drone-hone/UE_Tooling/Content_Generation/Course_Content/Maps/gen_l_coursetorus.py",
+      "script_name": "gen_l_coursetorus",
+      "script_version": "1.1.0",
+      "script_date": "2026-03-09",
+      "file_mtime_utc": "2026-03-09T15:43:13.434412+00:00"
+    }
+  ],
+  "generated_files": {
+    "material_uasset": {
+      "path": "/Users/trumanhale/et-drone-hone/UE_Drone_Env/Content/Course_Content/L_CourseTorus_v004_20260309_083500/M_CourseTorus_Red.uasset",
+      "exists": true
+    },
+    "mesh_uasset": {
+      "path": "/Users/trumanhale/et-drone-hone/UE_Drone_Env/Content/Course_Content/L_CourseTorus_v004_20260309_083500/SM_CourseTorus_1mOpening.uasset",
+      "exists": true
+    },
+    "light_blueprint_uasset": {
+      "path": "/Users/trumanhale/et-drone-hone/UE_Drone_Env/Content/Course_Content/L_CourseTorus_v004_20260309_083500/BP_CourseLight_Main.uasset",
+      "exists": true
+    },
+    "map_umap": {
+      "path": "/Users/trumanhale/et-drone-hone/UE_Drone_Env/Content/Course_Content/L_CourseTorus_v004_20260309_083500/Maps/L_CourseTorus.umap",
+      "exists": true
+    }
+  }
+}
