@@ -1,3 +1,4 @@
+```text
 et-drone-hone/
 ├── README.md                           # What this repo is and how to run it.
 ├── docs/
@@ -14,17 +15,53 @@ et-drone-hone/
 │   ├── optimizer/                      # Cost functions, constraints (physics + course_model), gradients, splines.
 │   └── planner/                        # Trajectory & path solver using physics + course_model + optimizer
 │
-│ #Live UE
-│
-├── UE_Automations/│                    # Unreal Engine project (removed legacy)
-├── UE_Drone_Env_1/                     # Unreal Engine project (removed legacy)
-││
 ├── UE_Tooling/
 │   ├── run_unreal.py                                # Run UE Scripts headless
-│   ├── Content_Generation/                          # Content-gen scripts via run_unreal.py. typically, run-once persisted
-│   │   ├── create_random_torus_course.py
-│   │   ├── ...
-│   │   └── create_basic_light_source.py
+│   ├── Artifacts/
+│   │   └── runs/
+│   │       └── <course>_<version>_<timestamp>.json # Per-run manifest: script metadata, command, log path, generated outputs
+│   ├── Content_Generation/                          # UE Editor content-gen scripts (persisted assets/maps)
+│   │   ├── Course_Content/
+│   │   │   ├── README.md                            # Conventions, version/date policy, and run patterns for course generators
+│   │   │   ├── asset_assembly.py                    # Shared create/load/save helpers for materials, meshes, and blueprints
+│   │   │   ├── run_versioned_course_generation.py   # Wrapper: builds run folders, executes map generator, writes run manifest
+│   │   │   ├── Materials/
+│   │   │   │   └── gen_m_coursetorus_red.py         # Generate/reuse `M_CourseTorus_Red`
+│   │   │   ├── Meshes/
+│   │   │   │   └── gen_sm_coursetorus_1mopening.py  # Generate/reuse torus mesh asset
+│   │   │   ├── Course_Blueprints/
+│   │   │   │   └── gen_bp_courselight_main.py       # Generate/reuse `BP_CourseLight_Main` asset
+│   │   │   └── Maps/
+│   │   │       └── gen_l_coursetorus.py             # Assemble level: ensure light actor, place toruses, save map
+│   │   ├── Drone_Content/                           # Drone asset generators (currently placeholder TODO scripts)
+│   │   │   ├── Drone_Blueprints/
+│   │   │   │   ├── gen_bp_dronepawn.py
+│   │   │   │   ├── gen_bp_dronesensors.py
+│   │   │   │   ├── gen_bp_dronemovement_6dof.py
+│   │   │   │   └── gen_bp_dronetelemetrysampler.py
+│   │   │   ├── Interfaces/
+│   │   │   │   ├── gen_bpi_droneposeprovider.py
+│   │   │   │   ├── gen_bpi_droneviewpointprovider.py
+│   │   │   │   ├── gen_bpi_dronetelemetryprovider.py
+│   │   │   │   └── gen_bpi_dronecommandreceiver.py
+│   │   │   ├── Data/
+│   │   │   │   ├── gen_da_dronemovementdefault.py
+│   │   │   │   └── gen_da_sensorrigprofiledefault.py
+│   │   │   ├── Materials/
+│   │   │   │   ├── gen_m_dronebody_base.py
+│   │   │   │   └── gen_mi_dronebody_default.py
+│   │   │   └── Meshes/
+│   │   │       ├── gen_sm_dronebody.py
+│   │   │       └── gen_sm_dronecollisionproxy.py
+│   │   └── io/                                      # IO asset generators (currently placeholder TODO scripts)
+│   │       ├── Drone_Controller/
+│   │       │   ├── gen_bp_dronespawner.py
+│   │       │   └── gen_bp_dronecontroller.py
+│   │       ├── Data_Interface/
+│   │       │   └── gen_bp_samplemanager.py
+│   │       └── Data_Config/
+│   │           ├── gen_st_runconfig.py
+│   │           └── gen_bp_setdataconfig.py
 │   ├── Data_Interface/                              # TCP client + dataset writer (and/or file ingester)
 │   │   ├── Sampler_Manager.py
 │   │   ├── ...
@@ -152,3 +189,4 @@ et-drone-hone/
     ├── fusion/                         # Blend vision + map + priors into beliefs.
     ├── arbitration/                    # Choose: maneuver, replan, slow-recover, abort.
     └── safety/                         # Hard limits, geofences, failsafes, kill-switch.
+```
