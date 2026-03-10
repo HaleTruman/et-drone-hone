@@ -37,7 +37,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--script",
-        default=str((repo_root / "UE_Tooling/Content_Generation/create_random_torus_course.py").resolve()),
+        default=str((repo_root / "UE_Tooling/Content_Generation/Course_Content/Maps/gen_l_coursetorus.py").resolve()),
         help="Path to UE Python script to run via -ExecutePythonScript",
     )
     parser.add_argument(
