@@ -12,9 +12,15 @@ WebSockets are treated as the “pipe.” Message meaning is defined by the appl
 ### run_unreal.py
 Launches Unreal (Editor or headless, depending on flags), points it at the correct `.uproject` and map, and ensures the sim boots into a consistent starting state. This is the “entrypoint runner” for most automated runs.
 
-### Content_Generation/
+### UE_Build/Content_Generation/
 Python scripts that run *through Unreal Editor* to create or modify assets and/or place actors in maps. These are editor-time operations (asset creation, placements), not runtime simulation control.
 - Examples: replacing spheres with toruses, creating marker actors, stamping course geometry.
+
+### UE_Build/WebSocket/
+Source-of-truth scaffolding for the Unreal `DroneWebSocket` plugin build/deploy flow.
+- Keep hand-edited plugin source here first.
+- Use helper scripts to scaffold/sync/deploy into `UE_Drone_Env/Plugins/DroneWebSocket`.
+- Runtime Python transport code remains in top-level `WebSocket/` (bridge/protocol/schemas).
 
 ### Data_Interface/
 Responsible for collecting data from Unreal and writing an orderly dataset to disk (outside UE). This includes:
@@ -94,3 +100,19 @@ Every capture must have:
 - `run_id`
 - `drone_id`
 - `config_id`
+
+## Current scaffold status (March 2026)
+The following runtime-side tooling files are currently documentation-first scaffolds and should be
+implemented without changing the architecture boundaries above:
+
+- `Data_Interface/Sampler_Manager.py` (run/capture orchestration + persistence coordination)
+- `Data_Interface/Sampler.py` (message decode/normalize layer)
+- `Drone_Controller/Drone_Spawner.py` (spawn/reset episode setup control)
+- `Drone_Controller/Drone_Controller.py` (real-time command/control emission)
+- `Config/RunConfig.py` (YAML -> deterministic `SET_CONFIG` compiler)
+- `WebSocket/ws_bridge.py`, `WebSocket/protocol.py`, `WebSocket/schemas.py`
+
+When implementing these, preserve single-source responsibilities:
+- config mapping lives in `RunConfig.py`
+- message contract lives in `WebSocket/protocol.py`
+- transport lifecycle lives in `WebSocket/ws_bridge.py`

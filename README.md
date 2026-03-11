@@ -17,4 +17,4 @@ et-drone-hone/
 1. Read `docs/scope.md`.
 2. Read `docs/architecture.md`.
 3. For the runnable component, follow `Path_Optimizer/README.md`.
-4. For UE course generation workflow, follow `UE_Tooling/Content_Generation/Course_Content/README.md`.
+4. For UE course generation workflow, follow `UE_Tooling/UE_Build/Content_Generation/Course_Content/README.md`.

@@ -1,3 +1,17 @@
+"""
+TODO: Rename this runner to `run_unreal_build_gen.py` when runtime-control launch paths are
+split into a dedicated runner.
+
+Current scope:
+- Launch Unreal for editor-time generation/build scripts.
+- Default script target is under `UE_Tooling/UE_Build/Content_Generation`.
+
+Current dependencies:
+- UnrealEditor binary (`--unreal-editor` or `UNREAL_EDITOR`).
+- `UE_Drone_Env/UE_Drone_Env.uproject`.
+- A valid UE Python script path passed through `--script`.
+"""
+
 import argparse
 import os
 import subprocess
@@ -37,7 +51,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--script",
-        default=str((repo_root / "UE_Tooling/Content_Generation/Course_Content/Maps/gen_l_coursetorus.py").resolve()),
+        default=str((repo_root / "UE_Tooling/UE_Build/Content_Generation/Course_Content/Maps/gen_l_coursetorus.py").resolve()),
         help="Path to UE Python script to run via -ExecutePythonScript",
     )
     parser.add_argument(
