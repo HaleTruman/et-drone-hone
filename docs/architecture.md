@@ -40,7 +40,7 @@ et-drone-hone/
 │   │   │   │   ├── Data/
 │   │   │   │   ├── Materials/
 │   │   │   │   └── Meshes/
-│   │   │   └── io/                                  # IO asset generators (placeholder-first)
+│   │   │   └── IO_Content/                          # IO asset generators (placeholder-first)
 │   │   │       ├── Drone_Controller/
 │   │   │       ├── Data_Interface/
 │   │   │       └── Data_Config/
