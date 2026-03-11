@@ -1,6 +1,6 @@
 # UE Drone Runtime Data Flows
 
-This document explains the **live runtime message flow** through the current architecture for four core scenarios:
+This document explains the **target runtime message-flow model** for four core scenarios:
 
 1. Drone spawning
 2. Drone config (movement + sensors)
@@ -9,11 +9,19 @@ This document explains the **live runtime message flow** through the current arc
 
 These flows describe **runtime behavior only**. The `UE_Tooling/UE_Build/` scripts create the `.uasset` and other files ahead of time, but they do **not** directly control the simulation once Unreal is running.
 
+## Status (important)
+
+This document is a **target-state runtime contract** for implementation alignment, not a statement that every path is fully live today.
+
+- It defines the intended message/data responsibilities across tooling, WebSocket transport, and Unreal runtime assets.
+- Several referenced runtime scripts/assets in the current repo are still placeholder scaffolds.
+- Treat all JSON payloads below as **contract examples** for future implementation, validation, and testing.
+
 ---
 
 ## Key idea
 
-At runtime, the system works like this:
+At runtime, the intended system works like this:
 
 * **UE_Tooling** creates commands and config payloads.
 * **WebSocket** carries those messages between tooling and Unreal.
@@ -52,7 +60,7 @@ At runtime, the system works like this:
 
 # Scenario 1: Drone Spawning
 
-## Example JSON command
+## Example JSON command (contract example, not a confirmed live payload)
 
 ```json
 {
@@ -96,7 +104,7 @@ Inside Unreal, `WSClientComponent.h` exposes the incoming message to the Bluepri
 
 # Scenario 2: Drone Config (movement + sensors)
 
-## Example JSON command
+## Example JSON command (contract example, not a confirmed live payload)
 
 ```json
 {
@@ -155,7 +163,7 @@ Inside Unreal, `BP_SetDataConfig.uasset` receives the message and parses it into
 
 # Scenario 3: Drone Controlling
 
-## Example JSON command
+## Example JSON command (contract example, not a confirmed live payload)
 
 ```json
 {
@@ -196,7 +204,7 @@ UE_Tooling/Drone_Controller/Drone_Controller.py
 
 # Scenario 4: Data Inference / Capture
 
-## Example JSON command
+## Example JSON command (contract example, not a confirmed live payload)
 
 ```json
 {
@@ -244,7 +252,7 @@ UE_Tooling/Data_Interface/Sampler_Manager.py
 
 # Final summary
 
-## Four live runtime paths
+## Four target runtime paths
 
 ```text
 SPAWN:
@@ -288,4 +296,6 @@ Sampler_Manager.py
   -> Sampler.py
 ```
 
-The high-level pattern is simple: **tooling builds messages, WebSocket transports them, Unreal Blueprints execute them, and the drone pawn plus its modules provide the actual movement, viewpoints, telemetry, and images.**
+The high-level pattern is simple: **tooling builds messages, WebSocket transports them, Unreal Blueprints execute them, and the drone pawn plus its modules provide movement, viewpoints, telemetry, and images.**
+
+Current-state note: this is the agreed future-state flow model; implementation/wiring status should be tracked separately as runtime scripts and UE assets move from placeholder to active behavior.
