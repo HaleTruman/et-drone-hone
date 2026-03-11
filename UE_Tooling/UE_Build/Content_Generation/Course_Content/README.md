@@ -76,11 +76,11 @@ Rules:
 
 ## Running
 
-Use `UE_Tooling/run_unreal.py` and pass a specific script via `--script`, or use the versioned helper.
+Use `UE_Tooling/run_unreal_build_gen.py` and pass a specific script via `--script`, or use the versioned helper.
 
 Examples:
 
-- `python3 UE_Tooling/run_unreal.py --script UE_Tooling/UE_Build/Content_Generation/Course_Content/Maps/gen_l_coursetorus.py -- --asset-dir /Game/Course_Content --level /Game/Course_Content/Maps/L_CourseTorus`
+- `python3 UE_Tooling/run_unreal_build_gen.py --script UE_Tooling/UE_Build/Content_Generation/Course_Content/Maps/gen_l_coursetorus.py -- --asset-dir /Game/Course_Content --level /Game/Course_Content/Maps/L_CourseTorus`
 - `python3 UE_Tooling/UE_Build/Content_Generation/Course_Content/run_versioned_course_generation.py --course-name L_CourseTorus --version-id v001`
 
 ## Versioned runs and artifacts
@@ -99,7 +99,7 @@ The recommended entrypoint is:
 This helper:
 
 1. Builds run-scoped asset/map paths from course name + version + timestamp.
-2. Runs the map generation script headlessly through `UE_Tooling/run_unreal.py`.
+2. Runs the map generation script headlessly through `UE_Tooling/run_unreal_build_gen.py`.
 3. Writes a run artifact JSON to `UE_Tooling/Artifacts/runs/` named:
    - `<course_name>_<version_id>_<timestamp>.json`
 

@@ -16,7 +16,7 @@ et-drone-hone/
 │   └── planner/                        # Trajectory & path solver using physics + course_model + optimizer
 │
 ├── UE_Tooling/
-│   ├── run_unreal.py                                # Run UE Scripts headless
+│   ├── run_unreal_build_gen.py                      # Run UE build-generation scripts headless
 │   ├── Artifacts/
 │   │   └── runs/
 │   │       └── <course>_<version>_<timestamp>.json # Per-run manifest: script metadata, command, log path, generated outputs

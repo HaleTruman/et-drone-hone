@@ -9,7 +9,7 @@ WebSockets are treated as the “pipe.” Message meaning is defined by the appl
 
 ## Folder map
 
-### run_unreal.py
+### run_unreal_build_gen.py
 Launches Unreal (Editor or headless, depending on flags), points it at the correct `.uproject` and map, and ensures the sim boots into a consistent starting state. This is the “entrypoint runner” for most automated runs.
 
 ### UE_Build/Content_Generation/
@@ -70,7 +70,7 @@ Messages must include:
 
 ## Expected run flow (v0)
 1) Start `WebSocket/ws_bridge.py` (server).
-2) Launch Unreal via `run_unreal.py`.
+2) Launch Unreal via `run_unreal_build_gen.py`.
 3) Build `SET_CONFIG` JSON using `Config/RunConfig.py` (merging YAML inputs).
 4) Send `SET_CONFIG` once at startup; wait for `ACK`.
 5) Send `CMD` messages to drive drone(s).

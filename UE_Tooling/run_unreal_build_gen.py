@@ -1,6 +1,5 @@
 """
-TODO: Rename this runner to `run_unreal_build_gen.py` when runtime-control launch paths are
-split into a dedicated runner.
+run_unreal_build_gen is the canonical Unreal launcher for build/generation flows.
 
 Current scope:
 - Launch Unreal for editor-time generation/build scripts.

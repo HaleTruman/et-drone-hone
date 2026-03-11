@@ -125,7 +125,7 @@ def main() -> int:
     ue_tooling_root = repo_root / "UE_Tooling"
     content_root = repo_root / "UE_Drone_Env/Content"
 
-    run_unreal_path = ue_tooling_root / "run_unreal.py"
+    run_unreal_path = ue_tooling_root / "run_unreal_build_gen.py"
     map_script = repo_root / "UE_Tooling/UE_Build/Content_Generation/Course_Content/Maps/gen_l_coursetorus.py"
     material_script = repo_root / "UE_Tooling/UE_Build/Content_Generation/Course_Content/Materials/gen_m_coursetorus_red.py"
     mesh_script = repo_root / "UE_Tooling/UE_Build/Content_Generation/Course_Content/Meshes/gen_sm_coursetorus_1mopening.py"
