@@ -1,0 +1,19 @@
+# SensorRigProfileConfig_Telemetry.yaml
+#
+# Purpose:
+# - Human-editable recipe for non-pose telemetry fields in captures/observations.
+# - Consumed by `Config/RunConfig.py` and compiled into the telemetry section of `SET_CONFIG`.
+#
+# Pipeline relationships:
+# - Intended to align with drone-side telemetry provider interfaces.
+# - Lets tooling evolve recorded telemetry breadth without changing UE assets directly.
+#
+# Status:
+# - Placeholder scaffold values; field list expected to grow over time.
+
+schema_version: "0.1.0"
+
+telemetry:
+  enabled: true
+  include_fields: []   # Example: [angular_velocity, acceleration, collisions]
+  sample_hz: 0         # 0 = consumer decides cadence

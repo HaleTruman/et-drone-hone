@@ -1,0 +1,22 @@
+# SensorRigProfileConfig_Viewpoint.yaml
+#
+# Purpose:
+# - Human-editable recipe for active viewpoints/mounts and camera-like capture preferences.
+# - Consumed by `Config/RunConfig.py` and compiled into the viewpoint section of `SET_CONFIG`.
+#
+# Pipeline relationships:
+# - Should map to drone-side viewpoint provider names (for example mounts from sensor rig assets).
+# - Read by tooling only; UE receives JSON output from RunConfig.
+#
+# Status:
+# - Placeholder scaffold values; expand once concrete viewpoint contracts are finalized.
+
+schema_version: "0.1.0"
+
+viewpoints:
+  enabled: true
+  active: []           # Example: [front, down]
+  defaults:
+    width: 0
+    height: 0
+    fov_deg: 0

@@ -1,0 +1,21 @@
+# Config_DroneMovementTuning.yaml
+#
+# Purpose:
+# - External movement tuning recipe for runtime override (without mutating UE default DataAssets).
+# - Consumed by `Config/RunConfig.py` and merged into a unified `SET_CONFIG` payload.
+#
+# Pipeline relationships:
+# - Should map to UE movement runtime variables used by movement modules/components.
+# - Works in tandem with in-engine defaults (for example DA_DroneMovementDefault) as baseline + override.
+#
+# Status:
+# - Placeholder scaffold values; tune ranges/semantics with runtime movement implementation.
+
+schema_version: "0.1.0"
+
+movement_tuning:
+  enabled: true
+  max_speed: null
+  max_accel: null
+  max_yaw_rate: null
+  damping: null

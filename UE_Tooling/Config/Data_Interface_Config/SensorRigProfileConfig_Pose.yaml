@@ -1,0 +1,20 @@
+# SensorRigProfileConfig_Pose.yaml
+#
+# Purpose:
+# - Human-editable recipe for which pose fields should be captured/logged.
+# - Consumed by `Config/RunConfig.py` and compiled into the pose section of `SET_CONFIG`.
+#
+# Pipeline relationships:
+# - Aligns with drone-side pose provider interfaces and telemetry sampling.
+# - Read by tooling only (UE runtime should not parse YAML directly).
+#
+# Status:
+# - Placeholder scaffold values; refine as runtime capture implementation matures.
+
+schema_version: "0.1.0"
+
+pose:
+  enabled: true
+  include_fields: []   # Example: [location, rotation, forward, right, up, velocity]
+  sample_hz: 0         # 0 = consumer decides cadence
+  frame: "world"
