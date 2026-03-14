@@ -44,11 +44,16 @@ et-drone-hone/
 │   │   │       ├── Drone_Controller/
 │   │   │       ├── Data_Interface/
 │   │   │       └── Data_Config/
-│   │   └── WebSocket/                               # Plugin source-of-truth + build/deploy helpers for UE plugin
+│   │   └── WebSocket/                               # Plugin source-of-truth + bootstrap/validation helpers for UE plugin
 │   │       ├── README.md
-│   │       ├── bootstrap_plugin_scaffold.py
-│   │       ├── deploy_prebuilt_plugin.py
-│   │       └── sync_plugin_source.py
+│   │       ├── AGENTS.md                           # Unreal build guidance for working effectively with plugin bootstrap/validation scripts
+│   │       ├── Plugin_Source/
+│   │       │   ├── README.md                       # Source-of-truth notes for editing and bootstrapping the Unreal plugin
+│   │       │   └── DroneWebSocket/                 # Hand-edited plugin descriptor, config, and C++ source used by bootstrap/build
+│   │       ├── websocket_asset_assembly.py          # Shared helper for path resolution, staging, build invocation, validation, and artifact logging
+│   │       ├── bootstrap_plugin.py                  # Canonical project-plugin bootstrap/build entrypoint (keep existing unless overwrite is requested)
+│   │       ├── plugin_validate.py                   # Validates source sync, descriptor compatibility, build outputs, and headless startup readiness
+│   │       ├── run_websocket_generation.py          # Primary versioned runner that executes bootstrap + validation and records logs/manifests
 │   ├── Data_Interface/                              # TCP client + dataset writer (and/or file ingester)
 │   │   ├── Sampler_Manager.py
 │   │   ├── ...
@@ -86,16 +91,23 @@ et-drone-hone/
 │   │   └── DefaultInput.ini                       # UE-generated input defaults
 │   ├── Plugins/
 │   │   └── DroneWebSocket/
-│   │      ├── DroneWebSocket.uplugin
+│   │      ├── Binaries/
+│   │      │   └── Mac/                            # Built editor plugin outputs emitted by websocket bootstrap/build validation flow
+│   │      ├── Config/
+│   │      │   └── FilterPlugin.ini                 # Plugin packaging/filter config installed by websocket bootstrap/build
+│   │      ├── DroneWebSocket.uplugin               # Project-installed plugin descriptor built from tooling-side Plugin_Source
 │   │      └── Source/
 │   │          └── DroneWebSocket/
 │   │              ├── DroneWebSocket.Build.cs           # Adds "WebSockets" dependency
 │   │              ├── Public/
 │   │              │   ├── WSClientComponent.h           # Blueprint ActorComponent: Connect/Send/Close + events
-│   │              │   └── WSProtocolTypes.h             # Structs/enums for SET_CONFIG/CMD/OBS (optional)
+│   │              │   ├── WSConfigHandshakeActor.h      # Runtime config/action ingress actor used for minimal websocket handshake flow
+│   │              │   └── WSProtocolTypes.h             # Shared structs/helpers for websocket envelope and payload parsing
 │   │              └── Private/
-│   │                  ├── WSClientComponent.cpp
-│   │                  └── WSProtocolTypes.cpp
+│   │                  ├── DroneWebSocketModule.cpp      # Minimal module registration for the Unreal plugin
+│   │                  ├── WSClientComponent.cpp         # WebSocket client connect/send/receive implementation
+│   │                  ├── WSConfigHandshakeActor.cpp    # Minimal runtime handshake/control path used during websocket validation
+│   │                  └── WSProtocolTypes.cpp           # JSON envelope build/parse implementation for shared protocol types
 │   ├── Source/                                    # UE C++ module targets (generated)
 │   │   ├── UE_Drone_Env.Target.cs
 │   │   └── UE_Drone_EnvEditor.Target.cs
