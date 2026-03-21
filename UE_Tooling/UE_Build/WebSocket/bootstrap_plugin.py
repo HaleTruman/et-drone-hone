@@ -25,7 +25,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from websocket_asset_assembly import (
+from assemble_websocket_assets import (
     SCRIPT_DATE as ASSEMBLY_SCRIPT_DATE,
     SCRIPT_VERSION as ASSEMBLY_SCRIPT_VERSION,
     build_project_plugin,

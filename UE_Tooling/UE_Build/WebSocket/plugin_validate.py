@@ -7,7 +7,7 @@ Desired behavior:
 Interfaces:
 - Checks `UE_Tooling/UE_Build/WebSocket/Plugin_Source/<PluginName>` and `UE_Drone_Env/Plugins/<PluginName>`.
 - Validates descriptor compatibility, source/project sync, expected build outputs, and headless editor startup.
-- Uses `websocket_asset_assembly.py` for shared validation helpers and result reporting.
+- Uses `assemble_websocket_assets.py` for shared validation helpers and result reporting.
 
 Assumptions:
 - Bootstrap has already prepared or rebuilt the named project plugin as needed.
@@ -24,7 +24,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from websocket_asset_assembly import (
+from assemble_websocket_assets import (
     SCRIPT_DATE as ASSEMBLY_SCRIPT_DATE,
     SCRIPT_VERSION as ASSEMBLY_SCRIPT_VERSION,
     compare_source_snapshots,
