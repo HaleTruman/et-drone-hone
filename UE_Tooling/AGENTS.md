@@ -9,8 +9,19 @@ WebSockets are treated as the “pipe.” Message meaning is defined by the appl
 
 ## Folder map
 
-### run_unreal_build_gen.py
-Launches Unreal (Editor or headless, depending on flags), points it at the correct `.uproject` and map, and ensures the sim boots into a consistent starting state. This is the “entrypoint runner” for most automated runs.
+### run_unreal_build.py
+Canonical top-level build orchestrator.
+- Executes build stages in order: WebSocket -> Course -> Drone -> IO.
+- Enforces fail-fast stage gating.
+- Writes one authoritative top-level manifest to `Artifacts/build/<run_name>.json`.
+- Keeps build policy at the root, not inside stage-specific runners.
+
+### UE_Build/run_unreal_build_gen.py
+Shared low-level Unreal executor for build-time scripts.
+- Launches one headless Unreal Editor process.
+- Executes one UE Python script entrypoint.
+- Handles project/editor/log/userdir/timeout concerns for that one execution.
+- Does not own global build ordering.
 
 ### UE_Build/Content_Generation/
 Python scripts that run *through Unreal Editor* to create or modify assets and/or place actors in maps. These are editor-time operations (asset creation, placements), not runtime simulation control.
@@ -69,13 +80,14 @@ Messages must include:
 - `payload` (the actual data)
 
 ## Expected run flow (v0)
-1) Start `WebSocket/ws_bridge.py` (server).
-2) Launch Unreal via `run_unreal_build_gen.py`.
-3) Build `SET_CONFIG` JSON using `Config/RunConfig.py` (merging YAML inputs).
-4) Send `SET_CONFIG` once at startup; wait for `ACK`.
-5) Send `CMD` messages to drive drone(s).
-6) Request captures (or receive streaming observations).
-7) Persist metadata/images and write a run manifest that includes config hash and schema version.
+1) Build environment via `run_unreal_build.py` (WebSocket -> Course -> Drone -> IO).
+2) Start `WebSocket/ws_bridge.py` (server).
+3) Launch runtime via `run_unreal_runtime_io.py` (target name: `run_unreal_io.py`).
+4) Build `SET_CONFIG` JSON using `Config/RunConfig.py` (merging YAML inputs).
+5) Send `SET_CONFIG` once at startup; wait for `ACK`.
+6) Send `CMD` messages to drive drone(s).
+7) Request captures (or receive streaming observations).
+8) Persist metadata/images and write a run manifest that includes config hash and schema version.
 
 ## Common blockers & fixes
 If Unreal “connects but config doesn’t apply,” assume schema mismatch or parsing failure. Validate that:
@@ -85,7 +97,7 @@ If Unreal “connects but config doesn’t apply,” assume schema mismatch or p
 If Unreal never connects:
 - port already in use, or wrong URL, or plugin not enabled/compiled.
 - confirm UE plugin compiled and the WS client component is attached to the right Blueprint in-map.
-- ensure UE side conflicts are captured as client issuse, and tooling side issues are captured as server issues to scope trouble shooting. 
+- ensure UE side conflicts are captured as client issues, and tooling side issues are captured as server issues to scope troubleshooting.
 
 If commands lag:
 - if you later stream heavy data (images), split control/data into two connections. Do not create per-drone sockets.
@@ -107,7 +119,7 @@ implemented without changing the architecture boundaries above:
 
 - `Data_Interface/Sampler_Manager.py` (run/capture orchestration + persistence coordination)
 - `Data_Interface/Sampler.py` (message decode/normalize layer)
-- `Drone_Controller/Drone_Spawner.py` (spawn/reset episode setup control)
+- `Drone_Controller/Drone_Spawner.py` (spawn episode setup control)
 - `Drone_Controller/Drone_Controller.py` (real-time command/control emission)
 - `Config/RunConfig.py` (YAML -> deterministic `SET_CONFIG` compiler)
 - `WebSocket/ws_bridge.py`, `WebSocket/protocol.py`, `WebSocket/schemas.py`

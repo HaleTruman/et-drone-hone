@@ -16,16 +16,29 @@ et-drone-hone/
 │   └── planner/                        # Trajectory & path solver using physics + course_model + optimizer
 │
 ├── UE_Tooling/
-│   ├── run_unreal_build_gen.py                      # Run UE build-generation scripts headless
 │   ├── Artifacts/
-│   │   └── runs/
-│   │       └── <course>_<version>_<timestamp>.json # Per-run manifest: script metadata, command, log path, generated outputs
+│   │   ├── build/
+│   │   │   └── <run_name>.json                     # Canonical top-level build manifest from run_unreal_build.py (authoritative level + stage statuses/artifacts + IO placement summary)
+│   │   ├── build_runs/
+│   │   │   └── <run_name>/run_manifest.json        # Compatibility mirror of top-level build manifest (legacy path retained during refactor)
+│   │   ├── runs/
+│   │   │   └── <course>_<version>_<timestamp>.json # Course build manifest: script metadata, command, log path, generated outputs
+│   │   ├── drone_content/
+│   │   │   └── <kit>_<version>_<timestamp>.json    # Drone build manifest: ordered generators, per-script metadata, logs, results
+│   │   ├── io_build/
+│   │   │   └── <kit>_<version>_<timestamp>.json    # IO build manifest: ordered scripts, per-script metadata, target level, placement result
+│   │   └── websocket_build/
+│   │       └── <run_name>/run_manifest.json        # WebSocket build manifest: step metadata, bootstrap/validation results, chosen build inputs
+│   ├── run_unreal_build.py                         # Canonical top-level build orchestrator: WebSocket -> Course -> Drone -> IO (fail-fast)
+│   ├── run_unreal_build_gen.py                     # Root compatibility shim; canonical low-level executor lives under UE_Build/
+│   ├── run_unreal_runtime_io.py                    # Runtime orchestration placeholder (target rename: run_unreal_io.py)
 │   ├── UE_Build/
+│   │   ├── run_unreal_build_gen.py                  # Run UE build-generation scripts headless
 │   │   ├── Content_Generation/                      # UE Editor content-gen scripts (persisted assets/maps)
-│   │   │   ├── Course_Content/
-│   │   │   │   ├── README.md                        # Conventions, version/date policy, and run patterns for course generators
-│   │   │   │   ├── asset_assembly.py                # Shared create/load/save helpers for materials, meshes, and blueprints
-│   │   │   │   ├── run_versioned_course_generation.py
+│   │   │   ├── Course/                              # Mirrors Drone/IO orchestration + assembly naming (in development)
+│   │   │   │   ├── README.md                        # Conventions, version/date policy, and mirrored build-layer naming for Course
+│   │   │   │   ├── assemble_course_assets.py        # Shared Course-domain assembly executor; mirrors Drone/IO/WebSocket helper naming
+│   │   │   │   ├── run_course_build.py              # Course build orchestration runner; mirrors Drone/IO/WebSocket runner naming
 │   │   │   │   ├── Materials/
 │   │   │   │   │   └── gen_m_coursetorus_red.py
 │   │   │   │   ├── Meshes/
@@ -34,14 +47,21 @@ et-drone-hone/
 │   │   │   │   │   └── gen_bp_courselight_main.py
 │   │   │   │   └── Maps/
 │   │   │   │       └── gen_l_coursetorus.py
-│   │   │   ├── Drone_Content/                       # Drone asset generators (placeholder-first)
+│   │   │   ├── Drone/                               # Mirrors Course/IO orchestration + assembly naming (in development)
+│   │   │   │   ├── assemble_drone_assets.py         # Shared Drone-domain assembly executor; mirrors Course/IO/WebSocket helper naming
+│   │   │   │   ├── run_drone_build.py               # Drone build orchestration runner; mirrors Course/IO/WebSocket runner naming
 │   │   │   │   ├── Drone_Blueprints/
 │   │   │   │   ├── Interfaces/
+│   │   │   │   ├── Structs/                         # Explicit struct schema generators; mirrors the .uasset contracts in /Game/Drone_Content/Structs
 │   │   │   │   ├── Data/
 │   │   │   │   ├── Materials/
 │   │   │   │   └── Meshes/
-│   │   │   └── IO_Content/                          # IO asset generators (placeholder-first)
+│   │   │   └── IO/                                  # Mirrors Course/Drone orchestration + assembly naming, with map placement handled in the build runner
+│   │   │       ├── assemble_io_assets.py            # Shared IO-domain assembly executor; mirrors Course/Drone/WebSocket helper naming
+│   │   │       ├── run_io_build.py                  # IO build orchestration runner; records build provenance and performs deterministic singleton placement for BP_SetDataConfig and BP_SampleManager
 │   │   │       ├── Drone_Controller/
+│   │   │       │   ├── gen_bp_dronespawner.py       # Generates BP_DroneSpawner (runtime SPAWN_DRONES entrypoint in /Game/io)
+│   │   │       │   └── gen_bp_dronecontroller.py    # Generates BP_DroneController (runtime CMD router to drone command receiver)
 │   │   │       ├── Data_Interface/
 │   │   │       └── Data_Config/
 │   │   └── WebSocket/                               # Plugin source-of-truth + bootstrap/validation helpers for UE plugin
@@ -50,18 +70,16 @@ et-drone-hone/
 │   │       ├── Plugin_Source/
 │   │       │   ├── README.md                       # Source-of-truth notes for editing and bootstrapping the Unreal plugin
 │   │       │   └── DroneWebSocket/                 # Hand-edited plugin descriptor, config, and C++ source used by bootstrap/build
-│   │       ├── websocket_asset_assembly.py          # Shared helper for path resolution, staging, build invocation, validation, and artifact logging
+│   │       ├── assemble_websocket_assets.py         # Shared WebSocket build executor; mirrors Course/Drone/IO helper naming
 │   │       ├── bootstrap_plugin.py                  # Canonical project-plugin bootstrap/build entrypoint (keep existing unless overwrite is requested)
 │   │       ├── plugin_validate.py                   # Validates source sync, descriptor compatibility, build outputs, and headless startup readiness
-│   │       ├── run_websocket_generation.py          # Primary versioned runner that executes bootstrap + validation and records logs/manifests
+│   │       ├── run_websocket_build.py               # WebSocket build orchestration runner; mirrors Course/Drone/IO runner naming
 │   ├── Data_Interface/                              # TCP client + dataset writer (and/or file ingester)
 │   │   ├── Sampler_Manager.py
 │   │   ├── ...
-│   │   └── Sampler.py
-│   ├── Drone_Controller/                             # TCP client that sends commands (or later, operator runtime)
-│   │   ├── Drone_Spawner.py
-│   │   ├── ...
-│   │   └── Drone_Controller.py                       # TCP operator endpoint.
+│   ├── Drone_Controller/                             # Tooling-side runtime command emitters via websocket bridge
+│   │   ├── Drone_Spawner.py                          # Builds/sends SPAWN_DRONES requests for episode setup
+│   │   └── Drone_Controller.py                       # Builds/sends CMD requests keyed by drone_id
 │   ├── Config/
 │   │   ├── Data_Interface_Config/
 │   │   │   ├── SensorRigProfileConfig_Pose.yaml
@@ -123,17 +141,21 @@ et-drone-hone/
 │   │   │   │   ├── SM_DroneBody.uasset                  # Drone mesh (visual body)
 │   │   │   │   └── SM_DroneCollisionProxy.uasset        # (optional) simple collision proxy for stable physics later
 │   │   │   ├── Materials/
-│   │   │   │   └── M_DroneBody_Default.uasset           # material for drone.
+│   │   │   │   ├── M_DroneBody_Base.uasset              # Base material definition for the drone body.
+│   │   │   │   └── MI_DroneBody_Default.uasset          # Default material instance applied to the generated drone body mesh.
 │   │   │   ├── Blueprints/
 │   │   │   │   ├── BP_DronePawn.uasset                  # The drone container that composes modules
-│   │   │   │   ├── BP_DroneSensors.uasset               # Sensor rig asset (mount transforms, camera mount(s))
+│   │   │   │   ├── BP_DroneSensors.uasset               # Canonical viewpoint/image runtime module
 │   │   │   │   ├── BP_DroneMovement_6DOF.uasset         # Movement module (ActorComponent): applies cmd → motion
-│   │   │   │   └── BP_DroneTelemetrySampler.uasset      # Telemetry module (ActorComponent): samples pose/physics
+│   │   │   │   └── BP_DroneTelemetrySampler.uasset      # Canonical telemetry runtime module; pose converges here too
 │   │   │   ├── Interfaces/
-│   │   │   │   ├── BPI_DronePoseProvider.uasset         # Contract: provide pose (+ velocity if available)
-│   │   │   │   ├── BPI_DroneViewpointProvider.uasset    # Contract: provide viewpoint transforms (+ camera params)
-│   │   │   │   ├── BPI_DroneTelemetryProvider.uasset    # Contract: provide extended telemetry (future-proof)
+│   │   │   │   ├── BPI_DroneViewpointProvider.uasset    # Canonical viewpoint query contract
+│   │   │   │   ├── BPI_DroneTelemetryProvider.uasset    # Canonical telemetry query contract (pose converges here too)
 │   │   │   │   └── BPI_DroneCommandReceiver.uasset      # Contract: accept normalized control commands
+│   │   │   ├── Structs/
+│   │   │   │   ├── ST_DroneCommandNormalized.uasset      # Typed command payload schema (pitch/roll/yaw/throttle + trace ids).
+│   │   │   │   ├── ST_DroneViewpointSnapshot.uasset      # Typed viewpoint/camera settings schema for active mount.
+│   │   │   │   └── ST_DroneTelemetrySnapshot.uasset      # Canonical top-level telemetry snapshot schema (pose + telemetry + proximity).
 │   │   │   └── Data/
 │   │   │       ├── DA_DroneMovementDefault.uasset       # Params: max speed, accel, rate limits, damping
 │   │   │       └── DA_SensorRigProfileDefault.uasset    # Params: default FOVs, mount offsets, names
@@ -155,25 +177,41 @@ et-drone-hone/
 │
 │   #DRAFTING
 │
-├── model_training/
-│   ├── datasets/                       # Logged episodes, trajectories, sensor streams (source of truth for offline).
-│   │   ├── runs/
-│   │   │   └── run_YYYYMMDD_HHMMSS/
-│   │   │       ├── images/             # PNGs per drone/viewpoint keyed by capture_id.
-│   │   │       ├── meta/               # observations.jsonl, captures.csv, episodes.jsonl.
-│   │   │       └── manifests/          # manifest.json, schema version, capture profiles used.
-│   │   └── schemas/                    # Dataset schema versions for backwards-compatible parsing.
-│   ├── features/                       # Feature extraction (CNN preproc, RL state vectors, embeddings).
-│   │   ├── build_cnn_tensors.py        # Load PNG+labels → normalized tensors → train-ready shards.
-│   │   ├── build_rl_state_frames.py    # observations.jsonl → pandas dataframe → stacked state frames.
-│   │   └── augmentations.py            # Controlled augments (crop/blur/noise) with deterministic seeds.
-│   ├── trainers/                       # Offline training loops (SL/RL/IL).
-│   │   ├── train_cnn.py                # Supervised vision training on disk datasets.
-│   │   ├── train_policy_rl.py          # RL training using state frames (+ optional vision features).
-│   │   └── train_imitation.py          # Imitation learning from expert trajectories.
-│   └── eval/                           # Metrics, benchmarks, regression suites.
-│       ├── eval_offline.py             # Offline eval on held-out runs (accuracy, success rate, drift).
-│       └── regressions/                # Golden runs and expected metrics to prevent silent breakage.
+├── Model_Training/
+│   ├── data/                           # MVP: direct on-disk image+label inputs; extensible seam for later upstream imports.
+│   │   ├── dummy/
+│   │   │   ├── images/                 # MVP: synthetic PNGs for smoke-testing the training loop.
+│   │   │   └── labels.jsonl            # MVP: simple labels keyed by sample_id/image_path.
+│   │   └── imported/                   # FUTURE: mirrored upstream runtime exports once the data share contract is stable.
+│   │       └── run_YYYYMMDD_HHMMSS/
+│   │           ├── images/             # FUTURE: PNGs per drone/viewpoint keyed by capture_id or sample_id.
+│   │           ├── meta/               # FUTURE: observations.jsonl, labels.jsonl, manifests, and traceability records.
+│   │           └── schemas/            # FUTURE: dataset schema versions for backwards-compatible parsing.
+│   ├── datasets/                       # MVP: thin dataset/loaders that map disk data -> training samples.
+│   │   ├── simple_image_dataset.py     # MVP: PNG + labels.jsonl -> Dataset/DataLoader contract.
+│   │   └── ue_artifact_shim.py         # FUTURE: light shim from UE artifacts into the same sample contract.
+│   ├── models/                         # MVP: training-time model definitions.
+│   │   └── simple_cnn.py               # MVP: small CNN baseline for gate-steering image classification.
+│   ├── features/                       # Shared preprocessing and augmentation utilities.
+│   │   ├── image_transforms.py         # MVP: resize, normalize, tensor conversion.
+│   │   ├── augmentations.py            # FUTURE: controlled augments (crop/blur/noise) with deterministic seeds.
+│   │   ├── build_cnn_tensors.py        # FUTURE: optional PNG+labels -> train-ready tensor shards.
+│   │   └── build_rl_state_frames.py    # FUTURE: observations.jsonl -> stacked RL state frames.
+│   ├── trainers/                       # Offline training loops.
+│   │   ├── train_cnn.py                # MVP: supervised vision training on labeled image datasets.
+│   │   ├── train_policy_rl.py          # FUTURE: RL training using state frames (+ optional vision features).
+│   │   └── train_imitation.py          # FUTURE: imitation learning from expert trajectories.
+│   ├── eval/                           # Offline evaluation and regression checks.
+│   │   ├── eval_cnn.py                 # MVP: held-out classifier evaluation.
+│   │   ├── eval_offline.py             # FUTURE: broader offline eval (accuracy, success rate, drift).
+│   │   └── regressions/                # FUTURE: golden runs and expected metrics to prevent silent breakage.
+│   └── artifacts/                      # MVP: saved configs/checkpoints/metrics; FUTURE: richer exports and debug outputs.
+│       └── run_YYYYMMDD_HHMMSS/
+│           ├── config.json             # MVP: saved training config for reproducibility.
+│           ├── metrics.json            # MVP: train/validation metrics summary.
+│           ├── best_model.pt           # MVP: best checkpoint by validation metric.
+│           ├── last_model.pt           # MVP: final checkpoint from the run.
+│           └── predictions.jsonl       # FUTURE: sample-level predictions for debugging and regression review.
 │
 ├── operator/
 │   ├── http_bridge/                    # Python utilities for in-engine HTTP control for unreal + any endpoint
