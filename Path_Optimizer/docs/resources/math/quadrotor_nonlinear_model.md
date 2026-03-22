@@ -267,7 +267,7 @@ $$
 $$
 
 $$
-- \begin{bmatrix} p \\ q \\ r \end{bmatrix} \times \begin{bmatrix} 0 \\ 0 \\ h_z \end{bmatrix} = - \begin{bmatrix}
+\begin{bmatrix} p \\ q \\ r \end{bmatrix} \times \begin{bmatrix} 0 \\ 0 \\ h_z \end{bmatrix} = - \begin{bmatrix}
 q \cdot h_z - r \cdot 0 \\
 r \cdot 0 - p \cdot h_z \\
 p \cdot 0 - q \cdot 0
