@@ -207,6 +207,23 @@ def _place_single_actor(spec: PlacementSpec, bp_class: object) -> dict:
         f"created={created} preexisting={preexisting_count} deduplicated={destroyed_count} count_after=1"
     )
     primary.set_actor_label(spec.actor_label)
+    startup_drone_id = ""
+    startup_drone_id_tag = ""
+    if spec.key == "startup_drone_pawn":
+        existing_tags = []
+        try:
+            existing_tags = [str(tag) for tag in list(primary.tags)]
+        except Exception:
+            existing_tags = []
+        normalized_tags = [
+            tag
+            for tag in existing_tags
+            if not str(tag).startswith("DroneId:")
+        ]
+        normalized_tags.append(STARTUP_DRONE_ID_TAG)
+        primary.set_editor_property("tags", normalized_tags)
+        startup_drone_id = STARTUP_DRONE_ID
+        startup_drone_id_tag = STARTUP_DRONE_ID_TAG
     return {
         "status": "success",
         "key": spec.key,
@@ -218,6 +235,8 @@ def _place_single_actor(spec: PlacementSpec, bp_class: object) -> dict:
         "deduplicated_count": destroyed_count,
         "count_after": 1,
         "resolved_actor_name": primary.get_name(),
+        "startup_drone_id": startup_drone_id,
+        "startup_drone_id_tag": startup_drone_id_tag,
     }
 
 
