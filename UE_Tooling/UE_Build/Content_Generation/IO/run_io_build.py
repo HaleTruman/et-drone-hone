@@ -28,6 +28,7 @@ Success conditions:
 - Target map contains deterministic singleton instances for:
   - `BP_SetDataConfig_Main`
   - `BP_SampleManager_Main`
+  - `BP_DronePawn_Startup_Main`
 """
 
 from __future__ import annotations
@@ -44,14 +45,18 @@ from pathlib import Path
 import unreal
 
 SCRIPT_NAME = "run_io_build"
-SCRIPT_VERSION = "1.4.0"
-SCRIPT_DATE = "2026-03-16"
+SCRIPT_VERSION = "1.5.0"
+SCRIPT_DATE = "2026-03-22"
 
 BP_SET_DATA_CONFIG_PATH = "/Game/io/Data_Config/BP_SetDataConfig"
 BP_SAMPLE_MANAGER_PATH = "/Game/io/Data_Interface/BP_SampleManager"
+BP_STARTUP_DRONE_PAWN_PATH = "/Game/Drone_Content/Blueprints/BP_DronePawn"
 DEFAULT_LEVEL = "/Game/Course_Content/L_CourseTorus_v004_20260309_083500/Maps/L_CourseTorus"
 SET_DATA_CONFIG_ACTOR_LABEL = "BP_SetDataConfig_Main"
 SAMPLE_MANAGER_ACTOR_LABEL = "BP_SampleManager_Main"
+STARTUP_DRONE_PAWN_ACTOR_LABEL = "BP_DronePawn_Startup_Main"
+STARTUP_DRONE_ID = "drone_0001"
+STARTUP_DRONE_ID_TAG = f"DroneId:{STARTUP_DRONE_ID}"
 
 ORDERED_SCRIPT_PATHS = [
     "Data_Config/gen_st_runconfig.py",
@@ -107,6 +112,12 @@ REQUIRED_PLACEMENTS = [
         asset_path=BP_SAMPLE_MANAGER_PATH,
         actor_label=SAMPLE_MANAGER_ACTOR_LABEL,
         spawn_xyz=(200.0, 0.0, 120.0),
+    ),
+    PlacementSpec(
+        key="startup_drone_pawn",
+        asset_path=BP_STARTUP_DRONE_PAWN_PATH,
+        actor_label=STARTUP_DRONE_PAWN_ACTOR_LABEL,
+        spawn_xyz=(827.5285695147068, 332.6557360500083, 3838.483592493755),
     ),
 ]
 
