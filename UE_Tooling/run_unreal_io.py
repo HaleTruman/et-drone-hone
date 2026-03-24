@@ -1140,3 +1140,212 @@ async def _run_phase3_to_phase8_startup(
         phase3["bridge_summary_path"] = str(bridge_artifacts_root / runtime_run_id / "summary.json")
 
     return phase3, phase4, phase5, phase6, phase7, phase8
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=False), encoding="utf-8")
+
+
+def _derive_phase_status_overview(phase_results: dict[str, Any]) -> dict[str, str]:
+    overview: dict[str, str] = {}
+    for phase_name in RUNTIME_PHASE_ORDER:
+        phase_entry_raw = phase_results.get(phase_name, {})
+        phase_entry = phase_entry_raw if isinstance(phase_entry_raw, dict) else {}
+        overview[phase_name] = str(phase_entry.get("status", "not_present"))
+    return overview
+
+
+def _first_non_success_phase(phase_results: dict[str, Any]) -> dict[str, str]:
+    for phase_name in RUNTIME_PHASE_ORDER:
+        phase_entry_raw = phase_results.get(phase_name, {})
+        phase_entry = phase_entry_raw if isinstance(phase_entry_raw, dict) else {}
+        status = str(phase_entry.get("status", ""))
+        if not status or status in {"success", "skipped"}:
+            continue
+        return {
+            "phase": phase_name,
+            "status": status,
+            "error": str(phase_entry.get("error", "")),
+        }
+    return {"phase": "", "status": "", "error": ""}
+
+
+def _build_capability_summary(phase_results: dict[str, Any]) -> dict[str, Any]:
+    phase7_raw = phase_results.get("phase7_sampler_smoke_capture", {})
+    phase7 = phase7_raw if isinstance(phase7_raw, dict) else {}
+    phase8_raw = phase_results.get("phase8_spawner_capability", {})
+    phase8 = phase8_raw if isinstance(phase8_raw, dict) else {}
+    phase9_raw = phase_results.get("phase9_controller_capability", {})
+    phase9 = phase9_raw if isinstance(phase9_raw, dict) else {}
+    return {
+        "sampler": {
+            "phase": "phase7_sampler_smoke_capture",
+            "status": str(phase7.get("status", "not_present")),
+            "enabled": bool(phase7.get("enabled", False)),
+            "error": str(phase7.get("error", "")),
+        },
+        "spawner": {
+            "phase": "phase8_spawner_capability",
+            "status": str(phase8.get("capability_status", phase8.get("status", "not_present"))),
+            "enabled": bool(phase8.get("enabled", False)),
+            "error": str(phase8.get("error", "")),
+        },
+        "controller": {
+            "phase": "phase9_controller_capability",
+            "status": str(phase9.get("capability_status", "pending_not_implemented")),
+            "enabled": bool(phase9.get("enabled", False)),
+            "error": str(phase9.get("error", "")),
+        },
+    }
+
+
+def _build_evidence_summary(phase_results: dict[str, Any]) -> dict[str, Any]:
+    phase3_raw = phase_results.get("phase3_bridge_supervision", {})
+    phase3 = phase3_raw if isinstance(phase3_raw, dict) else {}
+    phase4_raw = phase_results.get("phase4_unreal_runtime_launch", {})
+    phase4 = phase4_raw if isinstance(phase4_raw, dict) else {}
+    phase7_raw = phase_results.get("phase7_sampler_smoke_capture", {})
+    phase7 = phase7_raw if isinstance(phase7_raw, dict) else {}
+    capture_evidence_raw = phase7.get("capture_evidence", {})
+    capture_evidence = capture_evidence_raw if isinstance(capture_evidence_raw, dict) else {}
+    return {
+        "bridge_summary_path": str(phase3.get("bridge_summary_path", "")),
+        "unreal_stdout_log_path": str(phase4.get("stdout_log_path", "")),
+        "unreal_engine_log_path": str(phase4.get("expected_engine_log_path", "")),
+        "accepted_sample_file": str(capture_evidence.get("accepted_sample_file", "")),
+        "raw_image_file": str(capture_evidence.get("raw_image_file", "")),
+    }
+
+
+def _build_operator_summary(
+    *,
+    overall_status: str,
+    error: str,
+    phase_results: dict[str, Any],
+    runtime_run_id: str,
+    build_manifest_path: Path | None,
+    runtime_session_manifest_path: Path,
+) -> dict[str, Any]:
+    phase_status_by_name = _derive_phase_status_overview(phase_results)
+    first_problem = _first_non_success_phase(phase_results)
+    return {
+        "overall_status": overall_status,
+        "runtime_run_id": runtime_run_id,
+        "build_manifest_path": str(build_manifest_path) if build_manifest_path else "",
+        "runtime_session_manifest_path": str(runtime_session_manifest_path),
+        "phase_status_by_name": phase_status_by_name,
+        "first_problem_phase": first_problem.get("phase", ""),
+        "first_problem_status": first_problem.get("status", ""),
+        "first_problem_error": first_problem.get("error", "") or error,
+        "capability_status_by_domain": _build_capability_summary(phase_results),
+        "evidence_paths": _build_evidence_summary(phase_results),
+    }
+
+
+def main() -> int:
+    repo_root = _repo_root()
+    args = _parse_args(repo_root)
+
+    started_at_utc = _now_utc_iso()
+    phase_results: dict[str, Any] = {}
+    overall_status = "failed"
+    error = ""
+    manifest_selection_source = ""
+    build_manifest_path: Path | None = None
+    runtime_session_manifest_path = Path("/tmp/runtime_session_manifest.json")
+    runtime_run_id = args.runtime_run_id
+    startup_set_config_mode = ""
+
+    try:
+        build_manifest_path, manifest_selection_source = _resolve_build_manifest_path(args, repo_root)
+        build_payload = _load_json_object(build_manifest_path)
+        phase2_result = _validate_phase2_build_handoff(build_payload, build_manifest_path)
+        phase_results["phase2_build_handoff_ingest"] = phase2_result
+        if phase2_result["status"] != "success":
+            error = "Phase 2 build handoff validation failed."
+        else:
+            if not runtime_run_id:
+                base = _sanitize(str(phase2_result.get("build_run_id", "")))
+                runtime_run_id = f"{base}_runtime" if base else f"runtime_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+            runtime_artifacts_root = Path(args.artifacts_root).expanduser()
+            if not runtime_artifacts_root.is_absolute():
+                runtime_artifacts_root = (repo_root / runtime_artifacts_root).resolve()
+            runtime_session_dir = runtime_artifacts_root / runtime_run_id
+            runtime_session_dir.mkdir(parents=True, exist_ok=True)
+            runtime_session_manifest_path = runtime_session_dir / "runtime_session_manifest.json"
+            bridge_artifacts_root = runtime_session_dir / "bridge"
+
+            launch_plan = _resolve_phase4_launch_plan(
+                args=args,
+                build_payload=build_payload,
+                phase2_result=phase2_result,
+                runtime_session_dir=runtime_session_dir,
+                repo_root=repo_root,
+            )
+            phase3_result, phase4_result, phase5_result, phase6_result, phase7_result, phase8_result = asyncio.run(
+                _run_phase3_to_phase8_startup(
+                    args=args,
+                    phase2_result=phase2_result,
+                    runtime_run_id=runtime_run_id,
+                    bridge_artifacts_root=bridge_artifacts_root,
+                    repo_root=repo_root,
+                    launch_plan=launch_plan,
+                )
+            )
+            startup_set_config_mode = str(phase5_result.get("mode", ""))
+            phase_results["phase3_bridge_supervision"] = phase3_result
+            phase_results["phase4_unreal_runtime_launch"] = phase4_result
+            phase_results["phase5_config_apply"] = phase5_result
+            phase_results["phase6_startup_topology_validation"] = phase6_result
+            phase_results["phase7_sampler_smoke_capture"] = phase7_result
+            phase_results["phase8_spawner_capability"] = phase8_result
+            if phase3_result["status"] != "success":
+                error = "Phase 3 bridge supervision failed."
+            elif phase4_result["status"] != "success":
+                error = "Phase 4 Unreal runtime launch orchestration failed."
+            elif phase5_result["status"] != "success":
+                error = "Phase 5 config compilation and handshake sequencing failed."
+            elif phase6_result["status"] != "success":
+                error = "Phase 6 startup topology validation failed."
+            elif phase7_result["status"] not in {"success", "skipped"}:
+                error = "Phase 7 sampler integration and image smoke proof failed."
+            elif phase8_result["status"] not in {"success", "skipped"}:
+                error = "Phase 8 spawner capability integration failed."
+            else:
+                overall_status = "success"
+    except Exception as exc:
+        error = str(exc)
+
+    finished_at_utc = _now_utc_iso()
+    payload = {
+        "script": {"name": SCRIPT_NAME, "version": SCRIPT_VERSION, "date": SCRIPT_DATE},
+        "status": overall_status,
+        "error": error,
+        "started_at_utc": started_at_utc,
+        "finished_at_utc": finished_at_utc,
+        "runtime_run_id": runtime_run_id,
+        "phase_scope": "phase2_to_phase8",
+        "build_manifest_selection_source": manifest_selection_source,
+        "build_manifest_path": str(build_manifest_path) if build_manifest_path else "",
+        "startup_set_config_mode": startup_set_config_mode,
+        "phase_results": phase_results,
+        "next_required_phase": "phase9_controller_capability_integration",
+    }
+    payload["operator_summary"] = _build_operator_summary(
+        overall_status=overall_status,
+        error=error,
+        phase_results=phase_results,
+        runtime_run_id=runtime_run_id,
+        build_manifest_path=build_manifest_path,
+        runtime_session_manifest_path=runtime_session_manifest_path,
+    )
+    _write_json(runtime_session_manifest_path, payload)
+    payload["runtime_session_manifest_path"] = str(runtime_session_manifest_path)
+    print(json.dumps(payload, indent=2, sort_keys=False))
+    return 0 if overall_status == "success" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
