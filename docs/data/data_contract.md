@@ -1,8 +1,18 @@
-# WebSocket Data Contract (Working Draft)
+# WebSocket Data Contract
 
-Note: this document is currently a broad reference placeholder and should not be
-read as proof that every described contract surface is fully implemented end to
-end.
+This document is the broad runtime/build data-contract reference for the live
+repo.
+
+It should describe the current implemented contract first:
+
+- top-level build handoff through `run_unreal_build.py`
+- top-level runtime orchestration through `run_unreal_io.py`
+- websocket transport through `ws_bridge.py`
+- Unreal ingress/runtime ownership for config, spawn, command, and observation
+
+Future-state or partially implemented items should remain clearly marked as
+`LOOSE` or `OPEN` instead of being mixed into the live contract as if they are
+already final.
 
 ## Architecture Diagram
 
@@ -30,8 +40,8 @@ flowchart LR
     end
 
     subgraph Storage["Persistence ownership"]
-        RAW["UE_Tooling/Artifacts/websocket/<run_id><br/>raw_messages.jsonl<br/>raw_observations.jsonl<br/>raw_captures/..."]
-        NORM["Sampler-managed accepted samples<br/>samples/accepted_samples.jsonl<br/>samples/images/..."]
+        RAW["UE_Tooling/Artifacts/runtime/<runtime_run_id>/bridge/<runtime_run_id><br/>raw_messages.jsonl<br/>raw_observations.jsonl<br/>raw_captures/..."]
+        NORM["Sampler-managed accepted samples<br/>bridge/<runtime_run_id>/samples/accepted_samples.jsonl<br/>bridge/<runtime_run_id>/samples/images/..."]
     end
 
     RC -- "SET_CONFIG" --> WS
@@ -91,20 +101,22 @@ Client -> Server:
 
 | Side | System | Touches | Receives from | Sends or places to | Status |
 | --- | --- | --- | --- | --- | --- |
+| Build orchestration | `run_unreal_build.py` | top-level build handoff, authoritative level identity, stage provenance, IO placement validation | domain build runners | `UE_Tooling/Artifacts/build/<run_name>.json` plus compatibility mirror under `Artifacts/build_runs/...` | `ACTIVE` |
+| Runtime orchestration | `run_unreal_io.py` | runtime session provenance, phase-by-phase readiness evidence, bridge/UE evidence paths, operator summary | build manifest, `ws_bridge.py`, Unreal runtime, sampler/spawner tooling | `UE_Tooling/Artifacts/runtime/<runtime_run_id>/runtime_session_manifest.json` | `ACTIVE` |
 | Tooling | `RunConfig.py` | config YAML, `config_id`, `config_hash`, compiled `SET_CONFIG` payload | YAML config files | `ws_bridge.py` startup config flow | `ACTIVE` |
-| Tooling | `Drone_Spawner.py` | spawn/setup intent, requested `drone_id` set | run context | `ws_bridge.py` as `SPAWN_DRONES` | `LOOSE` |
+| Tooling | `Drone_Spawner.py` | spawn/setup intent, requested `drone_id` set | run context | `ws_bridge.py` as `SPAWN_DRONES` | `ACTIVE` |
 | Tooling | `Drone_Controller.py` | control intent, per-drone command payloads | run context, `drone_id` | `ws_bridge.py` as `CMD` | `LOOSE` |
-| Tooling | `Sampler_Manager.py` | owned sample lifecycle, capture intent, image validation, accepted sample persistence, downstream placement | run context, raw `OBS` | `ws_bridge.py` as `CAPTURE_NOW`; downstream training/storage locations | `LOOSE` |
-| Transport | `ws_bridge.py` | full envelope, validation, gating state, optional raw messages, optional raw observations, raw PNG bytes | all tooling senders and Unreal websocket client | Unreal client over websocket; `UE_Tooling/Artifacts/websocket/<run_id>` | `ACTIVE` |
+| Tooling | `Sampler_Manager.py` | owned sample lifecycle, capture intent, image validation, accepted sample persistence, downstream placement | run context, raw `OBS` | `ws_bridge.py` as `CAPTURE_NOW`; accepted sample paths under runtime bridge artifacts | `ACTIVE` |
+| Transport | `ws_bridge.py` | full envelope, validation, gating state, optional raw messages, optional raw observations, raw PNG bytes | all tooling senders and Unreal websocket client | Unreal client over websocket; `UE_Tooling/Artifacts/runtime/<runtime_run_id>/bridge/<runtime_run_id>` | `ACTIVE` |
 | Unreal client | `UWSClientComponent` | raw websocket text messages and connection state | `ws_bridge.py` | `AWSConfigHandshakeActor` event callbacks and outbound websocket sends | `ACTIVE` |
-| Unreal ingress | `AWSConfigHandshakeActor` / `BP_SetDataConfig` | parsed inbound messages, config-ready state, current minimal spawn/cmd/capture handling | `UWSClientComponent` | `BP_SetDataConfig` state, `BP_DroneSpawner`, `BP_DroneController`, `BP_SampleManager`, outbound replies | `ACTIVE` |
+| Unreal ingress | `AWSConfigHandshakeActor` / `BP_SetDataConfig` | parsed inbound messages, config-ready state, live config apply, runtime dispatch, outbound replies | `UWSClientComponent` | `BP_SetDataConfig` state, `BP_DroneSpawner`, `BP_DroneController`, `BP_SampleManager`, outbound replies | `ACTIVE` |
 | Unreal runtime | `BP_DroneSpawner` | spawn state, runtime drone IDs | websocket ingress actor | spawn results back to ingress actor as `STATUS` | `LOOSE` |
 | Unreal runtime | `BP_DroneController` | command application state | websocket ingress actor | command status back to ingress actor as `STATUS` | `LOOSE` |
-| Unreal runtime | `BP_SampleManager` | capture orchestration, atomic observation assembly | websocket ingress actor | pose/viewpoint/telemetry query calls and assembled `OBS` back to ingress actor | `LOOSE` |
+| Unreal runtime | `BP_SampleManager` | capture orchestration, active config reference resolution, atomic observation assembly | websocket ingress actor | viewpoint/image query calls and assembled `OBS` back to ingress actor | `ACTIVE` |
 | Unreal runtime | `BPI_DroneViewpointProvider` | viewpoint snapshot query surface | `BP_SampleManager` | viewpoint snapshot data | `LOOSE` |
 | Unreal runtime | `BPI_DroneTelemetryProvider` | canonical top-level telemetry snapshot query surface bound to `ST_DroneTelemetrySnapshot` only | `BP_SampleManager` | telemetry snapshot data | `LOOSE` |
 | Unreal runtime | `BP_DronePawn` / `BP_DroneSensors` / `BP_DroneTelemetrySampler` | composition-root state, live viewpoint state, live telemetry state, and image-producing state | provider interface calls and runtime simulation state | provider snapshots feeding `BP_SampleManager` | `LOOSE` |
-| Persistence | `UE_Tooling/Artifacts/websocket/<run_id>` | raw transport records and decoded image captures | `ws_bridge.py` | offline review and future dataset import paths | `ACTIVE` |
+| Persistence | `UE_Tooling/Artifacts/runtime/<runtime_run_id>` | runtime session manifest, bridge transport records, raw captures, accepted samples | `run_unreal_io.py`, `ws_bridge.py`, `Sampler_Manager.py` | offline review, dataset intake, operator triage | `ACTIVE` |
 
 ## Purpose
 
@@ -125,7 +137,15 @@ Its job is to do four things:
 
 The broader goal is to make the runtime contract extremely clear-cut and symmetric across all data families. Field naming, field placement, timestamps, IDs, nesting, and versioning should behave consistently so transport and storage are predictable whether the payload is a config, command, capture request, image, pose snapshot, telemetry snapshot, or observation record.
 
-This is a working draft, not a claim that every described field is fully live today.
+This document is not limited to the image smoke path. It is meant to describe
+the global working contract across:
+
+- build provenance
+- runtime session provenance
+- transport envelopes
+- action messages
+- returned observation/status/error messages
+- persisted raw and accepted artifacts
 
 ## Status Legend
 
@@ -139,10 +159,13 @@ When sources conflict, use this order:
 
 1. `UE_Tooling/WebSocket/protocol.py`
 2. `UE_Tooling/WebSocket/schemas.py`
-3. `UE_Tooling/Config/RunConfig.py`
-4. `UE_Drone_Env/Plugins/DroneWebSocket/Source/DroneWebSocket/*`
-5. generator metadata in `UE_Tooling/UE_Build/Content_Generation/*`
-6. `docs/ue_data_flows.md`
+3. `UE_Tooling/run_unreal_build.py`
+4. `UE_Tooling/run_unreal_io.py`
+5. `UE_Tooling/Config/RunConfig.py`
+6. `UE_Drone_Env/Source/UE_Drone_Env/*`
+7. `UE_Drone_Env/Plugins/DroneWebSocket/Source/DroneWebSocket/*`
+8. generator metadata in `UE_Tooling/UE_Build/Content_Generation/*`
+9. `docs/ue_data_flows.md`
 
 Important consequence:
 
@@ -358,12 +381,15 @@ This layout is better because it gives one authoritative answer to:
 
 ### Current-State Versus Target-State Artifact Layout
 
-Current repo state is fragmented:
+Current repo state is still split across multiple artifact roots, but it is no
+longer only a raw websocket layout:
 
 - course generation artifacts: `UE_Tooling/Artifacts/runs`
 - drone content artifacts: `UE_Tooling/Artifacts/drone_content`
 - IO build artifacts: `UE_Tooling/Artifacts/io_build`
-- websocket runtime artifacts: `UE_Tooling/Artifacts/websocket/<run_id>`
+- top-level build manifests: `UE_Tooling/Artifacts/build/<run_name>.json`
+- runtime session manifests: `UE_Tooling/Artifacts/runtime/<runtime_run_id>/runtime_session_manifest.json`
+- bridge runtime artifacts: `UE_Tooling/Artifacts/runtime/<runtime_run_id>/bridge/<runtime_run_id>`
 - websocket build artifacts: `UE_Tooling/Artifacts/websocket_build`
 
 Target-state should converge on:
@@ -385,7 +411,23 @@ The important review point is this:
 
 ### Current Repo Status
 
-Today, `RunConfig.py` already returns some of this provenance out-of-band:
+Today, the repo already has a stronger provenance chain than this section used
+to describe.
+
+Live today:
+
+- `run_unreal_build.py` writes a canonical top-level build manifest under
+  `UE_Tooling/Artifacts/build/<run_name>.json`
+- that build manifest includes the authoritative course level handoff, stage
+  statuses, stage artifact paths, IO validation, and runtime handoff metadata
+- `run_unreal_io.py` writes a canonical runtime session manifest under
+  `UE_Tooling/Artifacts/runtime/<runtime_run_id>/runtime_session_manifest.json`
+- that runtime session manifest includes phase-by-phase readiness truth,
+  failure attribution, evidence paths, and `operator_summary`
+- `ws_bridge.py` writes raw transport artifacts under the runtime session root
+- `Sampler_Manager.py` writes accepted samples under the same runtime session root
+
+`RunConfig.py` already returns some config provenance out-of-band:
 
 - `CompiledConfig.envelope`
 - `CompiledConfig.assumptions`
@@ -393,7 +435,8 @@ Today, `RunConfig.py` already returns some of this provenance out-of-band:
 
 And the YAML files themselves each carry their own local `schema_version` field.
 
-What is still missing is a canonical, persisted provenance block that ties all of that together per run. In other words:
+What is still missing is one normalized provenance block shape that ties all of
+that together per run. In other words:
 
 - the effective runtime config identity exists
 - the source file references partly exist
@@ -491,15 +534,22 @@ That separation is what makes runs auditable and reproducible.
 
 ## Overall Repo Status
 
-Current repo state is a mixed maturity model:
+Current repo state is still mixed maturity, but it is materially beyond a pure
+draft transport loop:
 
-- A live minimal handshake exists for `SET_CONFIG -> ACK -> CONFIG_READY`.
-- A live minimal action loop exists for `SPAWN_DRONES`, `CMD`, and `CAPTURE_NOW`.
-- A live minimal `OBS` message exists and is persisted by the bridge.
-- The generated Unreal struct and asset metadata define a richer intended contract than the live WebSocket payloads currently carry.
-- `docs/ue_data_flows.md` describes a broader target-state runtime than the plugin currently implements.
+- a canonical top-level build orchestrator exists and emits build-handoff truth
+- a canonical top-level runtime orchestrator exists and emits runtime phase truth
+- a live handshake exists for `SET_CONFIG -> ACK -> CONFIG_READY`
+- live action paths exist for `SPAWN_DRONES`, `CMD`, and `CAPTURE_NOW`
+- the current live image-capture `OBS` path includes `config_ref`, `viewpoint`,
+  canonical nested `image`, and compatibility `image_bytes_b64`
+- raw and accepted artifacts are already structured under the runtime session root
+- generated Unreal struct/interface metadata still describe a broader target
+  contract than the exact live transport uses today
 
-In short: the transport loop exists, but the contract is split across Python, C++, Unreal generators, and draft docs, with several naming and placement mismatches.
+In short: the repo now has real build/runtime wrappers plus a live transport and
+observation path, but some broader symmetry and schema finalization work still
+remains.
 
 ## Tooling Signal Ownership
 
@@ -510,9 +560,9 @@ These tooling modules are currently scaffolded, but they still matter because th
 | Tooling surface | Role | Message ownership | Status |
 | --- | --- | --- | --- |
 | `UE_Tooling/Config/RunConfig.py` | config compiler | originates `SET_CONFIG` payload shape | `ACTIVE` |
-| `UE_Tooling/Drone_Controller/Drone_Spawner.py` | setup/spawn initiator | should send `SPAWN_DRONES` and future reset/setup signals | `LOOSE` |
+| `UE_Tooling/Drone_Controller/Drone_Spawner.py` | setup/spawn initiator | sends `SPAWN_DRONES` and owns the current spawn-capability probe semantics | `ACTIVE` |
 | `UE_Tooling/Drone_Controller/Drone_Controller.py` | control initiator | should send `CMD` and future higher-level control signals | `LOOSE` |
-| `UE_Tooling/Data_Interface/Sampler_Manager.py` | sample owner and capture orchestrator | should send `CAPTURE_NOW`, receive `OBS` and capture-related `STATUS`, and own run/capture lifecycle plus downstream sample placement | `LOOSE` |
+| `UE_Tooling/Data_Interface/Sampler_Manager.py` | sample owner and capture orchestrator | sends `CAPTURE_NOW`, validates returned `OBS`, and owns accepted sample placement | `ACTIVE` |
 | `UE_Tooling/WebSocket/ws_bridge.py` | transport and persistence boundary | sends outbound envelopes, receives inbound envelopes, persists messages and observations | `ACTIVE` |
 
 `Sampler.py` is intentionally excluded from the canonical contract model and has been removed from the tooling-side sampling path. Sampling ownership is fully collapsed into `Sampler_Manager.py`.
@@ -524,9 +574,9 @@ This is the intended tooling-side ownership model implied by the current repo sh
 | Message type | Primary tooling origin | Primary tooling consumer | Notes |
 | --- | --- | --- | --- |
 | `SET_CONFIG` | `RunConfig.py` via bridge startup flow | `ws_bridge.py` state machine | Live and enforced today |
-| `SPAWN_DRONES` | `Drone_Spawner.py` | `ws_bridge.py` and downstream runtime status handling | Ownership is clear even though sender implementation is still scaffolded |
+| `SPAWN_DRONES` | `Drone_Spawner.py` | `ws_bridge.py` and downstream runtime status handling | Live shaping/probe path exists today |
 | `CMD` | `Drone_Controller.py` | `ws_bridge.py` and downstream runtime status handling | Ownership is clear even though sender implementation is still scaffolded |
-| `CAPTURE_NOW` | `Sampler_Manager.py` | `ws_bridge.py` and downstream runtime observation handling | Capture ownership belongs with data interface, not controller |
+| `CAPTURE_NOW` | `Sampler_Manager.py` | `ws_bridge.py` and downstream runtime observation handling | Live sampler-owned capture path exists today |
 | `OBS` | UE runtime | `Sampler_Manager.py`, persisted by `ws_bridge.py` | Bridge persists raw payload; `Sampler_Manager.py` owns normalization and downstream placement |
 | `STATUS` | UE runtime | controller/spawner/sampler tooling depending on event | Event routing is not canonical yet |
 | `ERROR` | UE runtime | bridge first, then owning tooling surface | Error ownership needs more explicit routing policy |
@@ -886,6 +936,13 @@ Purpose:
 | capture options are not live | `OPEN` | viewpoint selection and include-flags are docs-only today |
 | auto-generated capture IDs conflict with strict schema intent | `OPEN` | UE runtime will synthesize a capture ID if not supplied |
 
+Current live note:
+
+- the current image-capture action path is minimal by design
+- runtime image behavior comes from already-applied `SET_CONFIG`
+- `CAPTURE_NOW` is dispatched by ingress into `BP_SampleManager` for the live
+  observation path
+
 ### `OBS`
 
 Direction:
@@ -907,25 +964,34 @@ Purpose:
 | `drone_id` | `string` | `ACTIVE` | yes | Top-level |
 | `capture_id` | `string` | `ACTIVE` | yes | Top-level |
 | `message_id` | `string` | `ACTIVE` | no | Emitted by UE helper |
-| `payload.image_bytes_b64` | `string` | `ACTIVE` | yes | Base64 PNG bytes |
 | `payload.timestamp_utc` | `string` | `ACTIVE` | no | Live plugin emits it |
 | `payload.run_id` | `string` | `ACTIVE` | no | Duplicates top-level run ID |
 | `payload.drone_id` | `string` | `ACTIVE` | no | Duplicates top-level drone ID |
 | `payload.capture_id` | `string` | `ACTIVE` | no | Duplicates top-level capture ID |
-| `payload.pose.location_cm.x` | `number` | `ACTIVE` | no | Live plugin emits it |
-| `payload.pose.location_cm.y` | `number` | `ACTIVE` | no | Live plugin emits it |
-| `payload.pose.location_cm.z` | `number` | `ACTIVE` | no | Live plugin emits it |
-| `payload.pose.rotation_deg.pitch` | `number` | `ACTIVE` | no | Live plugin emits it |
-| `payload.pose.rotation_deg.roll` | `number` | `ACTIVE` | no | Live plugin emits it |
-| `payload.pose.rotation_deg.yaw` | `number` | `ACTIVE` | no | Live plugin emits it |
+| `payload.config_ref.config_id` | `string` | `ACTIVE` | yes | Applied runtime config identity |
+| `payload.config_ref.config_hash` | `string` | `ACTIVE` | yes | Applied runtime config hash |
+| `payload.viewpoint.timestamp_utc` | `string` | `ACTIVE` | no | Viewpoint snapshot timestamp |
+| `payload.viewpoint.run_id` | `string` | `ACTIVE` | no | Viewpoint trace link |
+| `payload.viewpoint.capture_id` | `string` | `ACTIVE` | no | Viewpoint trace link |
+| `payload.viewpoint.viewpoint_name` | `string` | `ACTIVE` | no | Active viewpoint name |
+| `payload.viewpoint.fov_deg` | `number` | `ACTIVE` | yes | Effective capture FOV |
+| `payload.viewpoint.width` | `int` | `ACTIVE` | yes | Effective image width |
+| `payload.viewpoint.height` | `int` | `ACTIVE` | yes | Effective image height |
+| `payload.viewpoint.rig_offset_from_drone_body_cm` | `object` | `ACTIVE` | no | Effective rig offset |
+| `payload.viewpoint.rig_rotation_from_drone_body_deg` | `object` | `ACTIVE` | no | Effective rig rotation |
+| `payload.image.encoding` | `string` | `ACTIVE` | no | Current value `png_base64` |
+| `payload.image.bytes_b64` | `string` | `ACTIVE` | yes | Canonical nested image field |
+| `payload.image.width` | `int` | `ACTIVE` | no | Decoded image width |
+| `payload.image.height` | `int` | `ACTIVE` | no | Decoded image height |
+| `payload.image_bytes_b64` | `string` | `ACTIVE` | no | Compatibility alias retained on live wire |
 
-#### `OBS` Fields Intended By UE Struct Metadata
+#### `OBS` Fields Intended Beyond The Current Live Core
 
-These fields are not fully present on the live wire yet, but they are clearly intended by generated UE struct schema:
+These fields are not part of the current live core `OBS` path, but they are
+still intended by the generated UE-side schema surfaces:
 
 | Intended group | Intended fields | Status | Notes |
 | --- | --- | --- | --- |
-| `viewpoint` | `timestamp_utc`, `run_id`, `capture_id`, `viewpoint_name`, `fov_deg`, `width`, `height`, `rig_offset_from_drone_body_cm` | `LOOSE` | `ST_DroneViewpointSnapshot` |
 | `telemetry` | `timestamp_utc`, `run_id`, `capture_id`, `location_cm`, `rotation_quat_xyzw`, `forward_vector`, `right_vector`, `up_vector`, `distance_units`, `distance_precision_decimals`, `mesh_proximity_records[]` | `LOOSE` | canonical top-level telemetry contract is `ST_DroneTelemetrySnapshot` |
 | `telemetry.mesh_proximity_records[]` | `mesh_name`, `mesh_path`, `distance_to_pivot_cm`, `distance_to_edge_cm` | `LOOSE` | detail records are canonically described inside `ST_DroneTelemetrySnapshot` |
 
@@ -933,12 +999,10 @@ These fields are not fully present on the live wire yet, but they are clearly in
 
 | Issue | Status | Detail |
 | --- | --- | --- |
-| payload shape is only partially defined | `OPEN` | strict schema only requires image bytes, while live plugin also emits pose and duplicate trace fields |
-| viewpoint block missing | `OPEN` | intended by UE interfaces and generators, not present on live wire |
-| telemetry block missing | `OPEN` | intended by UE interfaces and generators, not present on live wire |
-| canonical image block not defined | `OPEN` | image currently lives as raw `image_bytes_b64`; no `format`, `width`, `height`, or viewpoint binding block exists |
-| canonical config reference missing | `OPEN` | no stable `config_id` or `config_hash` is included in live `OBS` today |
-| duplicate trace fields | `OPEN` | `payload.run_id`, `payload.drone_id`, `payload.capture_id` repeat envelope values |
+| envelope/payload duplication policy unresolved | `OPEN` | `payload.run_id`, `payload.drone_id`, and `payload.capture_id` repeat envelope values |
+| legacy image alias still present | `OPEN` | `payload.image_bytes_b64` still exists alongside canonical nested `payload.image.bytes_b64` |
+| telemetry block not live | `OPEN` | generated telemetry contract exists, but the current live `OBS` path does not emit telemetry |
+| broader pose/telemetry atomicity policy unresolved | `OPEN` | global contract still needs to decide when `OBS` must include image only versus image + pose + telemetry |
 
 ### `STATUS`
 
@@ -1087,7 +1151,7 @@ These are the generated UE-side types and data assets that show intended contrac
 | --- | --- | --- | --- |
 | `ST_RunConfig` | typed runtime config boundary for `SET_CONFIG` | `LOOSE` | generator now stamps explicit payload shape, required paths, and runtime apply-target mappings (including image `sensor_rig` fields), but live plugin currently parses JSON directly |
 | `BP_SetDataConfig` | config ingress endpoint | `ACTIVE` | generated shell inherits `WSConfigHandshakeActor` |
-| `BP_SampleManager` | intended observation producer | `LOOSE` | generator defines shell only; live plugin currently emits minimal `OBS` directly |
+| `BP_SampleManager` | observation producer | `ACTIVE` | generated shell now participates in the live native sample-manager capture path and observation assembly |
 | `BP_DroneController` | intended command router | `LOOSE` | generator defines shell only |
 | `BP_DroneSpawner` | intended drone spawner | `LOOSE` | generator defines shell only |
 
@@ -1123,24 +1187,27 @@ These data assets align well with the current `SET_CONFIG` payload shape, which 
 ### Actively Defined Today
 
 - one shared JSON envelope with `type`, `run_id`, `schema_version`, `timestamp`, `payload`, and runtime-generated `message_id`
+- canonical top-level build handoff through `UE_Tooling/Artifacts/build/<run_name>.json`
+- canonical runtime session handoff through `UE_Tooling/Artifacts/runtime/<runtime_run_id>/runtime_session_manifest.json`
 - deterministic `SET_CONFIG` compilation in Python
 - config gating before actions in the bridge and UE handshake actor
 - live action messages for `SPAWN_DRONES`, `CMD`, and `CAPTURE_NOW`
-- live `OBS` with base64 image bytes and minimal pose
-- bridge-side persistence of messages, observations, and decoded PNG files
+- live `OBS` with `config_ref`, `viewpoint`, canonical nested `image`, and compatibility `image_bytes_b64`
+- bridge-side persistence of messages, observations, and decoded PNG files under the runtime session root
+- sampler-owned accepted image persistence under the runtime session root
 
 ### Loosely Defined Today
 
-- richer observation shape through pose, viewpoint, and telemetry provider interfaces
-- typed Unreal struct models for command, pose, viewpoint, and telemetry snapshots
-- IO blueprint shells for sample management, spawn, and control routing
+- broader observation shape through telemetry provider interfaces and richer multi-domain observation blocks
+- typed Unreal struct models for command, viewpoint, and telemetry snapshots beyond the exact live wire shape
+- some generated IO blueprint shells for spawn/control routing remain less final than config/capture ownership
 - docs examples for viewpoint selection, spawn points, and telemetry-rich captures
 
 ### Needs Clarification
 
 1. canonical placement of `config_id`, `config_hash`, and `in_reply_to`
 2. canonical timestamp policy: envelope `timestamp` versus snapshot `timestamp_utc`
-3. canonical `OBS` payload groups and required fields
+3. canonical `OBS` payload groups beyond the current live core
 4. canonical `STATUS` event catalog and required fields per event, including which tooling surface owns each event class
 5. canonical `ERROR` code system and source tokens
 6. canonical placement of `capture_id` for `CAPTURE_NOW`
@@ -1150,21 +1217,23 @@ These data assets align well with the current `SET_CONFIG` payload shape, which 
 
 ## First Contract Definition To Continue Next
 
-The first thing to continue defining should be the canonical `OBS` contract.
+The next thing to continue defining should be the broad non-image `OBS` and
+`STATUS` contract, not the already-live core image path.
 
 Reason:
 
-- it is the junction point between Unreal providers, WebSocket transport, bridge persistence, offline data consumers, and future model-training consumers
-- it currently has the biggest gap between live behavior and intended structure
-- it currently duplicates traceability fields and omits viewpoint, telemetry, and config reference blocks
-- it is the message where `Sampler_Manager.py` becomes a first-class contract participant rather than just a transport bystander
+- the live image path is materially clearer now, but telemetry/status symmetry is not
+- `STATUS` still needs a cleaner canonical event catalog
+- broader `OBS` composition policy is still unresolved outside the current core image path
+- this is where controller/spawner/sampler ownership boundaries need the most explicit finalization
 
 The next contract pass should freeze these items in order:
 
 1. envelope-only versus payload-duplicated traceability fields
-2. `OBS` required groups: `pose`, `viewpoint`, `telemetry`, `image`
+2. `OBS` required groups beyond the live image core: `telemetry`, optional `pose`, and any future grouped payload policy
 3. `OBS` timestamp policy
-4. whether `OBS` carries `config_id` and `config_hash` directly or references them only through the envelope
-5. `STATUS` event schema so control and capture acknowledgements are also canonical and can be routed cleanly to controller versus sampler ownership surfaces
+4. `STATUS` event schema so control and capture acknowledgements are canonical and can be routed cleanly to controller versus sampler ownership surfaces
+5. whether envelope/payload duplication should be reduced once compatibility concerns are cleared
 
-Until that is resolved, the repo has a working transport, but not yet a symmetric and final observation contract.
+Until that is resolved, the repo has a working broad contract with a truthful
+live image path, but not yet a fully symmetric final runtime message model.
