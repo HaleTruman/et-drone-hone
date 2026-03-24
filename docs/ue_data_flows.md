@@ -1,301 +1,335 @@
 # UE Drone Runtime Data Flows
 
-This document explains the **target runtime message-flow model** for four core scenarios:
+This document describes the current live runtime-flow model across four core
+scenarios:
 
-1. Drone spawning
-2. Drone config (movement + sensors)
-3. Drone controlling
-4. Data inference / capture
+1. drone spawning
+2. drone config
+3. drone controlling
+4. data inference / capture
 
-These flows describe **runtime behavior only**. The `UE_Tooling/UE_Build/` scripts create the `.uasset` and other files ahead of time, but they do **not** directly control the simulation once Unreal is running.
+It is a global runtime-flow document, not an image-only note. Image capture is
+currently the most proven implementation seam, but the same top-level build,
+runtime, transport, and Unreal ingress layers also define how spawn and command
+flows should extend.
 
-## Status (important)
+## Scope
 
-This document is a **target-state runtime contract** for implementation alignment, not a statement that every path is fully live today.
+These flows describe runtime behavior and the immediate build/runtime seam that
+enables runtime behavior.
 
-- It defines the intended message/data responsibilities across tooling, WebSocket transport, and Unreal runtime assets.
-- Several referenced runtime scripts/assets in the current repo are still placeholder scaffolds.
-- Treat all JSON payloads below as **contract examples** for future implementation, validation, and testing.
+That means this document includes:
 
----
+- the build-layer outputs required before runtime can work
+- the runtime wrapper that supervises Unreal launch and websocket startup
+- the scenario-specific action and response paths once the runtime session is up
 
-## Key idea
+It does not try to re-document every field in the wire contract. For exact
+message-level field truth, use [data_contract.md](data/data_contract.md).
 
-At runtime, the intended system works like this:
+## Live Execution Context
 
-* **UE_Tooling** creates commands and config payloads.
-* **WebSocket** carries those messages between tooling and Unreal.
-* **UE_Drone_Env** receives those messages and executes them through live Blueprint assets.
-* **BP_DronePawn** and its modules provide movement, viewpoints, telemetry, and image capture support.
-* **BP_SampleManager** assembles atomic snapshots for observation/capture.
+All four runtime scenarios depend on the same upstream seam:
 
----
+1. `UE_Tooling/run_unreal_build.py`
+   - orchestrates WebSocket -> Course -> Drone -> IO build stages
+   - writes the canonical build manifest under
+     `UE_Tooling/Artifacts/build/<run_name>.json`
+   - records the authoritative course level path and IO placement truth
+2. `UE_Tooling/UE_Build/Content_Generation/IO/run_io_build.py`
+   - performs deterministic singleton placement in the authoritative level for:
+     - `BP_SetDataConfig_Main`
+     - `BP_SampleManager_Main`
+     - `BP_DronePawn_Startup_Main`
+3. `UE_Tooling/run_unreal_io.py`
+   - consumes the build manifest
+   - starts the websocket bridge
+   - launches Unreal against the authoritative level
+   - compiles or loads `SET_CONFIG`
+   - applies config and validates startup topology
+   - then supervises scenario actions on top of that ready runtime
 
-## Runtime architecture summary
+That shared seam matters because spawn, command, and capture should all extend
+the same runtime ownership model instead of bypassing it with ad hoc launch or
+placement logic.
 
-### Tooling side
+## Shared Ownership Model
 
-* `UE_Tooling/Drone_Controller/Drone_Spawner.py` builds spawn requests.
-* `UE_Tooling/Drone_Controller/Drone_Controller.py` builds movement/control requests.
-* `UE_Tooling/Config/RunConfig.py` merges YAML config into one `SET_CONFIG` payload.
-* `UE_Tooling/Data_Interface/Sampler_Manager.py` requests captures and manages observation collection.
-* `UE_Tooling/Data_Interface/Sampler.py` decodes and stores observations.
-* `UE_Tooling/WebSocket/protocol.py` defines the message envelope and message types.
-* `UE_Tooling/WebSocket/ws_bridge.py` sends and receives runtime messages.
+### Tooling Side
 
-### Unreal side
+- `run_unreal_build.py` owns top-level build orchestration and build handoff.
+- `run_unreal_io.py` owns top-level runtime orchestration and session evidence.
+- `RunConfig.py` owns deterministic `SET_CONFIG` compilation from YAML.
+- `Drone_Spawner.py` owns `SPAWN_DRONES` action shaping and current spawn-capability probe semantics.
+- `Drone_Controller.py` is the intended tooling owner of `CMD` shaping, but its
+  higher-level control loop is still pending.
+- `Sampler_Manager.py` owns `CAPTURE_NOW`, image validation, and accepted sample persistence.
+- `protocol.py` owns the canonical wire envelope and type tokens.
+- `ws_bridge.py` owns transport, config gating, raw artifact persistence, and
+  in-memory observation/status handoff.
 
-* `BP_DroneSpawner.uasset` spawns drones.
-* `BP_DroneController.uasset` routes commands to the correct drone.
-* `BP_SetDataConfig.uasset` receives runtime config and applies overrides in memory.
-* `BP_SampleManager.uasset` queries pose/viewpoints/telemetry and produces atomic captures.
-* `BP_DronePawn.uasset` is the runtime drone container.
-* `BP_DroneMovement_6DOF.uasset` applies movement commands.
-* `BP_DroneSensors.uasset` provides viewpoint transforms and camera-related properties.
-* `BP_DroneTelemetrySampler.uasset` provides telemetry data.
-* `BPI_*` interfaces define the contracts that managers/controllers call.
-* `DA_*Default` assets provide baseline defaults that can be overridden at runtime 
+### Unreal Side
 
----
+- `UWSClientComponent` owns the websocket client connection.
+- `ASetDataConfigRuntimeActor` / `BP_SetDataConfig` owns runtime ingress:
+  - `SET_CONFIG`
+  - config gating
+  - dispatch for `SPAWN_DRONES`, `CMD`, and `CAPTURE_NOW`
+  - outbound `ACK`, `CONFIG_READY`, `STATUS`, `OBS`, and `ERROR`
+- `ASampleManagerRuntimeActor` / `BP_SampleManager` owns the current live
+  capture orchestration path.
+- `UDroneSensorsRuntimeComponent` / `BP_DroneSensors` owns active image state
+  and real PNG capture for the current live capture path.
+- `BP_DroneMovement_6DOF`, `BP_DronePawn`, `BP_DroneSensors`, and
+  `BP_DroneTelemetrySampler` remain the runtime drone-side ownership surfaces
+  that broader command/viewpoint/telemetry contracts should converge around.
 
-# Scenario 1: Drone Spawning
+## Scenario Status Summary
 
-## Example JSON command (contract example, not a confirmed live payload)
+| Scenario | Live status | Current implementation seam |
+| --- | --- | --- |
+| Spawn | `ACTIVE` with bounded scope | live action path exists; top-level runtime currently uses it as a supervised capability probe |
+| Config | `ACTIVE` | fully part of the current build/runtime startup path |
+| Command | `MIXED` | Unreal-side receiver path is live; higher-level tooling/runtime supervision is still a later integration seam |
+| Capture | `ACTIVE` | currently the strongest proved end-to-end runtime path |
 
-```json
-{
-  "type": "SPAWN_DRONES",
-  "schema_version": "1.0",
-  "run_id": "course_v1_20260311_120000",
-  "seq": 1,
-  "payload": {
-    "count": 3,
-    "drone_blueprint": "/Game/Drone_Content/Blueprints/BP_DronePawn",
-    "spawn_points": [
-      {"drone_id": "drone_001", "location": [0, 0, 150], "rotation": [0, 0, 0]},
-      {"drone_id": "drone_002", "location": [300, 0, 150], "rotation": [0, 0, 0]},
-      {"drone_id": "drone_003", "location": [600, 0, 150], "rotation": [0, 0, 0]}
-    ]
-  }
-}
-```
+## Scenario 1: Drone Spawning
 
-## Simple flow chart
-
-```text
-UE_Tooling/Drone_Controller/Drone_Spawner.py
-  -> UE_Tooling/WebSocket/protocol.py
-  -> UE_Tooling/WebSocket/ws_bridge.py
-  -> UE_Drone_Env/Plugins/DroneWebSocket/Public/WSClientComponent.h
-  -> UE_Drone_Env/Content/io/Drone_Controller/BP_DroneSpawner.uasset
-  -> UE_Drone_Env/Content/Drone_Content/Blueprints/BP_DronePawn.uasset
-     -> BP_DroneMovement_6DOF.uasset
-     -> BP_DroneSensors.uasset
-     -> BP_DroneTelemetrySampler.uasset
-```
-
-## Explanation
-
-`Drone_Spawner.py` is the tooling-side entrypoint for spawn requests. It builds the spawn payload and passes it through `protocol.py`, which wraps it in the agreed runtime message shape, and `ws_bridge.py`, which sends it into Unreal.
-
-Inside Unreal, `WSClientComponent.h` exposes the incoming message to the Blueprint runtime. `BP_DroneSpawner.uasset` interprets the payload and creates one or more `BP_DronePawn.uasset` instances in the level. Each pawn becomes a live drone actor and composes the movement, sensor, and telemetry modules so it is immediately controllable and observable.
-
----
-
-# Scenario 2: Drone Config (movement + sensors)
-
-## Example JSON command (contract example, not a confirmed live payload)
-
-```json
-{
-  "type": "SET_CONFIG",
-  "schema_version": "1.0",
-  "run_id": "course_v1_20260311_120000",
-  "seq": 2,
-  "payload": {
-    "config_id": "cfg_001",
-    "movement": {
-      "max_speed": 1400.0,
-      "max_accel": 600.0,
-      "yaw_rate_limit": 90.0,
-      "pitch_rate_limit": 60.0,
-      "roll_rate_limit": 60.0,
-      "damping": 0.12
-    },
-    "sensors": {
-      "active_viewpoints": ["front"],
-      "front_fov": 90.0,
-      "capture_width": 1280,
-      "capture_height": 720,
-      "telemetry_fields": ["location", "rotation", "velocity"]
-    }
-  }
-}
-```
-
-## Simple flow chart
+### Live runtime flow
 
 ```text
-UE_Tooling/Config/Drone_Controller_Config/Config_DroneMovementTuning.yaml
-+ UE_Tooling/Config/Data_Interface_Config/SensorRigProfileConfig_Pose.yaml
-+ UE_Tooling/Config/Data_Interface_Config/SensorRigProfileConfig_Viewpoint.yaml
-+ UE_Tooling/Config/Data_Interface_Config/SensorRigProfileConfig_Telemetry.yaml
-  -> UE_Tooling/Config/RunConfig.py
-  -> UE_Tooling/WebSocket/protocol.py
-  -> UE_Tooling/WebSocket/ws_bridge.py
-  -> UE_Drone_Env/Plugins/DroneWebSocket/Public/WSClientComponent.h
-  -> UE_Drone_Env/Content/io/Data_Config/BP_SetDataConfig.uasset
-  -> UE_Drone_Env/Content/io/Data_Config/ST_RunConfig.uasset
-  -> UE_Drone_Env/Content/Drone_Content/Blueprints/BP_DronePawn.uasset
-     -> BP_DroneMovement_6DOF.uasset
-     -> BP_DroneSensors.uasset
-     -> DA_DroneMovementDefault.uasset
-     -> DA_SensorRigProfileDefault.uasset
-```
-
-## Explanation
-
-The YAML files in `UE_Tooling/Config/` are the human-editable source configuration. `RunConfig.py` merges them into one `SET_CONFIG` JSON payload, then `protocol.py` and `ws_bridge.py` transport that payload into Unreal.
-
-Inside Unreal, `BP_SetDataConfig.uasset` receives the message and parses it into `ST_RunConfig.uasset`, which acts as the typed runtime config structure. It then applies the override in memory to the live drone systems, specifically `BP_DroneMovement_6DOF.uasset` and `BP_DroneSensors.uasset`. The `DA_DroneMovementDefault.uasset` and `DA_SensorRigProfileDefault.uasset` assets remain the baseline defaults and are not mutated; they are only the starting values that runtime config can override for the current run.
-
----
-
-# Scenario 3: Drone Controlling
-
-## Example JSON command (contract example, not a confirmed live payload)
-
-```json
-{
-  "type": "CMD",
-  "schema_version": "1.0",
-  "run_id": "course_v1_20260311_120000",
-  "seq": 25,
-  "drone_id": "drone_001",
-  "payload": {
-    "pitch": -0.15,
-    "roll": 0.05,
-    "yaw": 0.20,
-    "throttle": 0.65
-  }
-}
-```
-
-## Simple flow chart
-
-```text
-UE_Tooling/Drone_Controller/Drone_Controller.py
-  -> UE_Tooling/WebSocket/protocol.py
-  -> UE_Tooling/WebSocket/ws_bridge.py
-  -> UE_Drone_Env/Plugins/DroneWebSocket/Public/WSClientComponent.h
-  -> UE_Drone_Env/Content/io/Drone_Controller/BP_DroneController.uasset
-  -> UE_Drone_Env/Content/Drone_Content/Interfaces/BPI_DroneCommandReceiver.uasset
-  -> UE_Drone_Env/Content/Drone_Content/Blueprints/BP_DronePawn.uasset
-  -> UE_Drone_Env/Content/Drone_Content/Blueprints/BP_DroneMovement_6DOF.uasset
-```
-
-## Explanation
-
-`Drone_Controller.py` is the tooling-side live command sender. It creates a movement/control message for a specific `drone_id`, and that message goes through `protocol.py` and `ws_bridge.py` into Unreal.
-
-`BP_DroneController.uasset` is the in-engine command router. It receives the command, finds the correct drone, and calls `BPI_DroneCommandReceiver.uasset`, which is implemented by `BP_DronePawn.uasset`. The pawn then forwards the command to `BP_DroneMovement_6DOF.uasset`, which is the actual movement module that updates translation and rotation in the world.
-
----
-
-# Scenario 4: Data Inference / Capture
-
-## Example JSON command (contract example, not a confirmed live payload)
-
-```json
-{
-  "type": "CAPTURE_NOW",
-  "schema_version": "1.0",
-  "run_id": "course_v1_20260311_120000",
-  "seq": 40,
-  "drone_id": "drone_001",
-  "payload": {
-    "capture_id": "cap_000040",
-    "viewpoints": ["front"],
-    "include_pose": true,
-    "include_telemetry": true,
-    "include_image": true
-  }
-}
-```
-
-## Simple flow chart
-
-```text
-UE_Tooling/Data_Interface/Sampler_Manager.py
-  -> UE_Tooling/WebSocket/protocol.py
-  -> UE_Tooling/WebSocket/ws_bridge.py
-  -> UE_Drone_Env/Plugins/DroneWebSocket/Public/WSClientComponent.h
-  -> UE_Drone_Env/Content/io/Data_Interface/BP_SampleManager.uasset
-     -> UE_Drone_Env/Content/Drone_Content/Interfaces/BPI_DronePoseProvider.uasset
-     -> UE_Drone_Env/Content/Drone_Content/Interfaces/BPI_DroneViewpointProvider.uasset
-     -> UE_Drone_Env/Content/Drone_Content/Interfaces/BPI_DroneTelemetryProvider.uasset
-     -> UE_Drone_Env/Content/Drone_Content/Blueprints/BP_DronePawn.uasset
-        -> BP_DroneSensors.uasset
-        -> BP_DroneTelemetrySampler.uasset
-  -> UE_Drone_Env/Plugins/DroneWebSocket/Public/WSClientComponent.h
-  -> UE_Tooling/WebSocket/ws_bridge.py
-  -> UE_Tooling/Data_Interface/Sampler.py
-```
-
-## Explanation
-
-`Sampler_Manager.py` is the tooling-side initiator for data capture and observation collection. It sends a `CAPTURE_NOW` request through `protocol.py` and `ws_bridge.py`, which reaches `BP_SampleManager.uasset` inside Unreal.
-
-`BP_SampleManager.uasset` is the runtime data inference and capture orchestrator. It queries the live drone through `BPI_DronePoseProvider.uasset`, `BPI_DroneViewpointProvider.uasset`, and `BPI_DroneTelemetryProvider.uasset`. `BP_DroneSensors.uasset` provides the viewpoint transform and camera-related properties, while `BP_DroneTelemetrySampler.uasset` provides telemetry values, and the pawn itself provides the live object context. The manager combines those values with the rendered image into one atomic observation identified by `capture_id`, then sends it back through the WebSocket layer to `Sampler.py`, which decodes and stores it for the dataset.
-
----
-
-# Final summary
-
-## Four target runtime paths
-
-```text
-SPAWN:
 Drone_Spawner.py
   -> protocol.py
   -> ws_bridge.py
-  -> WSClientComponent
-  -> BP_DroneSpawner
-  -> BP_DronePawn
+  -> UWSClientComponent
+  -> ASetDataConfigRuntimeActor::HandleSpawnDrones(...)
+  -> spawn BP_DronePawn instances
+     -> apply active sensor rig config to spawned pawns
+  -> STATUS event: SPAWN_DRONES_ACCEPTED
+```
 
-SET_CONFIG:
-YAMLs
+### Current live ownership
+
+- Tooling owner: `UE_Tooling/Drone_Controller/Drone_Spawner.py`
+- Unreal ingress owner: `ASetDataConfigRuntimeActor`
+- Runtime spawn owner: current spawn logic inside `HandleSpawnDrones(...)`
+
+### Current live behavior
+
+- `Drone_Spawner.py` builds canonical `SPAWN_DRONES` actions through
+  `protocol.make_action(...)`.
+- The current runtime path accepts:
+  - `payload.spawn_count`
+  - `payload.count` as compatibility alias
+  - optional `payload.drone_ids[]`
+- `ASetDataConfigRuntimeActor::HandleSpawnDrones(...)` currently:
+  - loads the drone pawn class
+  - spawns one or more pawns
+  - spaces them using fixed runtime spacing
+  - tags and tracks the spawned drone IDs
+  - applies current sensor-rig config to spawned pawns when available
+  - emits `STATUS` with event `SPAWN_DRONES_ACCEPTED`
+
+### Current limits
+
+- authored `spawn_points[]` are not the live path today
+- the current runtime uses fixed spacing rather than full transform-aware spawn requests
+- top-level runtime orchestration uses this as a capability proof today, not yet as the complete episode-spawn system
+
+### Why this matters globally
+
+Spawn should continue to extend from the existing runtime ingress and status
+model. It should not create a second parallel startup or placement path outside
+the current build/runtime seam.
+
+## Scenario 2: Drone Config
+
+### Live runtime flow
+
+```text
+movement/viewpoint/telemetry YAML
   -> RunConfig.py
+  -> ws_bridge.py startup config flow
+  -> UWSClientComponent
+  -> ASetDataConfigRuntimeActor
+  -> apply config to live sensor owners / runtime state
+  -> ACK
+  -> CONFIG_READY
+```
+
+### Current live ownership
+
+- Tooling owner: `UE_Tooling/Config/RunConfig.py`
+- Transport owner: `UE_Tooling/WebSocket/ws_bridge.py`
+- Unreal ingress/config owner: `ASetDataConfigRuntimeActor`
+
+### Current live behavior
+
+- `RunConfig.py` compiles YAML into one deterministic `SET_CONFIG` payload.
+- The build/runtime wrappers treat config apply as a startup prerequisite, not an optional side action.
+- `ASetDataConfigRuntimeActor`:
+  - validates the incoming config payload
+  - records `config_id` and `config_hash`
+  - applies `sensor_rig` settings to live sensor owners
+  - emits `ACK`
+  - emits `CONFIG_READY`
+- `run_unreal_io.py` uses config apply and post-config topology validation as the
+  foundation for all later runtime actions.
+
+### Current live image/config seam
+
+Image capture is the clearest proof that config is actually taking effect:
+
+- viewpoint YAML defines width, height, FOV, rig offset, and rig rotation
+- `RunConfig.py` compiles those into `payload.sensor_rig`
+- Unreal applies those onto live sensor owners
+- later capture validation checks returned `OBS` against the active applied config identity
+
+That seam should remain the model for future telemetry and broader runtime
+observation work.
+
+## Scenario 3: Drone Controlling
+
+### Live runtime flow
+
+```text
+Drone_Controller.py or future controller owner
   -> protocol.py
   -> ws_bridge.py
-  -> WSClientComponent
-  -> BP_SetDataConfig
-  -> ST_RunConfig
-  -> BP_DronePawn / BP_DroneMovement_6DOF / BP_DroneSensors
+  -> UWSClientComponent
+  -> ASetDataConfigRuntimeActor::HandleCmd(...)
+  -> resolve target pawn by drone_id
+  -> apply translation / rotation delta
+  -> STATUS event: CMD_APPLIED
+```
 
-CMD:
-Drone_Controller.py
-  -> protocol.py
-  -> ws_bridge.py
-  -> WSClientComponent
-  -> BP_DroneController
-  -> BPI_DroneCommandReceiver
-  -> BP_DronePawn
-  -> BP_DroneMovement_6DOF
+### Current live ownership
 
-CAPTURE / OBS:
+- Intended tooling owner: `UE_Tooling/Drone_Controller/Drone_Controller.py`
+- Unreal ingress owner: `ASetDataConfigRuntimeActor`
+- Runtime application owner today: current command logic inside `HandleCmd(...)`
+
+### Current live behavior
+
+- The Unreal-side command receiver path is live.
+- `ASetDataConfigRuntimeActor::HandleCmd(...)` currently:
+  - resolves `drone_id` from top-level field or payload fallback
+  - finds the target pawn
+  - reads `pitch`, `roll`, `yaw`, and `throttle`
+  - applies world offset and rotation deltas directly
+  - emits `STATUS` with event `CMD_APPLIED`
+
+### Current limits
+
+- `Drone_Controller.py` is still a documentation/scaffold surface, not the
+  full top-level runtime control loop
+- current command application is a bounded direct runtime implementation, not a
+  final normalized movement-module pipeline
+- top-level runtime supervision for command capability is still a later seam
+
+### Why this matters globally
+
+The command path should be completed by extending the same runtime ingress,
+status, and ownership surfaces already used by config/spawn/capture. It should
+not introduce a second control transport or bypass the current runtime wrapper.
+
+## Scenario 4: Data Inference / Capture
+
+### Live runtime flow
+
+```text
 Sampler_Manager.py
   -> protocol.py
   -> ws_bridge.py
-  -> WSClientComponent
-  -> BP_SampleManager
-  -> BPI_* providers on BP_DronePawn
-  -> image + telemetry + pose
-  -> WSClientComponent
-  -> ws_bridge.py
-  -> Sampler.py
+  -> UWSClientComponent
+  -> ASetDataConfigRuntimeActor::HandleCaptureNow(...)
+  -> resolve BP_SampleManager / ASampleManagerRuntimeActor
+  -> resolve UDroneSensorsRuntimeComponent
+  -> capture real PNG + viewpoint snapshot + config_ref
+  -> OBS
+  -> ws_bridge.py raw artifacts
+  -> Sampler_Manager.py validation + accepted sample persistence
 ```
 
-The high-level pattern is simple: **tooling builds messages, WebSocket transports them, Unreal Blueprints execute them, and the drone pawn plus its modules provide movement, viewpoints, telemetry, and images.**
+### Current live ownership
 
-Current-state note: this is the agreed future-state flow model; implementation/wiring status should be tracked separately as runtime scripts and UE assets move from placeholder to active behavior.
+- Tooling owner: `UE_Tooling/Data_Interface/Sampler_Manager.py`
+- Unreal ingress owner: `ASetDataConfigRuntimeActor`
+- Runtime capture owner: `ASampleManagerRuntimeActor`
+- Runtime image producer: `UDroneSensorsRuntimeComponent`
+
+### Current live behavior
+
+- `Sampler_Manager.py` sends minimal `CAPTURE_NOW`.
+- `ASetDataConfigRuntimeActor::HandleCaptureNow(...)` resolves the sample manager instead of emitting a placeholder image directly.
+- `ASampleManagerRuntimeActor`:
+  - resolves active config reference
+  - captures a real rendered PNG from the active sensor viewpoint
+  - reads the active viewpoint snapshot
+  - assembles one observation payload
+- The returned `OBS` now includes:
+  - `config_ref`
+  - `viewpoint`
+  - canonical nested `image`
+  - compatibility `image_bytes_b64`
+- `ws_bridge.py` persists raw transport artifacts.
+- `Sampler_Manager.py` validates image/config/viewpoint truth and writes accepted sample artifacts.
+
+### Why capture is the current extension seam
+
+Capture is the most complete current proof because it already uses:
+
+- top-level build handoff
+- top-level runtime startup and phase supervision
+- config truth
+- runtime ingress truth
+- real returned observation payloads
+- raw artifact persistence
+- accepted sample persistence
+
+That makes it the best implementation seam for extending broader runtime
+behavior without changing the ownership model.
+
+## How The Four Scenarios Fit Together
+
+These scenarios should not be thought of as unrelated flows.
+
+The current repo is building toward one layered model:
+
+1. build produces the authoritative level and required singleton placements
+2. runtime launches that level and reaches config-ready truth
+3. spawn, command, and capture all dispatch through the same runtime ingress
+4. runtime replies come back through the same websocket boundary
+5. raw and accepted artifacts are persisted under the same runtime session root
+
+Image capture is currently the strongest end-to-end proof of that model, but it
+should remain the seam we extend from, not a special-case system that other
+flows bypass.
+
+## Current Practical Guidance
+
+If you are reasoning about the live repo, treat the system like this:
+
+- build layer owns authoritative level creation and singleton placement
+- runtime layer owns websocket startup, Unreal launch, config apply, and runtime supervision
+- spawn extends from that runtime layer and already has a bounded live path
+- command extends from that runtime layer, but its broader tooling integration is still pending
+- capture extends from that runtime layer and is currently the strongest
+  end-to-end implemented path
+
+## Summary
+
+The current live repo is no longer just a target-state runtime sketch.
+
+It already has:
+
+- a canonical build wrapper
+- a canonical runtime wrapper
+- a live config path
+- a live spawn path
+- a live Unreal-side command path
+- a live capture path with truthful returned `OBS` and accepted sample persistence
+
+What remains is not to invent a second architecture for the other scenarios,
+but to continue extending the same build/IO/runtime seam cleanly across spawn,
+command, telemetry, and broader observation behavior.
