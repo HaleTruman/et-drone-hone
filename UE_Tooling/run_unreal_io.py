@@ -613,3 +613,530 @@ def _validate_phase2_build_handoff(build_payload: dict[str, Any], build_manifest
         "io_placement_summary": io_placement_summary,
         "required_startup_placements": required_placements,
     }
+
+
+async def _terminate_unreal_process(
+    process: asyncio.subprocess.Process,
+    *,
+    shutdown_timeout_seconds: int,
+) -> dict[str, Any]:
+    if process.returncode is not None:
+        return {
+            "requested_terminate": False,
+            "requested_kill": False,
+            "exited_before_termination": True,
+            "return_code": int(process.returncode),
+            "timed_out_waiting_for_shutdown": False,
+        }
+
+    requested_kill = False
+    process.terminate()
+    try:
+        await asyncio.wait_for(process.wait(), timeout=float(shutdown_timeout_seconds))
+        return {
+            "requested_terminate": True,
+            "requested_kill": requested_kill,
+            "exited_before_termination": False,
+            "return_code": int(process.returncode) if process.returncode is not None else -1,
+            "timed_out_waiting_for_shutdown": False,
+        }
+    except asyncio.TimeoutError:
+        requested_kill = True
+        process.kill()
+        await process.wait()
+        return {
+            "requested_terminate": True,
+            "requested_kill": requested_kill,
+            "exited_before_termination": False,
+            "return_code": int(process.returncode) if process.returncode is not None else -1,
+            "timed_out_waiting_for_shutdown": True,
+        }
+
+
+async def _wait_for_connection_or_process_exit(
+    *,
+    bridge: WebSocketBridgeServer,
+    process: asyncio.subprocess.Process,
+    timeout_seconds: int,
+) -> tuple[bool, str]:
+    connect_task = asyncio.create_task(
+        bridge.wait_for_client_connection(timeout_seconds=float(timeout_seconds))
+    )
+    process_wait_task = asyncio.create_task(process.wait())
+    try:
+        done, pending = await asyncio.wait(
+            {connect_task, process_wait_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if connect_task in done:
+            connected = bool(connect_task.result())
+            if connected:
+                for task in pending:
+                    task.cancel()
+                return True, ""
+            if process_wait_task in done:
+                return_code = int(process_wait_task.result())
+                return False, f"UE client connection failed; Unreal exited with code {return_code}."
+            reason = bridge.state.last_error or f"UE client did not connect within {timeout_seconds}s."
+            return False, reason
+
+        if process_wait_task in done:
+            return_code = int(process_wait_task.result())
+            if not connect_task.done():
+                connect_task.cancel()
+            return False, f"Unreal exited before websocket connection was observed (code={return_code})."
+
+        return False, "Unexpected wait state while supervising Unreal startup."
+    finally:
+        for task in (connect_task, process_wait_task):
+            if not task.done():
+                task.cancel()
+
+
+async def _run_phase7_sampler_smoke(
+    *,
+    bridge: WebSocketBridgeServer,
+    args: RuntimeArgs,
+    runtime_run_id: str,
+    phase2_result: dict[str, Any],
+    phase5_result: dict[str, Any],
+    repo_root: Path,
+) -> dict[str, Any]:
+    resolved_drone_id = str(args.smoke_drone_id).strip()
+    drone_id_source = "cli_arg"
+    warnings: list[str] = []
+    if not resolved_drone_id:
+        stage_paths_raw = phase2_result.get("stage_artifact_paths_actual", {})
+        stage_paths = stage_paths_raw if isinstance(stage_paths_raw, dict) else {}
+        io_artifact_path = str(stage_paths.get("io", "")).strip()
+        if io_artifact_path:
+            try:
+                io_payload = _load_json_object(_resolve_existing_path(io_artifact_path, repo_root))
+                placements_raw = io_payload.get("placements", {})
+                placements = placements_raw if isinstance(placements_raw, dict) else {}
+                by_key_raw = placements.get("placements_by_key", {})
+                by_key = by_key_raw if isinstance(by_key_raw, dict) else {}
+                startup_raw = by_key.get("startup_drone_pawn", {})
+                startup = startup_raw if isinstance(startup_raw, dict) else {}
+                startup_drone_id = str(startup.get("startup_drone_id", "")).strip()
+                if startup_drone_id:
+                    resolved_drone_id = startup_drone_id
+                    drone_id_source = "io_build_startup_placement"
+                else:
+                    warnings.append("IO artifact startup_drone_pawn.startup_drone_id is empty; using fallback.")
+            except Exception as exc:
+                warnings.append(f"Failed to resolve startup drone id from IO artifact: {exc}")
+        else:
+            warnings.append("Build handoff missing IO artifact path; using fallback drone id.")
+    if not resolved_drone_id:
+        resolved_drone_id = "drone_0001"
+        drone_id_source = "fallback_default"
+
+    result = {
+        "status": "success",
+        "error": "",
+        "mode": "sampler_single_capture_smoke",
+        "enabled": not bool(args.skip_phase7_smoke),
+        "drone_id": resolved_drone_id,
+        "drone_id_source": drone_id_source,
+        "viewpoint_yaml_path": "",
+        "capture_interval_seconds": 0.0,
+        "observation_timeout_seconds": float(args.smoke_observation_timeout_seconds),
+        "capture_evidence": {},
+        "warnings": warnings,
+    }
+    if args.skip_phase7_smoke:
+        result["status"] = "skipped"
+        result["error"] = "Phase 7 smoke capture skipped by --skip-phase7-smoke."
+        return result
+
+    if bridge.state.run_failed:
+        result["status"] = "blocked"
+        result["error"] = bridge.state.last_error or "Bridge is in failed state before Phase 7."
+        return result
+    if not bridge.state.config_ready:
+        result["status"] = "blocked"
+        result["error"] = "Bridge is not config-ready; Phase 7 cannot run."
+        return result
+
+    viewpoint_yaml_candidate = str(args.smoke_viewpoint_yaml).strip()
+    if not viewpoint_yaml_candidate:
+        source_paths_raw = phase5_result.get("source_paths", {})
+        source_paths = source_paths_raw if isinstance(source_paths_raw, dict) else {}
+        viewpoint_yaml_candidate = str(source_paths.get("viewpoint_yaml", "")).strip()
+
+    viewpoint_yaml_path: Path | None = None
+    if viewpoint_yaml_candidate:
+        viewpoint_yaml_path = _resolve_existing_path(viewpoint_yaml_candidate, repo_root)
+        result["viewpoint_yaml_path"] = str(viewpoint_yaml_path)
+
+    sampler = SamplerManager.from_viewpoint_yaml(
+        run_id=runtime_run_id,
+        drone_id=resolved_drone_id,
+        viewpoint_yaml_path=viewpoint_yaml_path,
+        observation_timeout_seconds=args.smoke_observation_timeout_seconds,
+        connection_timeout_seconds=args.connect_timeout_seconds,
+    )
+    result["capture_interval_seconds"] = float(sampler.config.capture_interval_seconds)
+
+    cycle = await sampler.run_one_capture_cycle(bridge)
+    result["capture_evidence"] = dict(cycle)
+    if str(cycle.get("status", "")) != "success":
+        result["status"] = "failed"
+        result["error"] = str(cycle.get("error", "")) or "Sampler smoke capture cycle failed."
+        return result
+    return result
+
+
+async def _run_phase8_spawner_capability_probe(
+    *,
+    bridge: WebSocketBridgeServer,
+    args: RuntimeArgs,
+    runtime_run_id: str,
+) -> dict[str, Any]:
+    probe_drone_id = str(args.spawn_probe_drone_id).strip()
+    result = {
+        "status": "success",
+        "error": "",
+        "enabled": not bool(args.skip_phase8_spawn_probe),
+        "capability_status": "ready",
+        "module_surface": describe_spawner_module_surface(),
+        "probe_drone_id": probe_drone_id,
+        "probe_drone_id_source": "cli_arg" if probe_drone_id else "none",
+        "spawn_count": int(args.spawn_probe_count),
+        "status_timeout_seconds": float(args.spawn_probe_timeout_seconds),
+        "probe_result": {},
+        "warnings": [],
+    }
+    if args.skip_phase8_spawn_probe:
+        result["status"] = "skipped"
+        result["capability_status"] = "pending"
+        result["error"] = "Phase 8 spawn-capability probe skipped by --skip-phase8-spawn-probe."
+        return result
+
+    if bridge.state.run_failed:
+        result["status"] = "blocked"
+        result["capability_status"] = "blocked"
+        result["error"] = bridge.state.last_error or "Bridge is in failed state before Phase 8."
+        return result
+    if not bridge.state.config_ready:
+        result["status"] = "blocked"
+        result["capability_status"] = "blocked"
+        result["error"] = "Bridge is not config-ready; Phase 8 cannot run."
+        return result
+
+    probe_config = SpawnCapabilityConfig(
+        run_id=runtime_run_id,
+        probe_drone_id=probe_drone_id,
+        status_timeout_seconds=float(args.spawn_probe_timeout_seconds),
+        spawn_count=int(args.spawn_probe_count),
+        action_seq=2,
+    )
+    probe_result = await run_spawn_capability_probe(bridge, config=probe_config)
+    result["probe_result"] = dict(probe_result)
+    result["status"] = str(probe_result.get("status", "failed"))
+    result["capability_status"] = str(probe_result.get("capability_status", "failed"))
+    result["error"] = str(probe_result.get("error", ""))
+    return result
+
+
+async def _run_phase3_to_phase8_startup(
+    *,
+    args: RuntimeArgs,
+    phase2_result: dict[str, Any],
+    runtime_run_id: str,
+    bridge_artifacts_root: Path,
+    repo_root: Path,
+    launch_plan: UnrealLaunchPlan,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+    config = BridgeConfig(
+        host=args.host,
+        port=args.port,
+        run_id=runtime_run_id,
+        config_timeout_seconds=args.config_timeout_seconds,
+        strict_validation=args.strict_validation,
+        artifacts_root=bridge_artifacts_root,
+        exit_after_actions=False,
+        post_actions_timeout_seconds=20,
+        persist_raw_artifacts=True,
+    )
+    bridge = WebSocketBridgeServer(config=config, startup_set_config=None, queued_actions=[])
+
+    phase3 = {
+        "status": "success",
+        "error": "",
+        "bridge_started": False,
+        "bridge_endpoint": f"ws://{args.host}:{args.port}",
+        "strict_validation": bool(args.strict_validation),
+        "connect_timeout_seconds": int(args.connect_timeout_seconds),
+        "config_timeout_seconds": int(args.config_timeout_seconds),
+        "bridge_probe_seconds": int(args.bridge_probe_seconds),
+        "require_client_connection": True,
+        "connection_observed": False,
+        "config_ack_observed": False,
+        "config_ready_observed": False,
+        "startup_set_config_mode": "",
+        "bridge_artifacts_root": str(bridge_artifacts_root),
+        "bridge_summary_path": str(bridge_artifacts_root / runtime_run_id / "summary.json"),
+        "bridge_state": asdict(bridge.state),
+    }
+    phase4 = {
+        "status": "success",
+        "error": "",
+        "launch_started": False,
+        "launch_command": list(launch_plan.command),
+        "launch_command_text": " ".join(launch_plan.command),
+        "editor_binary": launch_plan.editor_binary,
+        "project_path": launch_plan.project_path,
+        "authoritative_level_path": launch_plan.authoritative_level_path,
+        "runtime_mode": "render_enabled_offscreen",
+        "startup_timeout_seconds": int(args.unreal_startup_timeout_seconds),
+        "shutdown_timeout_seconds": int(args.unreal_shutdown_timeout_seconds),
+        "unreal_userdir": launch_plan.userdir,
+        "stdout_log_path": launch_plan.stdout_log_path,
+        "expected_engine_log_path": launch_plan.expected_engine_log_path,
+        "unreal_pid": 0,
+        "connection_observed": False,
+        "termination": {},
+        "stdout_log_exists": False,
+        "stdout_log_size_bytes": 0,
+        "engine_log_exists": False,
+        "engine_log_size_bytes": 0,
+        "contains_nullrhi": any(_contains_nullrhi(arg) for arg in launch_plan.command),
+    }
+    phase5 = {
+        "status": "success",
+        "error": "",
+        "mode": "",
+        "source_path": "",
+        "source_paths": {},
+        "assumptions": [],
+        "set_config_sent": False,
+        "config_ack_observed": False,
+        "config_ready_observed": False,
+        "expected_config_id": "",
+        "expected_config_hash": "",
+        "applied_config_id": "",
+        "applied_config_hash": "",
+        "config_reference_match": False,
+    }
+    phase6 = {
+        "status": "blocked",
+        "error": "Phase 6 not executed.",
+        "failure_classification": "",
+        "canonical_preplacement_valid": False,
+        "startup_pawn_evidence": {},
+        "live_sensor_owner_valid": False,
+        "live_sensor_owner_evidence": {},
+        "post_config_state_ready": False,
+        "action_surface_topology_ready": False,
+        "sampler_surface_ready": False,
+        "spawner_surface_ready": False,
+        "controller_surface_ready": False,
+        "errors": [],
+    }
+    phase7 = {
+        "status": "blocked",
+        "error": "Phase 7 not executed.",
+        "mode": "sampler_single_capture_smoke",
+        "enabled": not bool(args.skip_phase7_smoke),
+        "drone_id": str(args.smoke_drone_id),
+        "drone_id_source": "cli_arg" if str(args.smoke_drone_id).strip() else "",
+        "viewpoint_yaml_path": "",
+        "capture_interval_seconds": 0.0,
+        "observation_timeout_seconds": float(args.smoke_observation_timeout_seconds),
+        "capture_evidence": {},
+        "warnings": [],
+    }
+    phase8 = {
+        "status": "blocked",
+        "error": "Phase 8 not executed.",
+        "enabled": not bool(args.skip_phase8_spawn_probe),
+        "capability_status": "blocked",
+        "module_surface": describe_spawner_module_surface(),
+        "probe_drone_id": str(args.spawn_probe_drone_id),
+        "probe_drone_id_source": "cli_arg" if str(args.spawn_probe_drone_id).strip() else "none",
+        "spawn_count": int(args.spawn_probe_count),
+        "status_timeout_seconds": float(args.spawn_probe_timeout_seconds),
+        "probe_result": {},
+        "warnings": [],
+    }
+
+    unreal_process: asyncio.subprocess.Process | None = None
+    stdout_handle = None
+
+    try:
+        await bridge.start()
+        phase3["bridge_started"] = True
+
+        stdout_path = Path(launch_plan.stdout_log_path)
+        stdout_path.parent.mkdir(parents=True, exist_ok=True)
+        stdout_handle = stdout_path.open("wb")
+        unreal_process = await asyncio.create_subprocess_exec(
+            *launch_plan.command,
+            stdout=stdout_handle,
+            stderr=STDOUT,
+        )
+        phase4["launch_started"] = True
+        phase4["unreal_pid"] = int(unreal_process.pid or 0)
+
+        connected, connection_error = await _wait_for_connection_or_process_exit(
+            bridge=bridge,
+            process=unreal_process,
+            timeout_seconds=args.unreal_startup_timeout_seconds,
+        )
+        phase3["connection_observed"] = bool(connected)
+        phase4["connection_observed"] = bool(connected)
+        if not connected:
+            phase3["status"] = "failed"
+            phase3["error"] = connection_error
+            phase4["status"] = "failed"
+            phase4["error"] = connection_error
+        else:
+            try:
+                phase5_config = _build_phase5_config_context(args, runtime_run_id, repo_root)
+                phase5["mode"] = phase5_config.mode
+                phase5["source_path"] = phase5_config.source_path
+                phase5["source_paths"] = dict(phase5_config.source_paths)
+                phase5["assumptions"] = list(phase5_config.assumptions)
+                phase5["expected_config_id"] = phase5_config.expected_config_id
+                phase5["expected_config_hash"] = phase5_config.expected_config_hash
+                phase3["startup_set_config_mode"] = phase5_config.mode
+
+                await bridge.send_set_config(phase5_config.set_config_message)
+                phase5["set_config_sent"] = True
+                phase5["config_ack_observed"] = await bridge.wait_for_config_ack()
+                phase5["config_ready_observed"] = bool(phase5["config_ack_observed"]) and await bridge.wait_for_config_ready()
+                phase5["applied_config_id"] = str(bridge.state.config_id)
+                phase5["applied_config_hash"] = str(bridge.state.config_hash)
+                expected_id = str(phase5["expected_config_id"])
+                expected_hash = str(phase5["expected_config_hash"])
+                phase5["config_reference_match"] = bool(
+                    expected_id
+                    and expected_hash
+                    and phase5["applied_config_id"] == expected_id
+                    and phase5["applied_config_hash"] == expected_hash
+                )
+
+                phase3["config_ack_observed"] = bool(phase5["config_ack_observed"])
+                phase3["config_ready_observed"] = bool(phase5["config_ready_observed"])
+                if not phase5["config_ack_observed"] or not phase5["config_ready_observed"]:
+                    phase5["status"] = "failed"
+                    phase5["error"] = bridge.state.last_error or "Config handshake failed."
+                elif not phase5["config_reference_match"]:
+                    phase5["status"] = "failed"
+                    phase5["error"] = "Config identity mismatch between expected payload and CONFIG_READY response."
+                elif bridge.state.run_failed:
+                    phase5["status"] = "failed"
+                    phase5["error"] = bridge.state.last_error or "Bridge reported run_failed during config apply."
+            except Exception as exc:
+                phase5["status"] = "failed"
+                phase5["error"] = str(exc)
+
+            if phase5["status"] != "success":
+                phase4["status"] = "failed"
+                phase4["error"] = str(phase5["error"])
+
+            if phase3["status"] == "success" and args.bridge_probe_seconds > 0:
+                bridge_error = await bridge.wait_for_error(timeout_seconds=float(args.bridge_probe_seconds))
+                phase3["connection_observed"] = bool(phase3["connection_observed"] or bridge.state.ue_connected)
+                phase4["connection_observed"] = bool(phase3["connection_observed"])
+                if bridge_error:
+                    phase3["status"] = "failed"
+                    phase3["error"] = str(bridge_error)
+                    phase4["status"] = "failed"
+                    phase4["error"] = str(bridge_error)
+
+            if phase3["status"] == "success" and bridge.state.run_failed:
+                phase3["status"] = "failed"
+                phase3["error"] = bridge.state.last_error or "Bridge reported run_failed state."
+                phase4["status"] = "failed"
+                phase4["error"] = phase3["error"]
+
+            phase6 = _validate_phase6_startup_topology(
+                phase2_result=phase2_result,
+                phase5_result=phase5,
+                phase4_result=phase4,
+            )
+            can_run_phase7 = bool(
+                phase3["status"] == "success"
+                and phase4["status"] == "success"
+                and phase5["status"] == "success"
+                and phase6["status"] == "success"
+            )
+            if can_run_phase7:
+                try:
+                    phase7 = await _run_phase7_sampler_smoke(
+                        bridge=bridge,
+                        args=args,
+                        runtime_run_id=runtime_run_id,
+                        phase2_result=phase2_result,
+                        phase5_result=phase5,
+                        repo_root=repo_root,
+                    )
+                except Exception as exc:
+                    phase7["status"] = "failed"
+                    phase7["error"] = str(exc)
+            elif args.skip_phase7_smoke:
+                phase7["status"] = "skipped"
+                phase7["error"] = "Phase 7 smoke capture skipped by --skip-phase7-smoke."
+            else:
+                phase7["status"] = "blocked"
+                phase7["error"] = "Phase 7 blocked: startup phases did not reach a valid action-ready state."
+            can_run_phase8 = bool(
+                phase3["status"] == "success"
+                and phase4["status"] == "success"
+                and phase5["status"] == "success"
+                and phase6["status"] == "success"
+                and phase7["status"] in {"success", "skipped"}
+            )
+            if can_run_phase8:
+                try:
+                    phase8 = await _run_phase8_spawner_capability_probe(
+                        bridge=bridge,
+                        args=args,
+                        runtime_run_id=runtime_run_id,
+                    )
+                except Exception as exc:
+                    phase8["status"] = "failed"
+                    phase8["capability_status"] = "failed"
+                    phase8["error"] = str(exc)
+            elif args.skip_phase8_spawn_probe:
+                phase8["status"] = "skipped"
+                phase8["capability_status"] = "pending"
+                phase8["error"] = "Phase 8 spawn-capability probe skipped by --skip-phase8-spawn-probe."
+            else:
+                phase8["status"] = "blocked"
+                phase8["capability_status"] = "blocked"
+                phase8["error"] = "Phase 8 blocked: startup phases did not reach a valid action-ready state."
+    except Exception as exc:
+        if phase3["status"] == "success":
+            phase3["status"] = "failed"
+            phase3["error"] = str(exc)
+        if phase4["status"] == "success":
+            phase4["status"] = "failed"
+            phase4["error"] = str(exc)
+    finally:
+        if stdout_handle is not None:
+            stdout_handle.flush()
+        if unreal_process is not None:
+            phase4["termination"] = await _terminate_unreal_process(
+                unreal_process,
+                shutdown_timeout_seconds=args.unreal_shutdown_timeout_seconds,
+            )
+        if phase3["bridge_started"]:
+            await bridge.stop()
+        if stdout_handle is not None:
+            stdout_handle.close()
+
+        stdout_path = Path(launch_plan.stdout_log_path)
+        engine_log_path = Path(launch_plan.expected_engine_log_path)
+        phase4["stdout_log_exists"] = stdout_path.exists()
+        phase4["stdout_log_size_bytes"] = int(stdout_path.stat().st_size) if stdout_path.exists() else 0
+        phase4["engine_log_exists"] = engine_log_path.exists()
+        phase4["engine_log_size_bytes"] = int(engine_log_path.stat().st_size) if engine_log_path.exists() else 0
+
+        phase3["bridge_state"] = asdict(bridge.state)
+        phase3["bridge_summary_path"] = str(bridge_artifacts_root / runtime_run_id / "summary.json")
+
+    return phase3, phase4, phase5, phase6, phase7, phase8
