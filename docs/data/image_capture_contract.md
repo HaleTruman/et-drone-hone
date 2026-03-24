@@ -1,333 +1,438 @@
 ## Image Capture Contract
 
-Note: this document currently describes an ideal target-state image capture contract and should not be read as proof that every described behavior is implemented end to end.
+This document describes the current live image-capture implementation first.
 
-This section defines the detailed reference contract for image capture during runtime runs. It is intended to become the model for how pose and telemetry contracts should also be documented:
+It is not an ideal-state draft anymore. If a behavior is not implemented in the
+live repo, it should be called out under **Future Work / Target-State
+Extensions** at the bottom instead of being mixed into the live contract.
 
-1. source config
+## Purpose
+
+Image capture is the clearest end-to-end proof path in the current repo because
+it crosses all of these boundaries:
+
+1. authored config
 2. compiled runtime config
-3. capture request
-4. Unreal runtime resolution
-5. observation payload
-6. artifact persistence
-7. traceability and open issues
+3. top-level build handoff
+4. top-level runtime launch and config apply
+5. runtime capture dispatch inside Unreal
+6. returned `OBS` payload
+7. raw and accepted artifact persistence
 
-### Why This Section Exists
+If this path is deterministic and traceable, the same pattern can later be
+extended to richer telemetry, control-linked observations, and multi-action
+runtime episodes.
 
-Image capture is the clearest end-to-end example of the contract problem this repo is trying to solve.
+## Source Of Truth
 
-One captured image should be traceable all the way through:
+When this document conflicts with implementation details, use these live code
+paths as the source of truth:
 
-- the authored viewpoint config
-- the compiled `SET_CONFIG` payload
-- the capture request initiated by `Sampler_Manager.py`
-- the Unreal-side capture systems and viewpoint provider contract
-- the returned `OBS` payload
-- the decoded artifact written to disk
+1. `UE_Tooling/run_unreal_build.py`
+2. `UE_Tooling/run_unreal_io.py`
+3. `UE_Tooling/Config/RunConfig.py`
+4. `UE_Tooling/Data_Interface/Sampler_Manager.py`
+5. `UE_Tooling/WebSocket/protocol.py`
+6. `UE_Tooling/WebSocket/ws_bridge.py`
+7. `UE_Drone_Env/Source/UE_Drone_Env/SetDataConfigRuntimeActor.cpp`
+8. `UE_Drone_Env/Source/UE_Drone_Env/SampleManagerRuntimeActor.cpp`
+9. `UE_Drone_Env/Source/UE_Drone_Env/DroneSensorsRuntimeComponent.cpp`
 
-If this flow is clean and deterministic, the same shape can be mirrored for pose and telemetry.
+## Status Legend
 
-The image-capture config surface should stay focused on the fields that actually vary per run:
+- `ACTIVE`: emitted, consumed, or enforced by live code today
+- `COMPAT`: accepted or emitted for compatibility during transition, but not the preferred canonical shape
+- `LOOSE`: generated or mirrored contract surface exists today, but it is not the exact live smoke-path call boundary
+- `FUTURE`: desired contract direction, not required for the current live image smoke path
 
-- `fov_deg`
-- `width`
-- `height`
-- camera rig offset from the drone body
-- camera rig rotation relative to the drone body
+## Current Live End-To-End Flow
 
-### Image Capture Flow
+The live image-capture path currently works like this:
 
-Current intended ownership flow:
+1. `UE_Tooling/run_unreal_build.py` orchestrates the WebSocket, Course, Drone,
+   and IO build stages and writes a canonical build manifest under
+   `UE_Tooling/Artifacts/build/<run_name>.json`.
+2. That build manifest carries the authoritative level handoff plus IO placement
+   validation, including canonical singleton placement for:
+   - `BP_SetDataConfig_Main`
+   - `BP_SampleManager_Main`
+   - `BP_DronePawn_Startup_Main`
+3. `UE_Tooling/run_unreal_io.py` consumes the build manifest, starts the
+   bridge, launches Unreal, compiles or loads `SET_CONFIG`, applies config,
+   validates startup topology, and then runs the sampler smoke capture.
+4. `UE_Tooling/Data_Interface/Sampler_Manager.py` emits a minimal
+   `CAPTURE_NOW` action with top-level `capture_id` and empty payload.
+5. `ASetDataConfigRuntimeActor::HandleCaptureNow(...)` resolves
+   `BP_SampleManager_Main` and dispatches capture into the runtime sample
+   manager instead of emitting a placeholder image directly.
+6. `ASampleManagerRuntimeActor` resolves the hosted
+   `UDroneSensorsRuntimeComponent`, captures a real rendered PNG, queries a real
+   viewpoint snapshot, resolves the active config reference, and assembles the
+   observation payload.
+7. `ASetDataConfigRuntimeActor` sends the assembled `OBS` envelope back over
+   the WebSocket.
+8. `ws_bridge.py` optionally persists raw transport artifacts.
+9. `Sampler_Manager.py` validates the returned image against active config
+   identity and expected viewpoint metadata before writing accepted sample
+   artifacts.
 
-1. `UE_Tooling/Config/Data_Interface_Config/SensorRigProfileConfig_Viewpoint.yaml` defines image-capture preferences at authoring time.
-2. `UE_Tooling/Config/RunConfig.py` compiles runtime image settings from that file into the `payload.sensor_rig` block of `SET_CONFIG`.
-3. `Sampler_Manager.py` reads tooling-side capture cadence from that same file and owns runtime image capture requests.
-4. `AWSConfigHandshakeActor` / `BP_SetDataConfig` gate runtime actions after config is ready.
-5. `BP_SampleManager` should own atomic image capture orchestration inside Unreal.
-6. `BPI_DroneViewpointProvider` should expose the viewpoint chosen for capture.
-7. `BP_DroneSensors` should own the live viewpoint settings used to satisfy that request.
-8. Unreal should emit `OBS` containing both image data and viewpoint metadata. # need more detail for this (dont removed unless human arrpoeved)
-9. `ws_bridge.py` should persist the raw `OBS` plus decoded image artifacts.
-10. `Sampler_Manager.py` should own any downstream normalized sample placement.
+## Runtime Preconditions For Image Capture
 
-### Stage 1: Source Config Contract
+Image capture is not a standalone runtime action. The current live repo expects
+these preconditions to already be true:
+
+### Build-Layer Preconditions
+
+Owner:
+
+- `UE_Tooling/run_unreal_build.py`
+
+Required live outputs:
+
+| Output | Status | Meaning |
+| --- | --- | --- |
+| top-level build manifest under `UE_Tooling/Artifacts/build/<run_name>.json` | `ACTIVE` | canonical build handoff for runtime |
+| `authoritative_course_level_path` | `ACTIVE` | exact map package path runtime must launch |
+| IO placement summary for `BP_SetDataConfig_Main` | `ACTIVE` | proves config ingress is preplaced |
+| IO placement summary for `BP_SampleManager_Main` | `ACTIVE` | proves capture owner is preplaced |
+| IO placement summary for `BP_DronePawn_Startup_Main` | `ACTIVE` | proves canonical startup drone exists for smoke capture |
+
+### Runtime-Layer Preconditions
+
+Owner:
+
+- `UE_Tooling/run_unreal_io.py`
+
+Required live runtime stages for smoke capture:
+
+| Runtime stage | Status | Meaning |
+| --- | --- | --- |
+| build handoff ingest | `ACTIVE` | validates build manifest and required placements |
+| bridge supervision | `ACTIVE` | starts websocket bridge and captures bridge artifacts |
+| Unreal runtime launch | `ACTIVE` | launches the authoritative level in a render-enabled runtime mode |
+| config apply | `ACTIVE` | sends `SET_CONFIG`, observes `ACK` and `CONFIG_READY` |
+| startup topology validation | `ACTIVE` | proves startup pawn preplacement and post-config readiness |
+| sampler smoke capture | `ACTIVE` | emits one truthful sampler-owned capture request and validates returned `OBS` |
+
+The current document is about the contract inside and after that smoke-capture
+stage, not about the entire runtime orchestrator.
+
+## Stage 1: Source Config Contract
 
 Primary source file:
 
 - `UE_Tooling/Config/Data_Interface_Config/SensorRigProfileConfig_Viewpoint.yaml`
 
-Current file shape:
+Current live fields:
 
-| YAML path | Meaning | Status | Canonical expectation |
-| --- | --- | --- | --- |
-| `schema_version` | authoring-file schema version | `ACTIVE` | must stay distinct from websocket `schema_version` |
-| `viewpoints.capture_interval_seconds` | tooling-side capture cadence in seconds | `ACTIVE` | should be consumed by `Sampler_Manager.py`, not compiled into `SET_CONFIG` |
-| `viewpoints.resolution.width` | image width for the active run | `ACTIVE` | should define capture width in pixels |
-| `viewpoints.resolution.height` | image height for the active run | `ACTIVE` | should define capture height in pixels |
-| `viewpoints.resolution.fov_deg` | field of view for the active run | `ACTIVE` | should define capture FOV |
-| `viewpoints.capture_rig.offset_cm.x` | camera offset X relative to drone body | `ACTIVE` | should be the canonical authored source for camera placement |
-| `viewpoints.capture_rig.offset_cm.y` | camera offset Y relative to drone body | `ACTIVE` | same expectation |
-| `viewpoints.capture_rig.offset_cm.z` | camera offset Z relative to drone body | `ACTIVE` | same expectation |
-| `viewpoints.capture_rig.rotation_deg.pitch` | camera pitch relative to drone body | `ACTIVE` | should be the canonical authored source for camera aim |
-| `viewpoints.capture_rig.rotation_deg.roll` | camera roll relative to drone body | `ACTIVE` | same expectation |
-| `viewpoints.capture_rig.rotation_deg.yaw` | camera yaw relative to drone body | `ACTIVE` | same expectation |
+| YAML path | Status | Meaning |
+| --- | --- | --- |
+| `schema_version` | `ACTIVE` | local YAML schema version only |
+| `viewpoints.capture_interval_seconds` | `ACTIVE` | tooling-side capture cadence consumed by `Sampler_Manager.py` |
+| `viewpoints.resolution.width` | `ACTIVE` | runtime image width |
+| `viewpoints.resolution.height` | `ACTIVE` | runtime image height |
+| `viewpoints.resolution.fov_deg` | `ACTIVE` | runtime image FOV |
+| `viewpoints.capture_rig.offset_cm.x` | `ACTIVE` | camera rig offset X |
+| `viewpoints.capture_rig.offset_cm.y` | `ACTIVE` | camera rig offset Y |
+| `viewpoints.capture_rig.offset_cm.z` | `ACTIVE` | camera rig offset Z |
+| `viewpoints.capture_rig.rotation_deg.pitch` | `ACTIVE` | camera rig pitch |
+| `viewpoints.capture_rig.rotation_deg.roll` | `ACTIVE` | camera rig roll |
+| `viewpoints.capture_rig.rotation_deg.yaw` | `ACTIVE` | camera rig yaw |
 
-Current compiler/runtime status against the live file shape:
+Current live behavior:
 
-- `RunConfig.py` consumes `resolution.*`, `capture_rig.offset_cm.*`, and `capture_rig.rotation_deg.*` from this file
-- `Sampler_Manager.py` consumes `viewpoints.capture_interval_seconds` from this file as tooling-side sampling cadence
-- those runtime image fields are required inputs, not fallback-backed inputs
-- missing or malformed runtime image fields should fail fast during `RunConfig.py` compile
+- `RunConfig.py` treats the runtime image fields as required compile inputs.
+- `Sampler_Manager.py` reads only `capture_interval_seconds` from this file.
+- The runtime image fields are not optional suggestion fields. Missing or
+  malformed values fail the compile path.
 
-Canonical rule for this stage:
+Canonical rule for the live repo:
 
-- width, height, FOV, rig offset, and rig rotation are the actual image-capture config inputs that should be tracked per run
-- `capture_interval_seconds` is a tooling-side sampling input and should not be treated as runtime UE config
-- the authored image config should answer two things clearly:
-  1. what optical settings should be used
-  2. where the camera is mounted and what angle it is pointed at
+- optical settings and rig transform come from this viewpoint YAML
+- per-capture behavior does not override them
+- capture cadence is tooling-owned, not Unreal-config-owned
 
-### Stage 2: Compiled Runtime Config Contract
+## Stage 2: Compiled Runtime Config Contract
 
 Current compiler:
 
 - `UE_Tooling/Config/RunConfig.py`
 
-Current image-related compiled fields:
+Current live image-related `SET_CONFIG` fields:
 
-| `SET_CONFIG` path | Source | Status | Meaning |
-| --- | --- | --- | --- |
-| `payload.sensor_rig.active_viewpoint` | compiler policy default | `ACTIVE` | selected runtime viewpoint name |
-| `payload.sensor_rig.front_fov_deg` | `viewpoints.resolution.fov_deg` | `ACTIVE` | effective capture FOV |
-| `payload.sensor_rig.capture_width` | `viewpoints.resolution.width` | `ACTIVE` | effective image width |
-| `payload.sensor_rig.capture_height` | `viewpoints.resolution.height` | `ACTIVE` | effective image height |
-| `payload.sensor_rig.front_offset_cm.x` | `viewpoints.capture_rig.offset_cm.x` | `ACTIVE` | effective rig offset X |
-| `payload.sensor_rig.front_offset_cm.y` | `viewpoints.capture_rig.offset_cm.y` | `ACTIVE` | effective rig offset Y |
-| `payload.sensor_rig.front_offset_cm.z` | `viewpoints.capture_rig.offset_cm.z` | `ACTIVE` | effective rig offset Z |
-| `payload.sensor_rig.front_rotation_deg.pitch` | `viewpoints.capture_rig.rotation_deg.pitch` | `ACTIVE` | effective camera pitch relative to drone body |
-| `payload.sensor_rig.front_rotation_deg.roll` | `viewpoints.capture_rig.rotation_deg.roll` | `ACTIVE` | effective camera roll relative to drone body |
-| `payload.sensor_rig.front_rotation_deg.yaw` | `viewpoints.capture_rig.rotation_deg.yaw` | `ACTIVE` | effective camera yaw relative to drone body |
+| `SET_CONFIG` path | Status | Meaning |
+| --- | --- | --- |
+| `payload.config_id` | `ACTIVE` | effective runtime config identity |
+| `payload.config_hash` | `ACTIVE` | effective runtime config hash |
+| `payload.sensor_rig.active_viewpoint` | `ACTIVE` | current active viewpoint name |
+| `payload.sensor_rig.front_fov_deg` | `ACTIVE` | effective FOV |
+| `payload.sensor_rig.capture_width` | `ACTIVE` | effective width |
+| `payload.sensor_rig.capture_height` | `ACTIVE` | effective height |
+| `payload.sensor_rig.front_offset_cm.x` | `ACTIVE` | effective rig offset X |
+| `payload.sensor_rig.front_offset_cm.y` | `ACTIVE` | effective rig offset Y |
+| `payload.sensor_rig.front_offset_cm.z` | `ACTIVE` | effective rig offset Z |
+| `payload.sensor_rig.front_rotation_deg.pitch` | `ACTIVE` | effective rig pitch |
+| `payload.sensor_rig.front_rotation_deg.roll` | `ACTIVE` | effective rig roll |
+| `payload.sensor_rig.front_rotation_deg.yaw` | `ACTIVE` | effective rig yaw |
 
-Current downstream concern:
+Current live runtime behavior:
 
-- UE/runtime consumers and generated sensor-rig assets do not yet clearly expose or apply `front_rotation_deg.*`
-- the current compiler intentionally fails fast if the runtime image fields are missing or malformed, so upstream config shape must stay aligned
+- `ASetDataConfigRuntimeActor` validates the incoming `sensor_rig` block and
+  applies it onto live sensor owners.
+- `UDroneSensorsRuntimeComponent` reads back the active values from the live
+  owner when capture is requested.
+- `DA_SensorRigProfileDefault` remains bootstrap-only state and is expected to
+  be overwritten on configured runs.
 
-Canonical rule for this stage:
+Canonical rule for the live repo:
 
-- `SET_CONFIG` must carry the effective runtime image settings that Unreal will actually use, not just the authored source values
-- the compiled runtime image block should fully describe the runtime camera that Unreal will use without requiring inference from any pose config side channel
-- generated UE sensor-rig defaults may exist before config apply, but they are bootstrap values only and should be overwritten by the `SET_CONFIG` values on every configured run
+- `SET_CONFIG.payload.sensor_rig` is the authoritative runtime image config
+- bootstrap defaults are not the source of truth for a configured run
 
-### Stage 3: Capture Request Contract
+## Stage 3: Capture Request Contract
 
 Tooling owner:
 
-- `Sampler_Manager.py`
+- `UE_Tooling/Data_Interface/Sampler_Manager.py`
 
-Current and intended `CAPTURE_NOW` contract is minimal:
+Current live `CAPTURE_NOW` contract:
 
 | Path | Status | Meaning |
 | --- | --- | --- |
-| top-level `type` | `ACTIVE` | message type `CAPTURE_NOW` |
+| top-level `type` | `ACTIVE` | `CAPTURE_NOW` |
 | top-level `run_id` | `ACTIVE` | run trace key |
-| top-level `schema_version` | `ACTIVE` | wire-contract version |
+| top-level `schema_version` | `ACTIVE` | wire contract version |
 | top-level `seq` | `ACTIVE` | message ordering key |
-| top-level `timestamp` | `ACTIVE` | capture request timestamp |
-| top-level `drone_id` | `ACTIVE` | target drone for capture |
-| top-level `capture_id` | `ACTIVE` | traceable capture identifier |
-| `payload` | `ACTIVE` | empty object for v1 minimal capture trigger |
+| top-level `timestamp` | `ACTIVE` | action timestamp |
+| top-level `drone_id` | `ACTIVE` | target drone |
+| top-level `capture_id` | `ACTIVE` | traceable capture key |
+| `payload` | `ACTIVE` | empty object for the current smoke path |
+| `payload.capture_id` | `COMPAT` | accepted as fallback by UE ingress if top-level `capture_id` is absent |
 
-Current `Sampler_Manager.py` behavior on the tooling side:
+Current live behavior:
 
-1. read `viewpoints.capture_interval_seconds` from the viewpoint YAML, default `15.0` seconds
-2. wait for bridge connection to UE
-3. wait for bridge config-ready state owned elsewhere
-4. generate the next `capture_id`
-5. send one minimal `CAPTURE_NOW`
-6. log `sent`
-7. wait for matching `OBS`
-8. log `received` or `failed`
-9. repeat every configured interval
+1. wait for bridge connection
+2. wait for config-ready state
+3. generate next `capture_id`
+4. send one minimal `CAPTURE_NOW`
+5. wait for one matching `OBS`
+6. validate returned image against active config identity and expected viewpoint
+7. log one terminal status: `received` or `failed`
 
-Canonical rule for this stage:
+Canonical rule for the live repo:
 
-- `CAPTURE_NOW` is a trigger and correlation message, not a second config surface
-- image behavior should come from the compiled runtime config already applied through `SET_CONFIG`
-- `Sampler_Manager.py` should own capture cadence, `capture_id` generation, and `sent` / `received` / `failed` sample logging
-- `Sampler_Manager.py` should not compile config or own the `SET_CONFIG` startup flow
-- `Sampler_Manager.py` is the most practical tooling-side place to perform capture conformance validation after `OBS` is received, because it already owns capture correlation and sample acceptance for each `capture_id`
+- `CAPTURE_NOW` is a trigger, not a second config surface
+- the live capture behavior must come from already-applied config
+- capture correlation is keyed by top-level `capture_id`
 
-Recommended capture conformance validation for `Sampler_Manager.py`:
+## Stage 4: Unreal Runtime Resolution Contract
 
-1. treat a returned sample as valid only if it can be tied to the active applied config identity for the run
-2. compare returned image metadata against the expected applied runtime image settings for that run
-3. flag the sample as `failed` if the returned observation does not carry enough config-linked metadata to prove conformance
+Current live Unreal-side owners:
 
-This validation should stay narrow:
-
-- `ws_bridge.py` should keep owning raw transport and raw persistence
-- Unreal runtime should keep owning the actual capture behavior # need more detail for this (dont removed unless human arrpoeved)
-- `Sampler_Manager.py` should only validate that the received sample can be trusted as having come from the applied config already in force for the run
-
-### Stage 4: Unreal Runtime Resolution Contract
-
-Current intended Unreal-side ownership:
-
-| System | Role in image capture | Status |
+| System | Live role in image capture | Status |
 | --- | --- | --- |
-| `AWSConfigHandshakeActor` / `BP_SetDataConfig` | gate runtime actions on config-ready and forward capture intent into runtime systems | `ACTIVE` |
-| `BP_SampleManager` | own atomic image capture orchestration | `LOOSE` |
-| `BPI_DroneViewpointProvider.ListViewpoints` | enumerate available viewpoints | `LOOSE` |
-| `BPI_DroneViewpointProvider.GetViewpointSnapshot` | return viewpoint metadata for the requested capture | `LOOSE` |
-| `BP_DroneSensors` | own active viewpoint, FOV, width, height, and rig offsets used for capture | `LOOSE` |
-| `ST_DroneViewpointSnapshot` | typed UE-side viewpoint snapshot schema | `LOOSE` |
+| `ASetDataConfigRuntimeActor` / `BP_SetDataConfig` | receive `CAPTURE_NOW`, resolve sample manager, validate returned observation, emit `OBS` | `ACTIVE` |
+| `ASampleManagerRuntimeActor` / `BP_SampleManager` | own atomic image capture orchestration and observation assembly | `ACTIVE` |
+| `UDroneSensorsRuntimeComponent` / `BP_DroneSensors` | own active image state, capture the rendered PNG, expose viewpoint snapshot | `ACTIVE` |
+| `ST_DroneViewpointSnapshot` | generated schema contract for the intended viewpoint surface | `LOOSE` |
+| `BPI_DroneViewpointProvider` | generated interface contract for viewpoint ownership symmetry | `LOOSE` |
 
-Current intended `ST_DroneViewpointSnapshot` fields:
+Important current implementation truth:
 
-| Field | Meaning |
-| --- | --- |
-| `timestamp_utc` | snapshot timestamp |
-| `run_id` | run trace key |
-| `capture_id` | capture trace key |
-| `viewpoint_name` | runtime viewpoint used |
-| `fov_deg` | effective FOV |
-| `width` | effective width |
-| `height` | effective height |
-| `rig_offset_from_drone_body_cm` | viewpoint rig offset |
+- the live path does **not** emit a placeholder PNG anymore
+- the live path does **not** bypass `BP_SampleManager` anymore
+- the live path currently uses the native hosted sensor runtime component
+  directly for the smoke capture path
+- that means the generated `BPI_DroneViewpointProvider` and
+  `ST_DroneViewpointSnapshot` assets still matter as contract surfaces, but they
+  are not the exact live C++ call boundary used by the current smoke path
 
-Recommended canonical addition to `ST_DroneViewpointSnapshot`:
+Current live viewpoint snapshot content:
 
 | Field | Status | Meaning |
 | --- | --- | --- |
-| `rig_rotation_from_drone_body_deg.pitch` | `OPEN` | effective camera pitch relative to the drone body |
-| `rig_rotation_from_drone_body_deg.roll` | `OPEN` | effective camera roll relative to the drone body |
-| `rig_rotation_from_drone_body_deg.yaw` | `OPEN` | effective camera yaw relative to the drone body |
+| `timestamp_utc` | `ACTIVE` | snapshot timestamp |
+| `run_id` | `ACTIVE` | run trace key |
+| `capture_id` | `ACTIVE` | capture trace key |
+| `viewpoint_name` | `ACTIVE` | active viewpoint used |
+| `fov_deg` | `ACTIVE` | effective FOV |
+| `width` | `ACTIVE` | effective width |
+| `height` | `ACTIVE` | effective height |
+| `rig_offset_from_drone_body_cm` | `ACTIVE` | effective rig offset |
+| `rig_rotation_from_drone_body_deg.pitch` | `ACTIVE` | effective rig pitch |
+| `rig_rotation_from_drone_body_deg.roll` | `ACTIVE` | effective rig roll |
+| `rig_rotation_from_drone_body_deg.yaw` | `ACTIVE` | effective rig yaw |
 
-Critical current gap:
+## Stage 5: Live `OBS` Image Contract
 
-- the live plugin path in `AWSConfigHandshakeActor::HandleCaptureNow(...)` currently bypasses `BP_SampleManager` and `BPI_DroneViewpointProvider`, emits a placeholder PNG, and does not include a viewpoint block in `OBS`
-
-That means the current live runtime does not yet satisfy the intended image capture contract.
-
-### Stage 5: Canonical `OBS` Image Contract
-
-Current live image-related `OBS` fields:
+Current live returned `OBS` payload fields for image capture:
 
 | Path | Status | Meaning |
 | --- | --- | --- |
+| top-level `type` | `ACTIVE` | `OBS` |
 | top-level `run_id` | `ACTIVE` | run trace key |
 | top-level `drone_id` | `ACTIVE` | drone trace key |
 | top-level `capture_id` | `ACTIVE` | capture trace key |
-| `payload.timestamp_utc` | `ACTIVE` | payload timestamp |
-| `payload.image_bytes_b64` | `ACTIVE` | base64 PNG bytes |
-| `payload.pose.*` | `ACTIVE` | pose snapshot currently included |
+| `payload.timestamp_utc` | `ACTIVE` | observation timestamp |
+| `payload.run_id` | `ACTIVE` | duplicated run identity inside payload |
+| `payload.drone_id` | `ACTIVE` | duplicated drone identity inside payload |
+| `payload.capture_id` | `ACTIVE` | duplicated capture identity inside payload |
+| `payload.config_ref.config_id` | `ACTIVE` | applied runtime config identity |
+| `payload.config_ref.config_hash` | `ACTIVE` | applied runtime config hash |
+| `payload.viewpoint.timestamp_utc` | `ACTIVE` | viewpoint snapshot timestamp |
+| `payload.viewpoint.run_id` | `ACTIVE` | viewpoint trace link |
+| `payload.viewpoint.capture_id` | `ACTIVE` | viewpoint trace link |
+| `payload.viewpoint.viewpoint_name` | `ACTIVE` | active viewpoint name |
+| `payload.viewpoint.fov_deg` | `ACTIVE` | effective FOV |
+| `payload.viewpoint.width` | `ACTIVE` | effective width |
+| `payload.viewpoint.height` | `ACTIVE` | effective height |
+| `payload.viewpoint.rig_offset_from_drone_body_cm` | `ACTIVE` | effective rig offset |
+| `payload.viewpoint.rig_rotation_from_drone_body_deg` | `ACTIVE` | effective rig rotation |
+| `payload.image.encoding` | `ACTIVE` | currently `png_base64` |
+| `payload.image.bytes_b64` | `ACTIVE` | canonical image byte field |
+| `payload.image.width` | `ACTIVE` | image width |
+| `payload.image.height` | `ACTIVE` | image height |
+| `payload.image_bytes_b64` | `COMPAT` | legacy top-level payload alias retained for compatibility |
 
-Strict tooling-side validation now expects these additional `OBS` fields before an image sample can be accepted:
+Current live omissions for the image smoke path:
 
-- `payload.config_ref.config_id`
-- `payload.config_ref.config_hash`
-- `payload.viewpoint.width`
-- `payload.viewpoint.height`
-- `payload.viewpoint.fov_deg`
-
-Those are now part of the tooling-side image contract even though the current UE runtime does not yet emit them end to end.
-
-Recommended canonical image-focused `OBS` shape:
-
-| Path | Status | Purpose | Notes |
-| --- | --- | --- | --- |
-| `payload.viewpoint.fov_deg` | `OPEN` | effective FOV for this image | required by strict tooling validation; should reflect actual capture settings |
-| `payload.viewpoint.width` | `OPEN` | effective width | required by strict tooling validation; should reflect actual capture settings |
-| `payload.viewpoint.height` | `OPEN` | effective height | required by strict tooling validation; should reflect actual capture settings |
-| `payload.viewpoint.rig_offset_from_drone_body_cm` | `OPEN` | viewpoint offset used | should reflect actual capture settings |
-| `payload.viewpoint.rig_rotation_from_drone_body_deg.pitch` | `OPEN` | viewpoint pitch used | should reflect actual capture settings |
-| `payload.viewpoint.rig_rotation_from_drone_body_deg.roll` | `OPEN` | viewpoint roll used | should reflect actual capture settings |
-| `payload.viewpoint.rig_rotation_from_drone_body_deg.yaw` | `OPEN` | viewpoint yaw used | should reflect actual capture settings |
-| `payload.image.bytes_b64` | `OPEN` | canonical image byte field | `payload.image_bytes_b64` should be treated as compatibility alias during transition |
-| `payload.image.width` | `OPEN` | image width written to bytes | should match `viewpoint.width` |
-| `payload.image.height` | `OPEN` | image height written to bytes | should match `viewpoint.height` |
-| `payload.config_ref.config_id` | `OPEN` | effective config reference | required by strict tooling validation; should tie image directly to config identity |
-| `payload.config_ref.config_hash` | `OPEN` | effective config reference | required by strict tooling validation; same reason |
-
-Canonical rule for this stage:
-
-- one returned image must be self-describing enough to answer which viewpoint, resolution, FOV, and config identity produced it
-- that self-description is what allows `Sampler_Manager.py` to validate image-to-config conformance before accepting a sample as good
-
-### Stage 6: Artifact Persistence Contract
-
-Current tooling-side persistence behavior:
-
-| Artifact | Current behavior | Status |
+| Path | Status | Meaning |
 | --- | --- | --- |
-| raw bridge image file | optionally written as `raw_captures/<capture_id>/raw__<drone_id>__<seq>.png` | `ACTIVE` |
-| raw bridge observation record | optionally written to `raw_observations.jsonl` with `run_id`, `drone_id`, `capture_id`, `seq`, `raw_image_file`, and full raw message | `ACTIVE` |
-| accepted sample image file | written by `Sampler_Manager.py` as `samples/images/<capture_id>/<drone_id>__<seq>__<width-height>__<interval>.png` after validation | `ACTIVE` |
-| accepted sample record | written by `Sampler_Manager.py` to `samples/accepted_samples.jsonl` with config/viewpoint/image metadata and accepted sample path | `ACTIVE` |
+| `payload.pose.*` | `FUTURE` | not part of the current live image smoke payload |
+| `payload.telemetry.*` | `FUTURE` | not part of the current live image smoke payload |
 
-Recommended canonical image artifact expectations:
+Current live validation behavior:
 
-| Artifact path or field | Status | Purpose | Notes |
+- `ASetDataConfigRuntimeActor` rejects observation payloads that are missing
+  `config_ref`, `viewpoint`, or image bytes
+- `Sampler_Manager.py` requires:
+  - matching `run_id`
+  - matching `drone_id`
+  - non-empty `capture_id`
+  - matching `config_ref.config_id`
+  - matching `config_ref.config_hash`
+  - matching `viewpoint.width`
+  - matching `viewpoint.height`
+  - matching `viewpoint.fov_deg`
+  - PNG dimensions that match viewpoint metadata
+
+Canonical rule for the live repo:
+
+- one accepted image must be self-describing enough to prove which config and
+  viewpoint produced it
+- compatibility aliasing can remain temporarily, but canonical nested `payload.image`
+  is already live and should be treated as preferred
+
+## Stage 6: Artifact Persistence Contract
+
+Current live artifact owners:
+
+- `UE_Tooling/run_unreal_io.py` owns the runtime session root
+- `UE_Tooling/WebSocket/ws_bridge.py` owns optional raw transport persistence
+- `UE_Tooling/Data_Interface/Sampler_Manager.py` owns accepted image persistence
+
+Current live runtime wrapper paths:
+
+| Artifact path | Status | Owner | Meaning |
 | --- | --- | --- | --- |
-| `raw_captures/<capture_id>/raw__<drone_id>__<seq>.png` | `ACTIVE` | raw bridge image artifact | transport-owned, optional, and directly traceable back to the raw observation record |
-| `raw_observations.jsonl` -> `raw_image_file` | `ACTIVE` | direct lookup from raw observation record to raw image | bridge-owned audit/debug path |
-| `samples/images/<capture_id>/<drone_id>__<seq>__<width-height>__<interval>.png` | `ACTIVE` | accepted image sample artifact | sampler-owned validated image output |
-| `samples/accepted_samples.jsonl` -> `config_ref.config_id` / `config_ref.config_hash` | `ACTIVE` | direct config trace linkage for accepted samples | avoids losing runtime config context at the accepted sample layer |
-| `samples/accepted_samples.jsonl` -> `viewpoint.width` / `viewpoint.height` / `viewpoint.fov_deg` | `ACTIVE` | accepted sample validation summary | lets downstream users inspect accepted image settings without re-parsing the raw message |
+| `UE_Tooling/Artifacts/runtime/<runtime_run_id>/runtime_session_manifest.json` | `ACTIVE` | `run_unreal_io.py` | top-level runtime phase evidence |
+| `UE_Tooling/Artifacts/runtime/<runtime_run_id>/bridge/<runtime_run_id>/summary.json` | `ACTIVE` | `ws_bridge.py` | bridge session summary |
+| `UE_Tooling/Artifacts/runtime/<runtime_run_id>/bridge/<runtime_run_id>/raw_messages.jsonl` | `ACTIVE` | `ws_bridge.py` | raw message audit trail |
+| `UE_Tooling/Artifacts/runtime/<runtime_run_id>/bridge/<runtime_run_id>/raw_observations.jsonl` | `ACTIVE` | `ws_bridge.py` | raw observation audit trail |
+| `UE_Tooling/Artifacts/runtime/<runtime_run_id>/bridge/<runtime_run_id>/raw_captures/<capture_id>/raw__<drone_id>__<seq>.png` | `ACTIVE` | `ws_bridge.py` | raw decoded PNG |
+| `UE_Tooling/Artifacts/runtime/<runtime_run_id>/bridge/<runtime_run_id>/samples/images/<capture_id>/<drone_id>__<seq>__<width-height>__<interval>.png` | `ACTIVE` | `Sampler_Manager.py` | accepted sample image |
+| `UE_Tooling/Artifacts/runtime/<runtime_run_id>/bridge/<runtime_run_id>/samples/accepted_samples.jsonl` | `ACTIVE` | `Sampler_Manager.py` | accepted sample metadata |
 
-Canonical rule for this stage:
+Current accepted sample record content:
 
-- `ws_bridge.py` should stay transport-focused and only own optional raw artifact persistence
-- `Sampler_Manager.py` should own accepted image persistence and should only write accepted samples after config-ref and viewpoint validation passes
-- the accepted sample filename should use the canonical pattern `<drone_id>__<seq>__<width-height>__<interval>.png`
-- the artifact layer should preserve enough summarized image metadata that a dataset or audit tool can identify the image without re-parsing the full websocket message every time
+| Field | Status | Meaning |
+| --- | --- | --- |
+| `config_ref.config_id` | `ACTIVE` | accepted sample config identity |
+| `config_ref.config_hash` | `ACTIVE` | accepted sample config hash |
+| `viewpoint.width` | `ACTIVE` | accepted sample width |
+| `viewpoint.height` | `ACTIVE` | accepted sample height |
+| `viewpoint.fov_deg` | `ACTIVE` | accepted sample FOV |
+| `image.sample_file` | `ACTIVE` | relative path to accepted PNG |
+| `image.raw_image_file` | `ACTIVE` | relative path back to raw PNG when present |
 
-### End-To-End Traceability Requirements For One Image
+Canonical rule for the live repo:
 
-For one image capture, the contract should preserve this chain without ambiguity:
+- raw artifacts remain transport-owned
+- accepted sample artifacts remain sampler-owned
+- runtime wrapper artifacts remain runtime-orchestrator-owned
 
-1. source viewpoint YAML path and its local `schema_version`
-2. source viewpoint YAML content hash
-3. compiled `SET_CONFIG.payload.sensor_rig` values actually sent to Unreal
-4. `config_id` and `config_hash`
-5. `capture_id`
-6. `drone_id`
-7. actual FOV, width, height, rig offset, and rig rotation used by Unreal
-8. returned `OBS` image metadata and bytes
-9. decoded image file path in runtime artifacts
+## End-To-End Traceability Requirements
 
-If any one of those links is missing, image reproducibility becomes weaker.
+For one accepted image sample, the current live repo can trace:
 
-### What Is Actively Defined Versus Missing
+1. build manifest path
+2. authoritative level path
+3. runtime session manifest path
+4. bridge summary path
+5. run-level `config_id`
+6. run-level `config_hash`
+7. `capture_id`
+8. `drone_id`
+9. returned viewpoint width, height, FOV, rig offset, and rig rotation
+10. raw decoded PNG path
+11. accepted PNG path
 
-Actively defined today:
+That is the current minimum truthful image-capture trace chain.
 
-- viewpoint YAML exists
-- `RunConfig.py` compiles width, height, and FOV into `SET_CONFIG`
-- `Sampler_Manager.py` is the intended tooling owner of capture requests
-- `Sampler_Manager.py` now validates returned image samples against `config_ref` plus viewpoint width, height, and FOV before accepting them
-- `BPI_DroneViewpointProvider` and `ST_DroneViewpointSnapshot` define the intended Unreal viewpoint-query surface
-- `ws_bridge.py` can persist raw `OBS` messages and decoded raw PNG files with raw-prefixed naming
+## Current Live Truth Summary
 
-Missing or ambiguous today:
+The live repo now satisfies these image-capture statements:
 
-- runtime use of the viewpoint-config rig offset values
-- current UE runtime does not yet emit the required `payload.config_ref.*` and `payload.viewpoint.*` fields needed by strict tooling-side image validation
-- explicit camera rig rotation contract from config through runtime and back into `OBS`
-- a canonical `OBS.viewpoint` block on the live wire
-- a canonical nested `OBS.image` block on the live wire
-- runtime use of `BP_SampleManager` and `BPI_DroneViewpointProvider` in the live plugin capture path
-- artifact summaries that expose viewpoint and image metadata directly
+- real rendered PNG capture is used for the smoke path
+- `CAPTURE_NOW` dispatch goes through `BP_SampleManager`
+- viewpoint metadata is returned with the observation
+- config reference is returned with the observation
+- canonical nested `payload.image` exists on the wire
+- legacy `payload.image_bytes_b64` still exists as a compatibility alias
+- strict tooling-side validation uses config identity plus viewpoint metadata
+- accepted sample persistence happens only after validation succeeds
 
-### Reusable Template For Pose And Telemetry
+The live repo does **not** currently claim these stronger image-capture statements:
 
-Pose and telemetry sections should mirror this same structure:
+- pose is included in the image smoke payload
+- telemetry is included in the image smoke payload
+- the generated `BPI_*` and `ST_*` assets are the exact live smoke-path call boundary
+- multi-viewpoint or per-capture viewpoint override behavior exists
 
-1. source config
-2. compiled runtime config
-3. capture request semantics
-4. Unreal runtime resolution surfaces
-5. canonical `OBS` payload block
-6. artifact persistence contract
-7. end-to-end traceability requirements
+## Future Work / Target-State Extensions
+
+The items below are intentionally future-oriented. They are not required to
+describe the current live image smoke path truthfully.
+
+### 1. Tighten provider symmetry
+
+Desired direction:
+
+- the generated `BPI_DroneViewpointProvider` and `ST_DroneViewpointSnapshot`
+  should become the exact live runtime query boundary, not just the mirrored
+  contract surface around the native smoke-path implementation
+
+### 2. Expand `OBS` beyond the current image-only smoke payload
+
+Desired direction:
+
+- add canonical pose block if image+pose atomic observations are required
+- add canonical telemetry block if image+telemetry atomic observations are required
+- keep those additions separate from the current minimal image smoke truth
+
+### 3. Remove compatibility duplication once downstream paths are fully aligned
+
+Desired direction:
+
+- eventually retire `payload.image_bytes_b64`
+- eventually reduce duplicate trace fields inside payload where envelope fields
+  already exist, if that can be done without breaking current tooling
+
+### 4. Richer capture semantics
+
+Desired direction:
+
+- explicit viewpoint selection beyond the current single active viewpoint model
+- multi-viewpoint capture
+- stronger linkage between capture, spawn, and command context when the runtime
+  expands beyond the current smoke-proof scope
