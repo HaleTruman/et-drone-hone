@@ -27,11 +27,18 @@ et-drone-hone/
 │   │   │   └── <kit>_<version>_<timestamp>.json    # Drone build manifest: ordered generators, per-script metadata, logs, results
 │   │   ├── io_build/
 │   │   │   └── <kit>_<version>_<timestamp>.json    # IO build manifest: ordered scripts, per-script metadata, target level, placement result
-│   │   └── websocket_build/
-│   │       └── <run_name>/run_manifest.json        # WebSocket build manifest: step metadata, bootstrap/validation results, chosen build inputs
+│   │   ├── websocket_build/
+│   │   │   └── <run_name>/run_manifest.json        # WebSocket build manifest: step metadata, bootstrap/validation results, chosen build inputs
+│   │   ├── runtime/
+│   │   │   └── <runtime_run_id>/runtime_session_manifest.json # Runtime session manifest from run_unreal_io.py (phase status, evidence, operator summary)
+│   │   └── tests/
+│   │       └── <test_run_id>/...                   # Runtime test harness artifacts (for example startup pawn pose capture proof runs)
 │   ├── run_unreal_build.py                         # Canonical top-level build orchestrator: WebSocket -> Course -> Drone -> IO (fail-fast)
 │   ├── run_unreal_build_gen.py                     # Root compatibility shim; canonical low-level executor lives under UE_Build/
-│   ├── run_unreal_runtime_io.py                    # Runtime orchestration placeholder (target rename: run_unreal_io.py)
+│   ├── run_unreal_io.py                            # Canonical runtime orchestration entrypoint (implemented through phase 8 + phase 10 manifest/docs)
+│   ├── Tests/
+│   │   └── Runtime/
+│   │       └── test_startup_pawn_pose_capture.py   # Runtime test harness that temporarily repositions the startup pawn and validates capture output
 │   ├── UE_Build/
 │   │   ├── run_unreal_build_gen.py                  # Run UE build-generation scripts headless
 │   │   ├── Content_Generation/                      # UE Editor content-gen scripts (persisted assets/maps)
@@ -58,7 +65,7 @@ et-drone-hone/
 │   │   │   │   └── Meshes/
 │   │   │   └── IO/                                  # Mirrors Course/Drone orchestration + assembly naming, with map placement handled in the build runner
 │   │   │       ├── assemble_io_assets.py            # Shared IO-domain assembly executor; mirrors Course/Drone/WebSocket helper naming
-│   │   │       ├── run_io_build.py                  # IO build orchestration runner; records build provenance and performs deterministic singleton placement for BP_SetDataConfig and BP_SampleManager
+│   │   │       ├── run_io_build.py                  # IO build orchestration runner; records build provenance and performs deterministic singleton placement for BP_SetDataConfig, BP_SampleManager, and startup BP_DronePawn
 │   │   │       ├── Drone_Controller/
 │   │   │       │   ├── gen_bp_dronespawner.py       # Generates BP_DroneSpawner (runtime SPAWN_DRONES entrypoint in /Game/io)
 │   │   │       │   └── gen_bp_dronecontroller.py    # Generates BP_DroneController (runtime CMD router to drone command receiver)
@@ -74,7 +81,7 @@ et-drone-hone/
 │   │       ├── bootstrap_plugin.py                  # Canonical project-plugin bootstrap/build entrypoint (keep existing unless overwrite is requested)
 │   │       ├── plugin_validate.py                   # Validates source sync, descriptor compatibility, build outputs, and headless startup readiness
 │   │       ├── run_websocket_build.py               # WebSocket build orchestration runner; mirrors Course/Drone/IO runner naming
-│   ├── Data_Interface/                              # TCP client + dataset writer (and/or file ingester)
+│   ├── Data_Interface/                              # Tooling-side sampling/data extraction surfaces that operate through the websocket bridge
 │   │   ├── Sampler_Manager.py
 │   │   ├── ...
 │   ├── Drone_Controller/                             # Tooling-side runtime command emitters via websocket bridge
@@ -90,7 +97,7 @@ et-drone-hone/
 │   │   └── RunConfig.py                              # Payload SET_CONFIG JSON 
 │   │
 │   ├── WebSocket/
-│   │   ├── ws_bridge.py                 # One-process bridge: connect ↔ send SET_CONFIG/CMD ↔ recv OBS/STATUS
+│   │   ├── ws_bridge.py                 # One-process websocket bridge: connect ↔ send SET_CONFIG/CMD/CAPTURE_NOW ↔ recv OBS/STATUS
 │   │   ├── protocol.py                  # Message framing + types (SET_CONFIG, CMD, CAPTURE_NOW, OBS, ACK, ERROR)
 │   │   ├── schemas.py                   # JSON schema/validation + versioning (optional but nice)
 │   │   └── README.md                    # How to run locally + ports/URLs
@@ -119,16 +126,31 @@ et-drone-hone/
 │   │              ├── DroneWebSocket.Build.cs           # Adds "WebSockets" dependency
 │   │              ├── Public/
 │   │              │   ├── WSClientComponent.h           # Blueprint ActorComponent: Connect/Send/Close + events
-│   │              │   ├── WSConfigHandshakeActor.h      # Runtime config/action ingress actor used for minimal websocket handshake flow
+│   │              │   ├── WSConfigHandshakeActor.h      # Plugin-side minimal websocket handshake/control actor used during transport bootstrap
 │   │              │   └── WSProtocolTypes.h             # Shared structs/helpers for websocket envelope and payload parsing
 │   │              └── Private/
 │   │                  ├── DroneWebSocketModule.cpp      # Minimal module registration for the Unreal plugin
 │   │                  ├── WSClientComponent.cpp         # WebSocket client connect/send/receive implementation
-│   │                  ├── WSConfigHandshakeActor.cpp    # Minimal runtime handshake/control path used during websocket validation
+│   │                  ├── WSConfigHandshakeActor.cpp    # Plugin-side minimal handshake/control path used during websocket validation
 │   │                  └── WSProtocolTypes.cpp           # JSON envelope build/parse implementation for shared protocol types
 │   ├── Source/                                    # UE C++ module targets (generated)
 │   │   ├── UE_Drone_Env.Target.cs
-│   │   └── UE_Drone_EnvEditor.Target.cs
+│   │   ├── UE_Drone_EnvEditor.Target.cs
+│   │   └── UE_Drone_Env/                          # Game module runtime implementation
+│   │       ├── UE_Drone_Env.Build.cs              # Game module dependencies for the native runtime layer
+│   │       ├── UE_Drone_Env.h                     # Game module header
+│   │       ├── UE_Drone_Env.cpp                   # Game module startup
+│   │       ├── SetDataConfigRuntimeActor.h        # Native runtime ingress actor API for SET_CONFIG/SPAWN_DRONES/CMD/CAPTURE_NOW
+│   │       ├── SetDataConfigRuntimeActor.cpp      # Native runtime ingress implementation and live config application
+│   │       ├── SampleManagerRuntimeActor.h        # Native runtime sample-manager API used by BP_SampleManager
+│   │       ├── SampleManagerRuntimeActor.cpp      # Native OBS assembly path used for live capture responses
+│   │       ├── DroneSensorsRuntimeComponent.h     # Native sensor runtime component API used by BP_DroneSensors
+│   │       ├── DroneSensorsRuntimeComponent.cpp   # Native PNG capture and viewpoint snapshot implementation
+│   │       └── Tests/
+│   │           ├── DroneSensorsRuntimeStep9BTest.cpp    # Runtime sensor/image capture validation test
+│   │           ├── ConfigReferenceStep9CTest.cpp        # Config reference propagation validation test
+│   │           ├── SampleManagerRuntimeStep9DTest.cpp   # Sample manager OBS contract validation test
+│   │           └── TransportDispatchStep11Test.cpp      # Runtime transport/dispatch validation test
 │   ├── Content/                                   # Maps/assets/blueprints
 │   │   ├── Collections/                           # UE-managed content collections (generated)
 │   │   ├── Developers/                            # UE per-user/dev content area (generated)
@@ -161,13 +183,13 @@ et-drone-hone/
 │   │   │       └── DA_SensorRigProfileDefault.uasset    # Params: default FOVs, mount offsets, names
 │   │   ├── io/
 │   │   │   ├── Drone_Controller/
-│   │   │   │   ├── BP_DroneController.uasset            # DroneId → apply command → movement component TCP operator endpoint.
-│   │   │   │   └── BP_DroneSpawner.uasset               # TCP operator endpoint.
+│   │   │   │   ├── BP_DroneController.uasset            # DroneId → apply command → movement component websocket operator endpoint.
+│   │   │   │   └── BP_DroneSpawner.uasset               # Websocket SPAWN_DRONES endpoint.
 │   │   │   ├── Data_Interface/                          # Data extraction for training
-│   │   │   │   └── BP_SampleManager.uasset              # Atomic snapshot: capture_id: telemetry, vision, pose, config, time
+│   │   │   │   └── BP_SampleManager.uasset              # Atomic snapshot/OBS assembly surface backed by SampleManagerRuntimeActor
 │   │   │   └── Data_Config/
 │   │   │       ├── ST_RunConfig.uasset
-│   │   │       └── BP_SetDataConfig.uasset              # RuntimeOverrideConfig, ApplyConfigNow(), accept a SET_CONFIG JSON payload TCP operator endpoint.
+│   │   │       └── BP_SetDataConfig.uasset              # Runtime config ingress surface backed by SetDataConfigRuntimeActor for websocket SET_CONFIG
 │   │   └── AGENTS.md                                    # md file to help with automation blockers
 │   ├── Build/                                     # UE build metadata and toolchain files (generated)
 │   ├── Binaries/                                  # Compiled output binaries (generated)
