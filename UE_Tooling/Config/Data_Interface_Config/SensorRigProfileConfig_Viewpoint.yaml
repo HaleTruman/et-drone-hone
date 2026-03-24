@@ -1,22 +1,47 @@
 # SensorRigProfileConfig_Viewpoint.yaml
 #
 # Purpose:
-# - Human-editable recipe for active viewpoints/mounts and camera-like capture preferences.
-# - Consumed by `Config/RunConfig.py` and compiled into the viewpoint section of `SET_CONFIG`.
+# - Human-editable recipe for the v1 runtime image-capture configuration.
+# - Consumed by `Config/RunConfig.py` for runtime image settings and by
+#   `Data_Interface/Sampler_Manager.py` for tooling-side capture cadence.
 #
 # Pipeline relationships:
-# - Should map to drone-side viewpoint provider names (for example mounts from sensor rig assets).
+# - V1 capture is a single fixed `front` viewpoint.
+# - Image output policy is fixed to `png` in `srgb`.
+# - This file carries both runtime image settings and tooling-side image sampling cadence.
 # - Read by tooling only; UE receives JSON output from RunConfig.
 #
 # Status:
-# - Placeholder scaffold values; expand once concrete viewpoint contracts are finalized.
+# - Active v1 config scaffold.
+# - `RunConfig.py` consumes width, height, FOV, rig offset, and rig rotation.
+# - `Sampler_Manager.py` consumes `capture_interval_seconds`.
+# - `capture_interval_seconds` is tooling-side only and is not part of `SET_CONFIG`.
+# - `viewpoints.resolution` and `viewpoints.capture_rig` are required for image compile.
+# - Missing or malformed runtime image fields should fail fast during `RunConfig.py` compile.
 
-schema_version: "0.1.0"
+schema_version: "0.3.0"
 
 viewpoints:
-  enabled: true
-  active: []           # Example: [front, down]
-  defaults:
-    width: 0
-    height: 0
-    fov_deg: 0
+  # Tooling-side image capture cadence in seconds.
+  # This is owned by `Sampler_Manager.py` and is not compiled into `SET_CONFIG`.
+  capture_interval_seconds: 15.0
+  resolution:
+    # Output image width in pixels.
+    width: 1280
+    # Output image height in pixels.
+    height: 720
+    # Front camera field of view in degrees.
+    fov_deg: 90.0
+  capture_rig:
+    # Camera mount position relative to the drone body origin, in centimeters.
+    # x = forward/back, y = right/left, z = up/down using the UE drone body frame.
+    offset_cm:
+      x: 80.0
+      y: 0.0
+      z: 0.0
+    # Camera aim relative to the drone body, in degrees.
+    # pitch = up/down aim, roll = camera tilt, yaw = left/right aim.
+    rotation_deg:
+      pitch: 0.0
+      roll: 0.0
+      yaw: 0.0
