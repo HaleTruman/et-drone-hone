@@ -333,3 +333,283 @@ def _parse_args(repo_root: Path) -> RuntimeArgs:
         spawn_probe_count=max(1, int(raw.spawn_probe_count)),
         spawn_probe_timeout_seconds=max(0.1, float(raw.spawn_probe_timeout_seconds)),
     )
+
+
+def _resolve_existing_path(path_value: str, repo_root: Path) -> Path:
+    raw = Path(path_value).expanduser()
+    candidates = [raw]
+    if not raw.is_absolute():
+        candidates.append(repo_root / raw)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+    raise FileNotFoundError(f"Path not found: {path_value}")
+
+
+def _resolve_build_manifest_path(args: RuntimeArgs, repo_root: Path) -> tuple[Path, str]:
+    if args.build_manifest and args.build_run_name:
+        raise RuntimeError("Pass only one of --build-manifest or --build-run-name.")
+
+    if args.build_manifest:
+        return _resolve_existing_path(args.build_manifest, repo_root), "explicit_build_manifest"
+
+    build_artifacts_dir = _default_build_artifacts_dir(repo_root)
+    if args.build_run_name:
+        expected = build_artifacts_dir / f"{args.build_run_name}.json"
+        return _resolve_existing_path(str(expected), repo_root), "build_run_name_lookup"
+
+    candidates = sorted(
+        build_artifacts_dir.glob("*.json"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not candidates:
+        raise RuntimeError("No build manifests found under UE_Tooling/Artifacts/build.")
+    return candidates[0].resolve(), "latest_build_manifest"
+
+
+def _load_json_object(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"Expected JSON object in {path}")
+    return payload
+
+
+def _extract_expected_config_identity(set_config_message: dict[str, Any]) -> tuple[str, str]:
+    payload = set_config_message.get("payload", {})
+    if not isinstance(payload, dict):
+        return "", ""
+    config_id = str(payload.get("config_id", "")).strip()
+    config_hash = str(payload.get("config_hash", "")).strip()
+    return config_id, config_hash
+
+
+def _build_phase5_config_context(args: RuntimeArgs, runtime_run_id: str, repo_root: Path) -> Phase5ConfigContext:
+    if args.set_config_json and args.set_config_from_yaml:
+        raise RuntimeError("Pass only one of --set-config-json or --set-config-from-yaml.")
+
+    if args.set_config_json:
+        config_path = _resolve_existing_path(args.set_config_json, repo_root)
+        payload = _load_json_object(config_path)
+        if "set_config" in payload and isinstance(payload["set_config"], dict):
+            payload = payload["set_config"]
+        config_id, config_hash = _extract_expected_config_identity(payload)
+        return Phase5ConfigContext(
+            set_config_message=payload,
+            mode="set_config_json",
+            source_path=str(config_path),
+            source_paths={},
+            assumptions=[],
+            expected_config_id=config_id,
+            expected_config_hash=config_hash,
+        )
+
+    compiled = compile_set_config(run_id=runtime_run_id)
+    mode = "set_config_from_yaml" if args.set_config_from_yaml else "set_config_from_yaml_default"
+    config_id, config_hash = _extract_expected_config_identity(compiled.envelope)
+    return Phase5ConfigContext(
+        set_config_message=compiled.envelope,
+        mode=mode,
+        source_path="",
+        source_paths=dict(compiled.source_paths),
+        assumptions=list(compiled.assumptions),
+        expected_config_id=config_id,
+        expected_config_hash=config_hash,
+    )
+
+
+def _normalize_userdir_path(path_value: str, *, repo_root: Path, runtime_session_dir: Path) -> Path:
+    if path_value:
+        userdir = Path(path_value).expanduser()
+        if not userdir.is_absolute():
+            userdir = (repo_root / userdir).resolve()
+        return userdir
+    return (runtime_session_dir / "ue_userdir").resolve()
+
+
+def _contains_nullrhi(argument: str) -> bool:
+    normalized = str(argument).strip().lower()
+    return "nullrhi" in normalized
+
+
+def _resolve_phase4_launch_plan(
+    *,
+    args: RuntimeArgs,
+    build_payload: dict[str, Any],
+    phase2_result: dict[str, Any],
+    runtime_session_dir: Path,
+    repo_root: Path,
+) -> UnrealLaunchPlan:
+    resolved_inputs_raw = build_payload.get("resolved_inputs", {})
+    resolved_inputs = resolved_inputs_raw if isinstance(resolved_inputs_raw, dict) else {}
+    editor_binary = str(
+        resolved_inputs.get("unreal_editor")
+        or resolved_inputs.get("editor_binary")
+        or ""
+    ).strip()
+    project_path = str(resolved_inputs.get("project") or "").strip()
+    authoritative_level_path = str(phase2_result.get("authoritative_level_path") or "").strip()
+
+    errors: list[str] = []
+    if not editor_binary:
+        errors.append("build manifest missing resolved_inputs.unreal_editor")
+    if not project_path:
+        errors.append("build manifest missing resolved_inputs.project")
+    if not authoritative_level_path:
+        errors.append("phase2 result missing authoritative_level_path")
+
+    if errors:
+        raise RuntimeError("; ".join(errors))
+
+    userdir_path = _normalize_userdir_path(
+        args.unreal_userdir,
+        repo_root=repo_root,
+        runtime_session_dir=runtime_session_dir,
+    )
+    userdir_path.mkdir(parents=True, exist_ok=True)
+    stdout_log_path = (runtime_session_dir / "unreal_stdout.log").resolve()
+    expected_engine_log_path = userdir_path / "Saved" / "Logs" / f"{Path(project_path).stem}.log"
+
+    command = [
+        editor_binary,
+        project_path,
+        authoritative_level_path,
+        "-game",
+        "-unattended",
+        "-nop4",
+        "-nosplash",
+        "-nosound",
+        "-forcelogflush",
+        "-stdout",
+        "-FullStdOutLogOutput",
+        "-AllowStdOutLogVerbosity",
+        "-RenderOffscreen",
+        f"-userdir={userdir_path}",
+    ]
+    if any(_contains_nullrhi(arg) for arg in command):
+        raise RuntimeError("Phase 4 launch command rejected: -nullrhi is not allowed for image smoke runtime mode.")
+
+    return UnrealLaunchPlan(
+        command=command,
+        editor_binary=editor_binary,
+        project_path=project_path,
+        authoritative_level_path=authoritative_level_path,
+        userdir=str(userdir_path),
+        stdout_log_path=str(stdout_log_path),
+        expected_engine_log_path=str(expected_engine_log_path),
+    )
+
+
+def _validate_phase2_build_handoff(build_payload: dict[str, Any], build_manifest_path: Path) -> dict[str, Any]:
+    errors: list[str] = []
+    runtime_handoff = build_payload.get("runtime_handoff", {})
+    if not isinstance(runtime_handoff, dict):
+        runtime_handoff = {}
+        errors.append("build manifest missing object: runtime_handoff")
+
+    build_run_id = str(build_payload.get("build_run_id", "")).strip()
+    build_status = str(build_payload.get("status", "")).strip()
+    authoritative_level_path = str(
+        runtime_handoff.get("authoritative_level_path")
+        or build_payload.get("authoritative_course_level_path")
+        or ""
+    ).strip()
+
+    stage_status_by_name = runtime_handoff.get("stage_status_by_name", build_payload.get("stage_status_by_name", {}))
+    if not isinstance(stage_status_by_name, dict):
+        stage_status_by_name = {}
+        errors.append("build handoff missing stage_status_by_name object")
+
+    stage_artifact_paths_actual = runtime_handoff.get(
+        "stage_artifact_paths_actual",
+        build_payload.get("stage_artifact_paths_actual", {}),
+    )
+    if not isinstance(stage_artifact_paths_actual, dict):
+        stage_artifact_paths_actual = {}
+        errors.append("build handoff missing stage_artifact_paths_actual object")
+
+    io_placement_summary = runtime_handoff.get(
+        "io_placement_summary",
+        build_payload.get("io_placement_summary", {}),
+    )
+    if not isinstance(io_placement_summary, dict):
+        io_placement_summary = {}
+        errors.append("build handoff missing io_placement_summary object")
+
+    if not build_run_id:
+        errors.append("build manifest missing build_run_id")
+    if not build_status:
+        errors.append("build manifest missing status")
+    if not authoritative_level_path:
+        errors.append("build handoff missing authoritative_level_path")
+
+    for stage_name in REQUIRED_BUILD_STAGES:
+        stage_status = str(stage_status_by_name.get(stage_name, "")).strip()
+        if stage_status != "success":
+            errors.append(f"build stage not successful: {stage_name}={stage_status!r}")
+
+    placements_status = str(io_placement_summary.get("status", "")).strip()
+    placements_target_level = str(io_placement_summary.get("target_level", "")).strip()
+    target_level_matches = bool(io_placement_summary.get("target_level_matches_authoritative", False))
+    if placements_status != "success":
+        errors.append(f"io_placement_summary.status expected 'success', got {placements_status!r}")
+    if not placements_target_level:
+        errors.append("io_placement_summary.target_level is missing")
+    if authoritative_level_path and placements_target_level and placements_target_level != authoritative_level_path:
+        errors.append("io_placement_summary.target_level does not match authoritative_level_path")
+    if authoritative_level_path and placements_target_level and not target_level_matches:
+        errors.append("io_placement_summary.target_level_matches_authoritative is false")
+
+    required_placements: dict[str, Any] = {}
+    for placement_key, expected_label in REQUIRED_STARTUP_PLACEMENTS.items():
+        item = io_placement_summary.get(placement_key)
+        if not isinstance(item, dict):
+            errors.append(f"io_placement_summary missing placement object: {placement_key}")
+            required_placements[placement_key] = {
+                "present": False,
+                "status": "",
+                "actor_label": "",
+                "expected_actor_label": expected_label,
+                "target_level": "",
+                "target_level_matches_authoritative": False,
+            }
+            continue
+        item_status = str(item.get("status", "")).strip()
+        actor_label = str(item.get("actor_label", "")).strip()
+        item_target = str(item.get("target_level", "")).strip()
+        item_target_match = bool(item.get("target_level_matches_authoritative", False))
+        required_placements[placement_key] = {
+            "present": True,
+            "status": item_status,
+            "actor_label": actor_label,
+            "expected_actor_label": expected_label,
+            "target_level": item_target,
+            "target_level_matches_authoritative": item_target_match,
+        }
+        if item_status != "success":
+            errors.append(f"placement {placement_key} status is not success: {item_status!r}")
+        if actor_label != expected_label:
+            errors.append(
+                f"placement {placement_key} actor label mismatch: {actor_label!r} != {expected_label!r}"
+            )
+        if authoritative_level_path and item_target != authoritative_level_path:
+            errors.append(
+                f"placement {placement_key} target level mismatch with authoritative level"
+            )
+        if authoritative_level_path and not item_target_match:
+            errors.append(
+                f"placement {placement_key} target_level_matches_authoritative is false"
+            )
+
+    return {
+        "status": "success" if not errors else "failed",
+        "errors": errors,
+        "build_manifest_path": str(build_manifest_path),
+        "build_run_id": build_run_id,
+        "build_status": build_status,
+        "authoritative_level_path": authoritative_level_path,
+        "stage_status_by_name": stage_status_by_name,
+        "stage_artifact_paths_actual": stage_artifact_paths_actual,
+        "io_placement_summary": io_placement_summary,
+        "required_startup_placements": required_placements,
+    }
