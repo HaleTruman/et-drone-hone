@@ -11,7 +11,8 @@ Current scope:
 - Extract `ue_paths.level_path` from the Course artifact as the authoritative
   level handoff for downstream stages, including explicit Drone/IO `--level`.
 - Enforce fail-fast gating if WebSocket, Course, Drone, or IO stage fails.
-- Validate IO placement success and target-level consistency from the IO artifact.
+- Validate IO placement success and target-level consistency from the IO artifact,
+  including canonical startup drone preplacement proof.
 """
 
 from __future__ import annotations
@@ -28,8 +29,8 @@ from pathlib import Path
 from typing import Optional
 
 SCRIPT_NAME = "run_unreal_build"
-SCRIPT_VERSION = "0.4.0"
-SCRIPT_DATE = "2026-03-21"
+SCRIPT_VERSION = "0.5.0"
+SCRIPT_DATE = "2026-03-22"
 
 BUILD_KIT_NAME = "UEBuild"
 WEBSOCKET_KIT_NAME = "WebSocketPlugin"
@@ -40,6 +41,7 @@ AUTHORITATIVE_LEVEL_PLACEHOLDER = "<AUTHORITATIVE_COURSE_LEVEL_FROM_COURSE_STAGE
 IO_REQUIRED_PLACEMENTS = {
     "set_data_config": "BP_SetDataConfig_Main",
     "sample_manager": "BP_SampleManager_Main",
+    "startup_drone_pawn": "BP_DronePawn_Startup_Main",
 }
 
 
@@ -421,6 +423,7 @@ def _write_manifest(
         "target_level_matches_authoritative": False,
         "set_data_config": {},
         "sample_manager": {},
+        "startup_drone_pawn": {},
     }
     if isinstance(io_validation, dict) and io_validation:
         required = io_validation.get("required_placements", {})
@@ -432,6 +435,7 @@ def _write_manifest(
             ),
             "set_data_config": required.get("set_data_config", {}),
             "sample_manager": required.get("sample_manager", {}),
+            "startup_drone_pawn": required.get("startup_drone_pawn", {}),
         }
 
     payload = {
