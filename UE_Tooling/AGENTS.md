@@ -82,7 +82,7 @@ Messages must include:
 ## Expected run flow (v0)
 1) Build environment via `run_unreal_build.py` (WebSocket -> Course -> Drone -> IO).
 2) Start `WebSocket/ws_bridge.py` (server).
-3) Launch runtime via `run_unreal_runtime_io.py` (target name: `run_unreal_io.py`).
+3) Launch runtime via `run_unreal_io.py`.
 4) Build `SET_CONFIG` JSON using `Config/RunConfig.py` (merging YAML inputs).
 5) Send `SET_CONFIG` once at startup; wait for `ACK`.
 6) Send `CMD` messages to drive drone(s).
