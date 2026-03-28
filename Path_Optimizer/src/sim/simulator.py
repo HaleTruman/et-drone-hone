@@ -79,7 +79,7 @@ def run_axis_test(
 
 
 def main() -> int:
-    quad_params = load_yaml(SRC_ROOT / "quadrotor" / "quad_params.yaml")
+    quad_params = load_yaml(SRC_ROOT / "quadrotor" / "params.yaml")
     controller_params = load_params(SRC_ROOT / "controller" / "rate" / "params.yaml")
     sim_config = load_yaml(SRC_ROOT / "sim" / "sim_config.yaml")
 

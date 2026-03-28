@@ -30,6 +30,27 @@ class Quadrotor:
             dtype=float,
         )
 
+    def get_params(self) -> dict:
+        """Return all physical parameters needed by PlanningEngine (CPC optimizer).
+        Does NOT return the full simulation object — just a plain dict.
+        """
+
+        return {
+            "m": self.m,
+            "I": self.I.copy(),           # 3x3 inertia tensor
+            "kf": self.kf,
+            "km": self.km,
+            "Jr": self.Jr,
+            "l": self.l.copy(),           # (4,) arm lengths
+            "h": self.h.copy(),           # (4,) vertical offsets
+            "T_min": self.T_min,          # if you add these to Quadrotor
+            "T_max": self.T_max,
+            "cd": self.cd.copy(),         # drag coeffs if used in optimizer
+            "c_tau": self.c_tau,          # torque constant (if needed)
+            # ... any other constants the optimizer will need
+            "g": self.g,
+        }
+
     def state_derivative(self, x: np.ndarray, u: np.ndarray) -> np.ndarray:
         """Return the 13-state derivative for state x and motor input u."""
         v_i = np.asarray(x[3:6], dtype=float)
