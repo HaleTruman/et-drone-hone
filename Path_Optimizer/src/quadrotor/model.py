@@ -6,19 +6,19 @@ class Quadrotor:
 
     def __init__(self, params: dict):
         """Initialize model parameters from a dictionary and precompute motor locations."""
-        self.m = float(params["m"])
+        self.m = np.float64(params["m"])
         self.I = np.diag(
             np.array([params["Ixx"], params["Iyy"], params["Izz"]], dtype=float)
         )
-        self.kf = float(params["kf"])
-        self.km = float(params["km"])
-        self.Jr = float(params["Jr"])
+        self.kf = np.float64(params["kf"])
+        self.km = np.float64(params["km"])
+        self.Jr = np.float64(params["Jr"])
         self.l = np.asarray(params["l"], dtype=float)
         self.h = np.asarray(params["h"], dtype=float)
         self.cd = np.asarray(params["cd"], dtype=float)
         self.cr = np.asarray(params["cr"], dtype=float)
         self.d = np.asarray(params["d"], dtype=float)
-        self.g = float(params["g"])
+        self.g = np.float64(params["g"])
         self.c = np.sqrt(2.0) / 2.0
         self.rho = np.array(
             [
@@ -27,29 +27,9 @@ class Quadrotor:
                 [-self.l[2] * self.c, -self.l[2] * self.c, self.h[2]],
                 [self.l[3] * self.c, -self.l[3] * self.c, self.h[3]],
             ],
-            dtype=float,
+            dtype=np.float64,
         )
 
-    def get_params(self) -> dict:
-        """Return all physical parameters needed by PlanningEngine (CPC optimizer).
-        Does NOT return the full simulation object — just a plain dict.
-        """
-
-        return {
-            "m": self.m,
-            "I": self.I.copy(),           # 3x3 inertia tensor
-            "kf": self.kf,
-            "km": self.km,
-            "Jr": self.Jr,
-            "l": self.l.copy(),           # (4,) arm lengths
-            "h": self.h.copy(),           # (4,) vertical offsets
-            "T_min": self.T_min,          # if you add these to Quadrotor
-            "T_max": self.T_max,
-            "cd": self.cd.copy(),         # drag coeffs if used in optimizer
-            "c_tau": self.c_tau,          # torque constant (if needed)
-            # ... any other constants the optimizer will need
-            "g": self.g,
-        }
 
     def state_derivative(self, x: np.ndarray, u: np.ndarray) -> np.ndarray:
         """Return the 13-state derivative for state x and motor input u."""

@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-from pathlib import Path
+import os
 
 from dash import Dash
 
 from app.callbacks import register_callbacks
+from app.data import discover_course_files
 from app.layout import build_layout
-from opt_engine.scenario_io import discover_scenario_files
 
 
 def create_app() -> Dash:
-    here = Path(__file__).resolve().parent
-    root_dir = here.parent.parent
-    scenario_paths = discover_scenario_files(root_dir)
-    scenario_options = [{"label": p.name, "value": str(p)} for p in scenario_paths]
+    root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    scenario_paths = discover_course_files(root_dir)
+    scenario_options = [{"label": os.path.basename(path), "value": path} for path in scenario_paths]
 
     app = Dash(__name__)
     app.layout = build_layout(scenario_options=scenario_options)

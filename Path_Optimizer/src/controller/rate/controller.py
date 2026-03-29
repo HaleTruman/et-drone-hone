@@ -13,10 +13,10 @@ def load_params(path=None):
 
 
 class RateController:
-    def __init__(self, params):
-        self.kp = np.asarray(params["kp"], dtype=float)
-        self.ki = np.asarray(params["ki"], dtype=float)
-        self.kd = np.asarray(params["kd"], dtype=float)
+    def __init__(self, params, gains):
+        self.kp = np.asarray(gains["kp"], dtype=float)
+        self.ki = np.asarray(gains["ki"], dtype=float)
+        self.kd = np.asarray(gains["kd"], dtype=float)
         self.max_rate_accel = np.asarray(params["max_rate_accel"], dtype=float)
         self.max_integral = np.asarray(params["max_integral"], dtype=float)
         self.hover_command = np.asarray(params["hover_motor_command"], dtype=float)
