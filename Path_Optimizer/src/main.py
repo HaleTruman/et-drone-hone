@@ -83,7 +83,7 @@ def extract_gate_positions(course: dict) -> np.ndarray:
 def main() -> int:
     quad_params = load_yaml("src/quadrotor/params.yaml")
     
-    sim_config = load_yaml("src/sim/config.yaml")
+    sim_config = load_yaml("src/config/settings.yaml")
     course_path = "course_model/targets-SimBlank-20260216_194648.json"
     course = load_json(course_path)
 
