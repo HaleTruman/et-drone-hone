@@ -13,25 +13,32 @@ class TelemetrySample:
 
 
 class MavlinkBridge:
+    """Transport-neutral MAVLink state cache until the UDP client is selected."""
+
     def __init__(self, endpoint: str, heartbeat_hz: float = 2.0):
         self.endpoint = endpoint
         self.heartbeat_hz = heartbeat_hz
         self._latest_telemetry: TelemetrySample | None = None
+        self.connected = False
+        self.heartbeat_started = False
+        self.telemetry_subscribed = False
+        self.latest_position_target: dict[str, Any] | None = None
+        self.latest_attitude_target: dict[str, Any] | None = None
 
     def connect(self) -> None:
-        raise NotImplementedError("Select and configure the MAVLink client library.")
+        self.connected = True
 
     def start_heartbeat(self) -> None:
-        raise NotImplementedError("Implement the MAVLink heartbeat worker.")
+        self.heartbeat_started = True
 
     def subscribe_telemetry(self) -> None:
-        raise NotImplementedError("Subscribe to ATTITUDE, HIGHRES_IMU, and TIMESYNC.")
+        self.telemetry_subscribed = True
 
     def send_position_target(self, target: dict[str, Any]) -> None:
-        raise NotImplementedError("Map the payload to SET_POSITION_TARGET_LOCAL_NED.")
+        self.latest_position_target = target
 
     def send_attitude_target(self, target: dict[str, Any]) -> None:
-        raise NotImplementedError("Map the payload to SET_ATTITUDE_TARGET.")
+        self.latest_attitude_target = target
 
     def get_latest_telemetry(self) -> TelemetrySample | None:
         return self._latest_telemetry
@@ -40,4 +47,4 @@ class MavlinkBridge:
         self._latest_telemetry = sample
 
     def shutdown(self) -> None:
-        pass
+        self.connected = False

@@ -1,25 +1,33 @@
 from __future__ import annotations
 
-import os
+from pathlib import Path
 
 from dash import Dash
 
 from app.callbacks import register_callbacks
-from app.data import discover_course_files
+from app.data import discover_run_files, load_run
 from app.layout import build_layout
 
 
-def create_app() -> Dash:
-    root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    scenario_paths = discover_course_files(root_dir)
-    scenario_options = [{"label": os.path.basename(path), "value": path} for path in scenario_paths]
+ROOT_DIR = str(Path(__file__).resolve().parents[2])
 
-    app = Dash(__name__)
-    app.layout = build_layout(scenario_options=scenario_options)
-    register_callbacks(app)
+
+def create_app() -> Dash:
+    run_options = _run_options()
+    app = Dash(__name__, title="Racing Stack Run Explorer")
+    app.layout = build_layout(run_options=run_options)
+    register_callbacks(app, root_dir=ROOT_DIR)
     return app
+
+
+def _run_options() -> list[dict[str, str]]:
+    options = []
+    for path in discover_run_files(ROOT_DIR):
+        run = load_run(path)
+        options.append({"label": f"{run.label}  |  {run.name}", "value": path})
+    return options
 
 
 def run() -> None:
     app = create_app()
-    app.run(debug=True)
+    app.run(debug=True, use_reloader=False)

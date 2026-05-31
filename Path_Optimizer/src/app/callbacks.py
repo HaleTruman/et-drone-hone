@@ -1,159 +1,262 @@
 from __future__ import annotations
 
+import json
 import os
+from typing import Any
 
 import plotly.graph_objects as go
-from dash import Dash, Input, Output, State, callback, no_update
+from dash import Dash, Input, Output, State, callback, html
 
-from app.data import Course, ReferenceTrajectorySnapshot, load_course, load_reference_trajectory
+from app.data import RunLog, cycle_times_s, discover_run_files, flatten_record, load_run, value_at
 
 
-REFERENCE_TRAJECTORY_PATH = (
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    + "/artifacts/reference_trajectory.json"
+GRAPH_IDS = (
+    "trajectory-3d",
+    "position-plot",
+    "velocity-plot",
+    "controls-plot",
+    "attitude-plot",
+    "rates-plot",
+    "timing-plot",
 )
+AXIS_COLORS = ("#2563eb", "#dc2626", "#16a34a", "#9333ea")
 
 
-def register_callbacks(app: Dash) -> None:
+def register_callbacks(app: Dash, *, root_dir: str) -> None:
     @callback(
-        Output("scene-summary", "children"),
-        Output("course-3d", "figure"),
-        Output("scene-signature", "data"),
-        Input("scenario_path", "value"),
-        Input("planning-session-poll", "n_intervals"),
-        State("scene-signature", "data"),
+        Output("run-path", "options"),
+        Output("run-path", "value"),
+        Input("run-poll", "n_intervals"),
+        State("run-path", "value"),
     )
-    def _update_course_view(scenario_path: str | None, _n_intervals: int, current_signature: str | None):
-        empty = go.Figure()
-        if not scenario_path:
-            return "Select a course file to visualize.", empty, None
+    def _refresh_runs(_n_intervals: int, selected_path: str | None):
+        paths = discover_run_files(root_dir)
+        options = []
+        for path in paths:
+            try:
+                run = load_run(path)
+                label = f"{run.label}  |  {run.name}"
+            except Exception:  # noqa: BLE001
+                label = os.path.basename(path)
+            options.append({"label": label, "value": path})
+        values = {option["value"] for option in options}
+        return options, selected_path if selected_path in values else (paths[0] if paths else None)
 
-        if not os.path.isfile(scenario_path):
-            return f"Course file not found: {scenario_path}", empty, None
-
+    @callback(
+        Output("load-error", "children"),
+        Output("summary-cards", "children"),
+        *(Output(graph_id, "figure") for graph_id in GRAPH_IDS),
+        Output("metadata-table", "data"),
+        Output("metadata-table", "columns"),
+        Output("events-table", "data"),
+        Output("events-table", "columns"),
+        Output("events-table", "tooltip_header"),
+        Output("events-table", "tooltip_data"),
+        Output("cycles-table", "data"),
+        Output("cycles-table", "columns"),
+        Output("cycles-table", "tooltip_header"),
+        Output("cycles-table", "tooltip_data"),
+        Output("raw-json", "children"),
+        Input("run-path", "value"),
+        Input("run-poll", "n_intervals"),
+    )
+    def _render_run(run_path: str | None, _n_intervals: int):
+        if not run_path:
+            return _empty_dashboard("No racing-stack run logs were found in logs/.")
         try:
-            course = load_course(scenario_path)
+            run = load_run(run_path)
         except Exception as exc:  # noqa: BLE001
-            return f"Unable to load course: {exc}", empty, None
+            return _empty_dashboard(f"Unable to load {run_path}: {exc}")
 
-        snapshot = _load_matching_reference_trajectory(scenario_path)
-        next_signature = _make_scene_signature(scenario_path, snapshot)
-        if next_signature == current_signature:
-            return no_update, no_update, current_signature
-
-        return _build_summary(course, snapshot), _make_3d_figure(course, snapshot), next_signature
-
-
-def _build_summary(course: Course, snapshot: ReferenceTrajectorySnapshot | None) -> str:
-    bounds = course.bounds_m
-    summary = (
-        f"name: {course.name}\n"
-        f"targets: {len(course.targets)}\n"
-        f"path_length_m: {course.path_length_m:.2f}\n"
-        f"width_m: {bounds['width']:.2f}\n"
-        f"depth_m: {bounds['depth']:.2f}\n"
-        f"height_m: {bounds['height']:.2f}\n"
-        f"frame: {course.frame}\n"
-        f"source_units: {course.units}\n"
-        f"level: {course.level or 'n/a'}\n"
-        f"generated_at: {course.generated_at or 'n/a'}"
-    )
-    if snapshot is None:
-        return f"{summary}\nreference_trajectory: not loaded"
-    return (
-        f"{summary}\n"
-        f"reference_trajectory: loaded\n"
-        f"reference_points: {len(snapshot.trajectory.pos_m)}\n"
-        f"drone_position_m: ({snapshot.drone_position.x_m:.2f}, "
-        f"{snapshot.drone_position.y_m:.2f}, {snapshot.drone_position.z_m:.2f})"
-    )
+        metadata_rows = [{"field": key, "value": _display(value)} for key, value in flatten_record(run.metadata).items()]
+        event_rows = _rows(run.events)
+        cycle_rows = _rows(run.cycles)
+        return (
+            "",
+            _summary_cards(run),
+            _trajectory_figure(run),
+            _vector_figure(run, "Position", "position_local_ned_m", "Position (m)"),
+            _vector_figure(run, "Velocity", "velocity_local_ned_mps", "Velocity (m/s)"),
+            _controls_figure(run),
+            _vector_figure(run, "Attitude Quaternion", "attitude_quaternion", "Quaternion", axes=("w", "x", "y", "z")),
+            _vector_figure(run, "Body Rates", "body_rates_rps", "Rate (rad/s)"),
+            _timing_figure(run),
+            metadata_rows,
+            _columns(metadata_rows),
+            event_rows,
+            _columns(event_rows),
+            _header_tooltips(event_rows),
+            _tooltips(event_rows),
+            cycle_rows,
+            _columns(cycle_rows),
+            _header_tooltips(cycle_rows),
+            _tooltips(cycle_rows),
+            json.dumps(run.raw, indent=2),
+        )
 
 
-def _make_3d_figure(course: Course, snapshot: ReferenceTrajectorySnapshot | None) -> go.Figure:
-    ui_revision = f"course-3d:{course.name}"
+def _empty_dashboard(message: str):
+    empty = _empty_figure()
+    return (message, [], *(empty for _ in GRAPH_IDS), [], [], [], [], {}, [], [], [], {}, [], "")
+
+
+def _summary_cards(run: RunLog) -> list[html.Div]:
+    cycles = run.cycles
+    elapsed_s = cycle_times_s(cycles)[-1] if cycles else 0.0
+    modes = sorted({str(cycle.get("flight_mode", "unknown")) for cycle in cycles})
+    lateness = [_number(cycle.get("deadline_lateness_ms")) for cycle in cycles]
+    max_lateness = max((value for value in lateness if value is not None), default=None)
+    values = [
+        ("Scenario", run.metadata.get("scenario", "n/a")),
+        ("Run Timestamp", run.label),
+        ("Cycles", len(cycles)),
+        ("Sim Duration", f"{elapsed_s:.3f} s"),
+        ("Events", len(run.events)),
+        ("Flight Modes", ", ".join(modes) or "n/a"),
+        ("Max Lateness", f"{max_lateness:.3f} ms" if max_lateness is not None else "n/a"),
+        ("Schema", run.schema_version),
+    ]
+    return [
+        html.Div(
+            style={"background": "#fff", "border": "1px solid #dbe3ef", "borderRadius": "12px", "padding": "13px 15px"},
+            children=[
+                html.Div(label, style={"color": "#60708a", "fontSize": "11px", "fontWeight": 700, "letterSpacing": "0.06em", "textTransform": "uppercase"}),
+                html.Div(str(value), style={"fontSize": "15px", "fontWeight": 700, "marginTop": "5px"}),
+            ],
+        )
+        for label, value in values
+    ]
+
+
+def _trajectory_figure(run: RunLog) -> go.Figure:
     fig = go.Figure()
-
-    fig.add_trace(
-        go.Scatter3d(
-            x=[point.x_m for point in course.targets],
-            y=[point.y_m for point in course.targets],
-            z=[point.z_m for point in course.targets],
-            mode="markers+text",
-            text=[point.label for point in course.targets],
-            textposition="top center",
-            marker={"size": 7, "color": "#1d4ed8"},
-            name="Gates",
-        )
-    )
-
-    if course.origin is not None:
-        fig.add_trace(
-            go.Scatter3d(
-                x=[course.origin.x_m],
-                y=[course.origin.y_m],
-                z=[course.origin.z_m],
-                mode="markers+text",
-                text=[course.origin.label],
-                textposition="bottom center",
-                marker={"size": 8, "color": "#16a34a", "symbol": "diamond"},
-                name="Origin",
-            )
-        )
-
-    if snapshot is not None:
-        fig.add_trace(
-            go.Scatter3d(
-                x=[point.x_m for point in snapshot.trajectory.pos_m],
-                y=[point.y_m for point in snapshot.trajectory.pos_m],
-                z=[point.z_m for point in snapshot.trajectory.pos_m],
-                mode="lines",
-                line={"color": "#dc2626", "width": 3, "dash": "dash"},
-                name="Reference trajectory",
-            )
-        )
-        fig.add_trace(
-            go.Scatter3d(
-                x=[snapshot.drone_position.x_m],
-                y=[snapshot.drone_position.y_m],
-                z=[snapshot.drone_position.z_m],
-                mode="markers+text",
-                text=[snapshot.drone_position.label],
-                textposition="bottom center",
-                marker={"size": 10, "color": "#e11d48", "symbol": "circle"},
-                name="Drone",
-            )
-        )
-
+    all_points: list[list[float]] = []
+    for label, key, color in (("Simulator truth", "simulator_truth", "#2563eb"), ("Estimated", "estimated_state", "#dc2626")):
+        points = [value_at(cycle, key, "position_local_ned_m") for cycle in run.cycles]
+        points = [point for point in points if isinstance(point, list) and len(point) >= 3]
+        if points:
+            all_points.extend(points)
+            fig.add_trace(go.Scatter3d(x=[p[0] for p in points], y=[p[1] for p in points], z=[p[2] for p in points], mode="lines", name=label, line={"color": color, "width": 5}))
+    target = run.metadata.get("target_position_local_ned_m")
+    if isinstance(target, list) and len(target) >= 3:
+        all_points.append(target)
+        fig.add_trace(go.Scatter3d(x=[target[0]], y=[target[1]], z=[target[2]], mode="markers", name="Target", marker={"color": "#16a34a", "size": 7, "symbol": "diamond"}))
+    axis_ranges = _trajectory_axis_ranges(all_points)
+    ui_revision = f"trajectory:{run.path}"
     fig.update_layout(
-        template="plotly_white",
-        margin={"l": 0, "r": 0, "t": 72, "b": 56},
-        title={"text": "3D Course View", "x": 0.02, "xanchor": "left", "y": 0.98},
+        **_layout("Trajectory (Local NED)"),
+        dragmode="orbit",
         uirevision=ui_revision,
         scene={
-            "xaxis_title": "X (m)",
-            "yaxis_title": "Y (m)",
-            "zaxis_title": "Z (m)",
-            "aspectmode": "data",
+            "xaxis": {"title": "North (m)", "range": axis_ranges[0]},
+            "yaxis": {"title": "East (m)", "range": axis_ranges[1]},
+            "zaxis": {"title": "Down (m)", "range": axis_ranges[2]},
+            "aspectmode": "cube",
+            "camera": {"eye": {"x": 1.55, "y": 1.55, "z": 1.1}},
+            "dragmode": "orbit",
             "uirevision": ui_revision,
         },
-        legend={"orientation": "h", "y": -0.12, "x": 0.0},
     )
     return fig
 
 
-def _load_matching_reference_trajectory(course_path: str) -> ReferenceTrajectorySnapshot | None:
-    if not os.path.isfile(REFERENCE_TRAJECTORY_PATH):
-        return None
+def _trajectory_axis_ranges(points: list[list[float]]) -> list[list[float]]:
+    if not points:
+        return [[-1.0, 1.0], [-1.0, 1.0], [-1.0, 1.0]]
+
+    bounds = [(min(float(point[index]) for point in points), max(float(point[index]) for point in points)) for index in range(3)]
+    span = max(maximum - minimum for minimum, maximum in bounds)
+    half_span = max(span * 0.6, 1.0)
+    return [
+        [(minimum + maximum) / 2 - half_span, (minimum + maximum) / 2 + half_span]
+        for minimum, maximum in bounds
+    ]
+
+
+def _vector_figure(run: RunLog, title: str, field: str, y_title: str, *, axes: tuple[str, ...] = ("x", "y", "z")) -> go.Figure:
+    fig = go.Figure()
+    times = cycle_times_s(run.cycles)
+    for source_label, source_key, dash in (("Truth", "simulator_truth", "solid"), ("Estimate", "estimated_state", "dash")):
+        for index, axis in enumerate(axes):
+            values = [value_at(cycle, source_key, field, index) for cycle in run.cycles]
+            if any(value is not None for value in values):
+                fig.add_trace(go.Scatter(x=times, y=values, mode="lines", name=f"{source_label} {axis}", line={"color": AXIS_COLORS[index], "dash": dash}))
+    fig.update_layout(**_layout(title), xaxis_title="Simulation time (s)", yaxis_title=y_title)
+    return fig
+
+
+def _controls_figure(run: RunLog) -> go.Figure:
+    fig = go.Figure()
+    times = cycle_times_s(run.cycles)
+    for index in range(4):
+        motors = [value_at(cycle, "simulator_truth", "motor_commands", index) for cycle in run.cycles]
+        if any(value is not None for value in motors):
+            fig.add_trace(go.Scatter(x=times, y=motors, mode="lines", name=f"Motor {index + 1}", line={"color": AXIS_COLORS[index]}))
+    thrust = [value_at(cycle, "command", "set_attitude_target", "thrust") for cycle in run.cycles]
+    if any(value is not None for value in thrust):
+        fig.add_trace(go.Scatter(x=times, y=thrust, mode="lines", name="Command thrust", line={"color": "#111827", "dash": "dot", "width": 3}))
+    fig.update_layout(**_layout("Controls"), xaxis_title="Simulation time (s)", yaxis_title="Normalized command")
+    return fig
+
+
+def _timing_figure(run: RunLog) -> go.Figure:
+    fig = go.Figure()
+    times = cycle_times_s(run.cycles)
+    for label, key, color in (("Deadline lateness", "deadline_lateness_ms", "#dc2626"), ("Wall elapsed", "wall_elapsed_ms", "#2563eb")):
+        values = [cycle.get(key) for cycle in run.cycles]
+        if any(value is not None for value in values):
+            fig.add_trace(go.Scatter(x=times, y=values, mode="lines+markers", name=label, line={"color": color}))
+    fig.update_layout(**_layout("Loop Timing"), xaxis_title="Simulation time (s)", yaxis_title="Milliseconds")
+    return fig
+
+
+def _rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows = [{key: _display(value) for key, value in flatten_record(record).items()} for record in records]
+    keys = list(dict.fromkeys(key for row in rows for key in row))
+    return [{key: row.get(key, "") for key in keys} for row in rows]
+
+
+def _columns(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
+    keys = list(dict.fromkeys(key for row in rows for key in row))
+    return [{"name": key, "id": key} for key in keys]
+
+
+def _tooltips(rows: list[dict[str, Any]]) -> list[dict[str, dict[str, str]]]:
+    return [{key: {"value": str(value), "type": "text"} for key, value in row.items()} for row in rows]
+
+
+def _header_tooltips(rows: list[dict[str, Any]]) -> dict[str, str]:
+    return {key: key for key in dict.fromkeys(key for row in rows for key in row)}
+
+
+def _display(value: Any) -> Any:
+    if value is None:
+        return ""
+    if isinstance(value, float):
+        return round(value, 7)
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, separators=(",", ":"))
+    return value
+
+
+def _number(value: Any) -> float | None:
     try:
-        snapshot = load_reference_trajectory(REFERENCE_TRAJECTORY_PATH)
-    except Exception:  # noqa: BLE001
+        return float(value)
+    except (TypeError, ValueError):
         return None
-    if snapshot.course_path != os.path.abspath(course_path):
-        return None
-    return snapshot
 
 
-def _make_scene_signature(course_path: str, snapshot: ReferenceTrajectorySnapshot | None) -> str:
-    scenario_mtime = os.path.getmtime(course_path)
-    reference_mtime = os.path.getmtime(REFERENCE_TRAJECTORY_PATH) if snapshot is not None else -1.0
-    return f"{os.path.abspath(course_path)}:{scenario_mtime}:{reference_mtime}"
+def _layout(title: str) -> dict[str, Any]:
+    return {
+        "template": "plotly_white",
+        "title": {"text": title, "x": 0.01, "xanchor": "left"},
+        "margin": {"l": 54, "r": 22, "t": 54, "b": 46},
+        "legend": {"orientation": "h", "y": -0.22},
+        "hovermode": "x unified",
+    }
+
+
+def _empty_figure() -> go.Figure:
+    figure = go.Figure()
+    figure.update_layout(template="plotly_white")
+    return figure

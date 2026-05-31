@@ -36,7 +36,7 @@ main control loop (run at target_hz = 30-60):
                 gate_obs = GatePoseEstimator.estimate_pose(detection, latest_telemetry)
                 GateMap.add_or_update(gate_obs, latest_telemetry)
         
-        # 3. State estimation (VIO)
+        # 3. State estimation (VIO and SLAM)
         StateEstimator.predict_from_telemetry(latest_telemetry)  # integrate velocity + quaternion kinematics
         StateEstimator.correct_with_gate_observations(GateMap)   # landmark innovations + multi-frame fusion
         
