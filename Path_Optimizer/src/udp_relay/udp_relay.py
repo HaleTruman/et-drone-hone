@@ -1,10 +1,34 @@
 """Forward local simulator UDP traffic to a remote pilot over a private network."""
 
+import os
 import select
 import socket
+from pathlib import Path
 
-# Set this to the MacBook's Tailscale IP address.
-MAC_IP = "100.x.y.z"
+
+def load_local_env():
+    """Load relay-specific environment variables without overriding the shell."""
+    env_path = Path(__file__).with_name(".env")
+    if not env_path.exists():
+        return
+
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        key, separator, value = line.partition("=")
+        if separator:
+            os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
+
+
+load_local_env()
+MAC_IP = os.environ.get("MAC_IP")
+if not MAC_IP:
+    raise RuntimeError(
+        "MAC_IP is required. Copy env.example to .env and set the MacBook's IP address."
+    )
+
 MAVLINK_PORT = 14550
 VISION_PORT = 5600
 MAX_PORT_UNREACHABLE_WARNINGS = 3

@@ -36,19 +36,23 @@ The address will usually look like `100.x.y.z`.
 
 ## 2. Configure the Relay
 
-Open `udp_relay.py` on the Windows simulator PC and replace the placeholder with
-the MacBook's Tailscale IPv4 address:
+Copy `env.example` to `.env` on the Windows simulator PC:
 
-```python
-MAC_IP = "100.x.y.z"
+```powershell
+Copy-Item Path_Optimizer\src\udp_relay\env.example Path_Optimizer\src\udp_relay\.env
 ```
 
-The default ports match the Python pilot example:
+Open `.env` and replace the placeholder with the MacBook's Tailscale IPv4
+address:
 
-```python
-MAVLINK_PORT = 14550
-VISION_PORT = 5600
+```dotenv
+MAC_IP=100.x.y.z
 ```
+
+The relay also accepts `MAC_IP` from the process environment. A value set in the
+shell takes precedence over `.env`.
+
+The default ports `14550` and `5600` match the Python pilot example.
 
 ## 3. Configure the MacBook Pilot
 
@@ -140,7 +144,7 @@ Connected to system: ...
 ## 7. Verify Network Traffic
 
 If the pilot remains stuck waiting for a heartbeat, confirm that `MAC_IP` in
-`udp_relay.py` is the MacBook's Tailscale IP address.
+`.env` is the MacBook's Tailscale IP address.
 
 On the MacBook, inspect incoming packets:
 
