@@ -7,7 +7,7 @@ from .flight_state import FlightMode, FlightStateMachine
 from .gate_map import GateMap, GateRecord
 from .gate_pose import GatePoseEstimator
 from .logger import Logger
-from .mavlink_bridge import MavlinkBridge, TelemetrySample
+from .mavlink_bridge import CollisionEvent, MavlinkBridge, RaceStatus, TelemetrySample, TrackGate
 from .path_manager import PathManager
 from .se3_controller import SE3GeometricController
 from .sim_harness import QuadrotorSimulatorHarness
@@ -32,6 +32,9 @@ __all__ = [
     "SE3GeometricController",
     "StateEstimator",
     "TelemetrySample",
+    "TrackGate",
+    "RaceStatus",
+    "CollisionEvent",
     "VisionFrame",
     "VisionStreamReceiver",
 ]

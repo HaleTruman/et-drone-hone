@@ -22,6 +22,8 @@ class StateEstimator:
         )
         self._last_velocity_local_ned_mps = velocity
         self.integrate_velocity(integration_velocity, dt_s)
+        if telemetry.position_local_ned_m is not None:
+            self._state[0:3] = np.asarray(telemetry.position_local_ned_m, dtype=float)
         self._state[3:6] = velocity
         self.update_attitude(telemetry.attitude, telemetry.body_rates_rps)
 

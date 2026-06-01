@@ -4,6 +4,16 @@ import numpy as np
 
 
 class CommandMapper:
+    def to_velocity_target(
+        self,
+        velocity_local_ned_mps: np.ndarray,
+        yaw_rad: float | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "velocity_local_ned_mps": np.asarray(velocity_local_ned_mps, dtype=float).tolist(),
+            "yaw_rad": None if yaw_rad is None else float(yaw_rad),
+        }
+
     def to_position_target(
         self,
         position_local_ned_m: np.ndarray,
