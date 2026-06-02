@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from opt_engine.geometry import arc_length, curvature_from_polyline, heading_and_dpsi_ds_xy
+from autonomy.opt_engine.geometry import arc_length, curvature_from_polyline, heading_and_dpsi_ds_xy
 
 
 def test_curvature_straight_line_is_near_zero():

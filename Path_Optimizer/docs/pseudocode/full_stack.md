@@ -17,7 +17,7 @@ initialize AIGPStack:
     create MPCCPlanner (with warm-start capability)
     create DifferentialFlatnessController (or SE3GeometricController)
     create CommandMapper
-    create FlightStateMachine (starts in IDLE)
+    create SystemModeManager (starts in IDLE)
     create Logger
     reset simulation harness if in offline mode
 
@@ -42,9 +42,9 @@ main control loop (run at target_hz = 30-60):
         
         current_drone_state = StateEstimator.get_13_state()
         
-        # 4. Flight state machine & safety checks
-        FlightStateMachine.update(current_drone_state, GateMap)
-        if FlightStateMachine.is_racing():
+        # 4. System mode transitions & safety checks
+        SystemModeManager.update_mode(current_drone_state, GateMap)
+        if SystemModeManager.is_racing():
             check_gate_crossing_events(GateMap, current_drone_state)
             enforce_8_minute_timeout()
         

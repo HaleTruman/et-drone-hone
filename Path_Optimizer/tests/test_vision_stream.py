@@ -1,7 +1,7 @@
 import json
 import struct
 
-from racing_stack.vision_stream import VISION_HEADER_FORMAT, VisionStreamReceiver
+from sensing.vision.vision_stream import VISION_HEADER_FORMAT, VisionStreamReceiver
 
 
 def packet(frame_id: int, chunk_id: int, total_chunks: int, jpeg_size: int, sim_time_ns: int, payload: bytes) -> bytes:

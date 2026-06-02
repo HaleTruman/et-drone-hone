@@ -3,8 +3,8 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from racing_stack.gate_map import GateMap
-from racing_stack.mavlink_bridge import MavlinkBridge
+from sensing.perception.gate_map import GateMap
+from sensing.telemetry.mavlink_bridge import MavlinkBridge
 
 
 class Message(SimpleNamespace):

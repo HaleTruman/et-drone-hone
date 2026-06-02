@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from opt_engine.scenario_io import discover_scenario_files
+from autonomy.opt_engine.scenario_io import discover_scenario_files
 
 
 def test_discover_scenario_files_prefers_course_model(tmp_path: Path) -> None:

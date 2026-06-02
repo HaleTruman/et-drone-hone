@@ -1,7 +1,7 @@
 import numpy as np
 
-from opt_engine.spline import sample_hermite_spline
-from opt_engine.types import SamplingConfig
+from autonomy.opt_engine.spline import sample_hermite_spline
+from autonomy.opt_engine.types import SamplingConfig
 
 
 def test_spline_interpolates_waypoints_exactly():

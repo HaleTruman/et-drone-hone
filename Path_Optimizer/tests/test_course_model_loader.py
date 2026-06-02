@@ -2,8 +2,8 @@ from pathlib import Path
 
 import numpy as np
 
-from opt_engine.coords_unreal import scenario_waypoints_to_internal_m
-from opt_engine.scenario_io import load_scenario
+from autonomy.opt_engine.coords_unreal import scenario_waypoints_to_internal_m
+from autonomy.opt_engine.scenario_io import load_scenario
 
 
 def test_course_model_loader_parses_targets_and_excludes_origin():

@@ -1,7 +1,7 @@
 import numpy as np
 
-from opt_engine.speed_profile import solve_speed_profile
-from opt_engine.types import Constraints
+from autonomy.opt_engine.speed_profile import solve_speed_profile
+from autonomy.opt_engine.types import Constraints
 
 
 def test_speed_profile_respects_caps():

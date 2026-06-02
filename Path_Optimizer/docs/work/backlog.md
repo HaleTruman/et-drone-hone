@@ -1,20 +1,20 @@
 # Path Optimizer Production Readiness Backlog
 
-Treat `src/racing_stack/` as the future live product, `src/drone_mpcc_planner/` as the planning core, and preserve the simulation tools as first-class test infrastructure.
+Treat the domain packages under `src/` as the future live product, `src/autonomy/planning/mpcc/` as the planning core, and preserve `src/core/simulator/` as first-class test infrastructure.
 
 ## P0: Establish The Production Shape
 
-- [ ] Define one canonical live entrypoint around `src/racing_stack/aigp_stack.py`.
+- [ ] Define the canonical live runtime in `src/main.py`.
 - [ ] Define one canonical offline entrypoint for deterministic simulation and replay.
 - [ ] Keep `src/drone.py` as a fast telemetry/control-loop rig, but give it the same interfaces as the live stack.
-- [ ] Keep the richer hover/track simulator in `src/sim/simulator/simulator.py`, then remove duplicated simulation responsibilities.
+- [x] Consolidate deterministic telemetry and the richer hover/track simulator under `src/core/simulator/`.
 - [ ] Define explicit schemas for state, telemetry, gate observations, reference paths, planner results, controller outputs, and logs.
 - [ ] Centralize LOCAL_NED, Unreal coordinates, units, quaternion order, and gate through-axis conventions.
 - [ ] Decide which simulator interface is authoritative: Unreal WebSocket, MAVLink UDP, or an adapter supporting both.
 
 ## P0: Make MPCC Release-Capable
 
-- [ ] Extend `src/drone_mpcc_planner/planner.py` from exactly one gate to the next 1-3 visible gates.
+- [ ] Extend `src/autonomy/planning/mpcc/planner.py` from exactly one gate to the next 1-3 visible gates.
 - [ ] Replace placeholder `theta=1.0` with real optimized progress.
 - [ ] Shift warm-start trajectories forward between planning cycles instead of simply reusing the previous solve.
 - [ ] Replace piecewise-linear references with smooth multi-gate splines.
@@ -22,12 +22,12 @@ Treat `src/racing_stack/` as the future live product, `src/drone_mpcc_planner/` 
 - [ ] Add obstacle and free-space constraints when the simulator interface exposes them.
 - [ ] Add solver timeout, infeasibility handling, degraded fallback, and last-known-good trajectory behavior.
 - [ ] Set and measure a real-time solve budget for the intended planning frequency.
-- [ ] Remove parameter drift: MPCC currently uses a hardcoded `0.75 kg` model while `src/quadrotor/params.yaml` uses `1.2 kg`.
+- [ ] Remove parameter drift: MPCC currently uses a hardcoded `0.75 kg` model while `src/core/quadrotor/params.yaml` uses `1.2 kg`.
 - [ ] Add numerical parity tests between CasADi dynamics and the NumPy `Quadrotor` model.
 
 ## P0: Implement The Live Loop
 
-- [ ] Replace the stubbed `AIGPStack.run_control_loop()`.
+- [ ] Implement the production control loop in `src/main.py`.
 - [ ] Replace the transport-neutral `MavlinkBridge` with the selected MAVLink client.
 - [ ] Implement connect, reconnect, heartbeat, subscription, command masks, system/component IDs, and clean shutdown.
 - [ ] Verify the external telemetry contract. Standard `HIGHRES_IMU` does not normally carry velocity; the current simulator adds a custom extension.
@@ -43,7 +43,7 @@ Treat `src/racing_stack/` as the future live product, `src/drone_mpcc_planner/` 
 - [ ] Add landmark association, confidence decay, occlusion handling, and optional seeded course maps.
 - [ ] Implement differential-flatness control; keep the existing hover controller as a tested fallback.
 - [ ] Add SE(3) control only after the baseline controller is reliable.
-- [ ] Expand the flight state machine with arming checks, stale telemetry, heartbeat loss, vision loss, low-speed timeout, collision, geofence, saturation, solver failure, maximum run time, and emergency shutdown.
+- [ ] Expand the system mode manager with arming checks, stale telemetry, heartbeat loss, vision loss, low-speed timeout, collision, geofence, saturation, solver failure, maximum run time, and emergency shutdown.
 
 ## P1: Strengthen Simulation And Replay
 
@@ -58,7 +58,7 @@ Treat `src/racing_stack/` as the future live product, `src/drone_mpcc_planner/` 
 
 - [ ] Repair the local Python environment; the checked-in `.venv` points to an inaccessible Windows Store Python executable.
 - [ ] Fix stale tests: course-loader tests expect 16 gates, while the checked-in course contains 2 gates plus origin; the legacy fixture is also missing.
-- [ ] Add unit tests for every `racing_stack` module and every safety transition.
+- [ ] Add unit tests for every live-stack module and every safety transition.
 - [ ] Add MPCC regression tests for multi-gate paths, infeasibility, timeout, and warm starts.
 - [ ] Add full replay integration tests from telemetry and detections through emitted MAVLink commands.
 - [ ] Add simulator-in-the-loop and Unreal-in-the-loop smoke tests.
@@ -68,9 +68,8 @@ Treat `src/racing_stack/` as the future live product, `src/drone_mpcc_planner/` 
 ## P2: Cleanup And Documentation
 
 - [ ] Update `README.md`; it describes an older tree and commands that no longer exist.
-- [ ] Fix or retire `src/main.py`, which references missing `src/config/settings.yaml`.
+- [x] Retire the legacy `src/main.py` implementation and preserve it as the canonical production entry-point placeholder.
 - [ ] Decide whether `opt_engine` remains a useful spline/pre-planning library or moves to an archived prototype area.
-- [ ] Retire the older heuristic `src/engine/planner.py` after verifying nothing production-facing needs it.
 - [ ] Remove or archive `notebooks/planner_copy.py` and stale notebook experiments.
 - [ ] Decide whether tracked instance-pose review images are fixtures, documentation examples, or disposable artifacts.
 - [ ] Expand `.gitignore` for `.venv/`, `__pycache__/`, `.ipynb_checkpoints/`, `.DS_Store`, run logs, generated artifacts, and test logs.

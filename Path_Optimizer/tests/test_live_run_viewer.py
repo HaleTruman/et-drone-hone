@@ -1,6 +1,6 @@
 import json
 
-from app.live_data import discover_live_run_dirs, load_live_run, nearest_cycle_for_frame
+from core.app.live_data import discover_live_run_dirs, load_live_run, nearest_cycle_for_frame
 
 
 def _write_run(tmp_path):

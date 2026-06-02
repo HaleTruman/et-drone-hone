@@ -1,9 +1,9 @@
 import numpy as np
 import pytest
 
-from opt_engine.optimize import evaluate_lambda
-from opt_engine.speed_profile import apply_yaw_rate_speed_cap
-from opt_engine.types import Constraints, SamplingConfig, Scenario, Waypoint
+from autonomy.opt_engine.optimize import evaluate_lambda
+from autonomy.opt_engine.speed_profile import apply_yaw_rate_speed_cap
+from autonomy.opt_engine.types import Constraints, SamplingConfig, Scenario, Waypoint
 
 
 def test_theta_max_coupling_derives_a_lat_max():

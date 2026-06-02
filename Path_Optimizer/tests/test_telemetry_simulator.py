@@ -1,7 +1,7 @@
 import numpy as np
 
-from racing_stack.state_estimator import StateEstimator
-from telemetry_simulator import TelemetrySimulator
+from core.simulator import TelemetrySimulator
+from sensing.estimation.state_estimator import StateEstimator
 
 
 def test_emits_only_expected_mavlink_telemetry_messages() -> None:

@@ -64,7 +64,7 @@ MPCC is an excellent choice for drone racing — it directly optimizes progress 
 
 - Raw vision frames, raw MAVLink packets (process and discard after use).
 
-#### Flight modes / drone condition (simple state machine):
+#### System modes / drone condition:
 
 - `IDLE` > `ARMED` > `RACING` > `FINISHED` / `FAULT` (collision timeout, max 8 min run, loss of comms, etc.).
 - Monitor HEARTBEAT + system status flags + your own safety checks (e.g., velocity too low for too long = crash).
@@ -103,7 +103,7 @@ You can also use CNN detection confidence + velocity direction through the gate 
 - Drone state estimate (13-state vector or subset).
 - Global gate map.
 - Last MPCC solution (for warm-start).
-- Current flight mode + run timer.
+- Current system mode + run timer.
 - Recent telemetry/vision timestamps (for sync checks).
 
 #### Stateless (process-and-discard):
@@ -120,7 +120,7 @@ Log everything at least at 30 Hz (or on change):
 - MPCC reference trajectory + solved controls.
 - Sent MAVLink commands.
 - Vision frame IDs and any decoding errors.
-- Flight mode, run duration, safety flags.
+- System mode, run duration, safety flags.
 - (Optional) downsampled vision images for post-run visualization.
 
 Store as structured logs (CSV + JSON metadata) or a lightweight database. Because runs are deterministic, you can replay logs offline to tune perception/planner/control independently.
@@ -154,9 +154,9 @@ This is a table of all of the planned classes and methods downstream of Vision.
 | `diff_flat_controller.py` | `DifferentialFlatnessController` | `compute_commands(reference_traj)`, `flat_to_thrust_and_rates()` | Recommended first controller. Uses differential flatness to generate desired thrust, body rates, and yaw from reference trajectory. |
 | `se3_controller.py` | `SE3GeometricController` | `compute_control()`, `position_error()`, `attitude_error()` | (Optional upgrade) Full geometric tracking on SE(3) using the exact 13-state nonlinear model you derived. |
 | `command_mapper.py` | `CommandMapper` | `to_position_target()`, `to_attitude_target()`, `scale_thrust()` | Converts controller output into correct MAVLink SET_POSITION_TARGET_LOCAL_NED or SET_ATTITUDE_TARGET messages. |
-| `flight_state.py` | `FlightStateMachine` | `update_state()`, `check_gate_crossing()`, `is_racing()`, `handle_fault()` | Simple FSM: IDLE → ARMED → RACING → FINISHED / FAULT. Includes 8-minute timer, sequential gate-crossing logic, and safety checks (§8.3, §7). |
-| `logger.py` | `Logger` | `log_telemetry()`, `log_gate_map()`, `log_mpcc_solution()`, `save_run()` | Structured logging (CSV + JSON) of sim time, 13-state, gates, reference traj, commands, vision frames, etc. Enables offline replay. |
+| `system_mode.py` | `SystemModeManager` | `update_mode()`, `check_gate_crossing()`, `is_racing()`, `handle_fault()` | System modes: IDLE → ARMED → RACING → FINISHED / FAULT. Includes 8-minute timer, sequential gate-crossing logic, and safety checks (§8.3, §7). |
+| `logging.py` | `Logger` | `log_telemetry()`, `log_gate_map()`, `log_mpcc_solution()`, `save_run()` | Structured logging (CSV + JSON) of sim time, 13-state, gates, reference traj, commands, vision frames, etc. Enables offline replay. |
 | `sim_harness.py` | `QuadrotorSimulatorHarness` | `step(u)`, `reset()`, `run_trajectory()` | Wraps your 13-state nonlinear dynamics model for fast offline testing of planner + controller without the full simulator. |
-| `aigp_stack.py` (or `main.py`) | `AIGPStack` | `run_control_loop()`, `shutdown()` | Main entry point. Ties everything together at 30–60 Hz: vision → perception → state_est → planner → controller → mavlink. |
+| `main.py` | production runtime | control loop, shutdown | Main entry point. Ties everything together at 30–60 Hz: vision → perception → state_est → planner → controller → mavlink. |
 
 These files and classes must be independently testable and expose clean Python interfaces, effectively plug and play.

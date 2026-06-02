@@ -18,7 +18,7 @@ The planner must use the exact 13-state nonlinear quadrotor dynamics from the pr
 
 ## Project Structure
 
-Create exactly these files in `Path_Optimizer/src/drone_mpcc_planner` (no others):
+Create exactly these files in `Path_Optimizer/src/autonomy/planning/mpcc` (no others):
 
 1. `quadrotor_dynamics.py`
 2. `reference_path.py`

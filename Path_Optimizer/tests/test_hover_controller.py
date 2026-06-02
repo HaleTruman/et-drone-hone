@@ -1,13 +1,13 @@
 import numpy as np
 
-from controller.hover import HoverPIDController
-from racing_stack.flight_state import FlightMode, FlightStateMachine
-from telemetry_simulator import TelemetrySimulator
+from autonomy.control.hover import HoverPIDController
+from autonomy.modes.system_mode import SystemMode, SystemModeManager
+from core.simulator import TelemetrySimulator
 
 
 def test_armed_hover_holds_initial_altitude() -> None:
     simulator = TelemetrySimulator(telemetry_hz=10.0)
-    flight_state = FlightStateMachine()
+    system_mode = SystemModeManager()
     controller = HoverPIDController(
         mass_kg=simulator.model.m,
         gravity_mps2=simulator.model.g,
@@ -15,15 +15,15 @@ def test_armed_hover_holds_initial_altitude() -> None:
         dt_s=0.1,
     )
 
-    assert flight_state.mode == FlightMode.IDLE
-    flight_state.update_state("arm")
+    assert system_mode.system_mode == SystemMode.IDLE
+    system_mode.update_mode("arm")
     simulator.apply_attitude_target({"quaternion": [1.0, 0.0, 0.0, 0.0], "thrust": controller.hover_motor_command})
 
     for sample in simulator.telemetry_samples(duration_s=3.0):
         quaternion, thrust = controller.update(sample.raw["acceleration_local_ned_mps2"], np.zeros(3))
         simulator.apply_attitude_target({"quaternion": quaternion, "thrust": thrust})
 
-    assert flight_state.mode == FlightMode.ARMED
+    assert system_mode.system_mode == SystemMode.ARMED
     assert abs(simulator._harness.state[2] - simulator._harness.initial_state[2]) < 0.05
 
 

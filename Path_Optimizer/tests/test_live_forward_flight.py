@@ -1,8 +1,8 @@
 import json
 import time
 
-from racing_stack.live_forward_flight import LiveForwardFlightConfig, LiveForwardFlightRunner
-from racing_stack.mavlink_bridge import TelemetrySample
+from autonomy.modes.live_forward_flight import LiveForwardFlightConfig, LiveForwardFlightRunner
+from sensing.telemetry.mavlink_bridge import TelemetrySample
 
 
 class FakeBridge:

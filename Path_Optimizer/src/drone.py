@@ -7,19 +7,19 @@ import itertools
 import time
 from pathlib import Path
 
-from controller.hover import HoverPIDController
-from racing_stack.command_mapper import CommandMapper
-from racing_stack.flight_state import FlightStateMachine
-from racing_stack.logger import Logger
-from racing_stack.mavlink_bridge import MavlinkBridge
-from racing_stack.state_estimator import StateEstimator
-from telemetry_simulator import TelemetrySimulator
+from autonomy.control.command_mapper import CommandMapper
+from autonomy.control.hover import HoverPIDController
+from autonomy.modes.system_mode import SystemMode, SystemModeManager
+from core.logging import Logger
+from core.simulator import TelemetrySimulator
+from sensing.estimation.state_estimator import StateEstimator
+from sensing.telemetry.mavlink_bridge import MavlinkBridge
 
 
-def _event_snapshot(*, sim_time_ns: int, flight_state: FlightStateMachine, bridge: MavlinkBridge) -> dict:
+def _event_snapshot(*, sim_time_ns: int, system_mode: SystemModeManager, bridge: MavlinkBridge) -> dict:
     return {
         "sim_time_ns": sim_time_ns,
-        "flight_mode": flight_state.mode,
+        "system_mode": system_mode.system_mode,
         "bridge": {
             "connected": bridge.connected,
             "heartbeat_started": bridge.heartbeat_started,
@@ -35,7 +35,7 @@ def run(duration_s: float = 3.0, loop_hz: float = 10.0, idle_s: float = 1.0) -> 
     bridge = MavlinkBridge(endpoint="telemetry-simulator")
     command_mapper = CommandMapper()
     estimator = StateEstimator(initial_state=simulator._harness.initial_state)
-    flight_state = FlightStateMachine()
+    system_mode = SystemModeManager()
     hover_controller = HoverPIDController(
         mass_kg=simulator.model.m,
         gravity_mps2=simulator.model.g,
@@ -79,9 +79,9 @@ def run(duration_s: float = 3.0, loop_hz: float = 10.0, idle_s: float = 1.0) -> 
     bridge.subscribe_telemetry()
     logger.log_event(
         "initialized",
-        **_event_snapshot(sim_time_ns=0, flight_state=flight_state, bridge=bridge),
+        **_event_snapshot(sim_time_ns=0, system_mode=system_mode, bridge=bridge),
     )
-    print(f"connected endpoint={bridge.endpoint} mode={flight_state.mode.value} loop_hz={loop_hz:g}", flush=True)
+    print(f"connected endpoint={bridge.endpoint} system_mode={system_mode.system_mode.value} loop_hz={loop_hz:g}", flush=True)
 
     samples = simulator.telemetry_samples(duration_s)
     first_sample = next(samples, None)
@@ -100,13 +100,13 @@ def run(duration_s: float = 3.0, loop_hz: float = 10.0, idle_s: float = 1.0) -> 
 
             estimator.update_from_telemetry(telemetry)
             target = None
-            if flight_state.mode.value == "IDLE" and telemetry.sim_time_ns >= idle_s * 1e9:
-                flight_state.update_state("arm")
+            if system_mode.system_mode == SystemMode.IDLE and telemetry.sim_time_ns >= idle_s * 1e9:
+                system_mode.update_mode("arm")
                 logger.log_event(
-                    "flight_mode_changed",
-                    **_event_snapshot(sim_time_ns=telemetry.sim_time_ns, flight_state=flight_state, bridge=bridge),
+                    "system_mode_changed",
+                    **_event_snapshot(sim_time_ns=telemetry.sim_time_ns, system_mode=system_mode, bridge=bridge),
                 )
-            if flight_state.mode.value == "ARMED":
+            if system_mode.system_mode == SystemMode.ARMED:
                 quaternion, thrust = hover_controller.update(
                     telemetry.raw["acceleration_local_ned_mps2"],
                     estimator.get_13_state()[0:3],
@@ -126,7 +126,7 @@ def run(duration_s: float = 3.0, loop_hz: float = 10.0, idle_s: float = 1.0) -> 
                 wall_elapsed_ms=elapsed_ms,
                 deadline_lateness_ms=elapsed_ms - cycle * period_ns / 1_000_000,
                 sim_time_ns=telemetry.sim_time_ns,
-                flight_mode=flight_state.mode,
+                system_mode=system_mode.system_mode,
                 bridge={
                     "connected": bridge.connected,
                     "latest_attitude_target": bridge.latest_attitude_target,
@@ -154,7 +154,7 @@ def run(duration_s: float = 3.0, loop_hz: float = 10.0, idle_s: float = 1.0) -> 
             print(
                 f"cycle={cycle:03d} wall_ms={elapsed_ms:7.1f} "
                 f"sim_ms={telemetry.sim_time_ns / 1_000_000:7.1f} "
-                f"mode={flight_state.mode.value} "
+                f"system_mode={system_mode.system_mode.value} "
                 f"pos_ned={state[0:3].round(3).tolist()} "
                 f"vel_ned={state[3:6].round(3).tolist()} "
                 f"set_attitude_target={target}",
@@ -166,7 +166,7 @@ def run(duration_s: float = 3.0, loop_hz: float = 10.0, idle_s: float = 1.0) -> 
             "shutdown",
             **_event_snapshot(
                 sim_time_ns=telemetry.sim_time_ns if "telemetry" in locals() else 0,
-                flight_state=flight_state,
+                system_mode=system_mode,
                 bridge=bridge,
             ),
         )
