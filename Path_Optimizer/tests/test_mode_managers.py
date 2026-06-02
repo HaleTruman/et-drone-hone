@@ -1,4 +1,4 @@
-from autonomy.modes import ControlMode, ControlModeManager, FlightMode, FlightModeManager
+from core.modes import ControlMode, ControlModeManager, FlightMode, FlightModeManager
 
 
 def test_flight_mode_manager_defaults_to_hover_and_selects_path_following() -> None:

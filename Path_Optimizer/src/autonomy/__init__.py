@@ -1,1 +1,1 @@
-"""Planning, control, optimization, and flight modes."""
+"""Planning and optimization tools."""

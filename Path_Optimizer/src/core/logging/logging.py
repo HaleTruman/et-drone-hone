@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -35,8 +35,33 @@ class Logger:
 
     @staticmethod
     def timestamped_path(logs_dir: str | Path) -> Path:
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
-        return Path(logs_dir) / f"run-{timestamp}.json"
+        logs_dir = Path(logs_dir)
+        timestamp = Logger.rounded_timestamp()
+        path = logs_dir / f"run-{timestamp}.json"
+        while path.exists():
+            timestamp = Logger._add_second(timestamp)
+            path = logs_dir / f"run-{timestamp}.json"
+        return path
+
+    @staticmethod
+    def timestamped_dir(logs_dir: str | Path) -> Path:
+        logs_dir = Path(logs_dir)
+        timestamp = Logger.rounded_timestamp()
+        path = logs_dir / f"run-{timestamp}"
+        while path.exists():
+            timestamp = Logger._add_second(timestamp)
+            path = logs_dir / f"run-{timestamp}"
+        return path
+
+    @staticmethod
+    def rounded_timestamp() -> str:
+        now = datetime.now(timezone.utc) + timedelta(microseconds=500_000)
+        return now.replace(microsecond=0).strftime("%Y%m%dT%H%M%SZ")
+
+    @staticmethod
+    def _add_second(timestamp: str) -> str:
+        value = datetime.strptime(timestamp, "%Y%m%dT%H%M%SZ") + timedelta(seconds=1)
+        return value.strftime("%Y%m%dT%H%M%SZ")
 
     def _json_default(self, value: Any) -> Any:
         if hasattr(value, "value"):

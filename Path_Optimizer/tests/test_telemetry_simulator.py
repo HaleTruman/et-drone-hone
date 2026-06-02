@@ -1,19 +1,27 @@
 import numpy as np
 
-from core.simulator import TelemetrySimulator
+from simulator import TelemetrySimulator
 from sensing.estimation.state_estimator import StateEstimator
 
 
-def test_emits_only_expected_mavlink_telemetry_messages() -> None:
+def test_emits_expected_mavlink_telemetry_messages() -> None:
     simulator = TelemetrySimulator(telemetry_hz=10.0, heartbeat_hz=2.0)
 
     messages = list(simulator.messages(duration_s=1.0))
     message_types = {message.message_type for message in messages}
 
-    assert message_types == {"HEARTBEAT", "TIMESYNC", "ATTITUDE", "HIGHRES_IMU"}
+    assert message_types == {
+        "HEARTBEAT",
+        "TIMESYNC",
+        "ATTITUDE",
+        "HIGHRES_IMU",
+        "LOCAL_POSITION_NED",
+        "ODOMETRY",
+        "ACTUATOR_OUTPUT_STATUS",
+    }
     assert sum(message.message_type == "HEARTBEAT" for message in messages) == 3
     assert sum(message.message_type == "ATTITUDE" for message in messages) == 11
-    assert all("position_local_ned_m" not in message.fields for message in messages)
+    assert sum(message.message_type == "ODOMETRY" for message in messages) == 11
 
 
 def test_bridge_samples_are_normalized_and_fall_under_gravity() -> None:

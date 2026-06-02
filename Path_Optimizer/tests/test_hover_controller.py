@@ -1,8 +1,8 @@
 import numpy as np
 
-from autonomy.control.hover import HoverPIDController
-from autonomy.modes.system_mode import SystemMode, SystemModeManager
-from core.simulator import TelemetrySimulator
+from core.control.hover import HoverPIDController
+from core.modes.system_mode import SystemMode, SystemModeManager
+from simulator import TelemetrySimulator
 
 
 def test_armed_hover_holds_initial_altitude() -> None:

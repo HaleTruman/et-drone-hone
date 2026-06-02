@@ -14,15 +14,15 @@ src/
   autonomy/
     planning/
       mpcc/               # MPCC workbench and planner implementation
-    control/              # Command mapping and flight controllers
-    modes/                # Stack orchestration, safety state, live smoke flight
     opt_engine/           # Active spline and speed-profile optimization library
   core/
-    simulator/            # Unified deterministic telemetry and hover/track simulation
+    control/              # Command mapping and flight controllers
+    modes/                # Stack orchestration, safety state, live smoke flight
     quadrotor/            # Quadrotor dynamics and parameters
-    app/                  # Dash run viewer
     logging/              # Structured run logging
     udp_relay/            # Standalone UDP relay
+  app/                    # Dash run viewer
+  simulator/              # Unified deterministic telemetry and hover/track simulation
   app.py                  # Local Dash viewer entry point
   drone.py                # Minimal offline control-loop rig
   main.py                 # Reserved production stack entry point
@@ -37,16 +37,21 @@ From `Path_Optimizer`, add `src` to `PYTHONPATH` before running modules:
 ```powershell
 $env:PYTHONPATH = "src"
 python src/app.py
-python -m core.simulator --duration-s 1
-python -m autonomy.modes.live_forward_flight --idle-s 2 --racing-s 8 --forward-speed-mps 2
+python src/sim.py --scenario scenarios/armed_hover.json --transport inprocess --accelerated
+python -m simulator --scenario scenarios/idle_telemetry.json --transport inprocess --accelerated
+python -m core.modes.live_forward_flight --idle-s 2 --racing-s 8 --forward-speed-mps 2
 python -m pytest -q
 ```
+
+The default simulator scenario, transport, endpoint, pacing, and rates are set
+in `src/simulator/config/settings.yaml`. CLI flags override those settings for
+one run.
 
 ## Active Components
 
 - `autonomy/opt_engine/` loads Unreal target exports, samples Hermite splines, computes curvature, and solves feasible speed profiles.
 - `autonomy/planning/mpcc/` contains the MPCC planner workbench that will feed the production stack after further development.
-- `core/simulator/` owns both deterministic MAVLink-shaped telemetry generation and the richer hover/track simulation.
+- `simulator/` owns deterministic MAVLink-shaped flight simulation, scenarios, and logging.
 - `sensing/`, `autonomy/`, and `core/` separate the live stack by responsibility.
 
 ## Course Data

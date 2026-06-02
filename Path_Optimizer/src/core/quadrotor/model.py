@@ -31,7 +31,13 @@ class Quadrotor:
         )
 
 
-    def state_derivative(self, x: np.ndarray, u: np.ndarray) -> np.ndarray:
+    def state_derivative(
+        self,
+        x: np.ndarray,
+        u: np.ndarray,
+        external_force_i: np.ndarray | None = None,
+        external_moment_b: np.ndarray | None = None,
+    ) -> np.ndarray:
         """Return the 13-state derivative for state x and motor input u."""
         v_i = np.asarray(x[3:6], dtype=float)
         q = np.asarray(x[6:10], dtype=float)
@@ -44,10 +50,12 @@ class Quadrotor:
 
         x_dot = np.zeros(13, dtype=float)
         x_dot[0:3] = v_i
-        x_dot[3:6] = (rotation @ force_b) / self.m + np.array([0.0, 0.0, self.g])
+        external_force_i = np.zeros(3) if external_force_i is None else np.asarray(external_force_i, dtype=float)
+        external_moment_b = np.zeros(3) if external_moment_b is None else np.asarray(external_moment_b, dtype=float)
+        x_dot[3:6] = (rotation @ force_b + external_force_i) / self.m + np.array([0.0, 0.0, self.g])
         x_dot[6:10] = 0.5 * (xi @ omega)
         x_dot[10:13] = np.linalg.solve(
-            self.I, moment_b - np.cross(omega, self.I @ omega)
+            self.I, moment_b + external_moment_b - np.cross(omega, self.I @ omega)
         )
         return x_dot
 

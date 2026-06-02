@@ -14,7 +14,7 @@ def _ensure_src_on_path() -> None:
 
 def main() -> int:
     _ensure_src_on_path()
-    from core.app.dash_app import run
+    from app.dash_app import run
 
     run()
     return 0

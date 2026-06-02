@@ -1,13 +1,13 @@
 # Path Optimizer Production Readiness Backlog
 
-Treat the domain packages under `src/` as the future live product, `src/autonomy/planning/mpcc/` as the planning core, and preserve `src/core/simulator/` as first-class test infrastructure.
+Treat the domain packages under `src/` as the future live product, `src/autonomy/planning/mpcc/` as the planning core, and preserve `src/simulator/` as first-class test infrastructure.
 
 ## P0: Establish The Production Shape
 
 - [ ] Define the canonical live runtime in `src/main.py`.
 - [ ] Define one canonical offline entrypoint for deterministic simulation and replay.
 - [ ] Keep `src/drone.py` as a fast telemetry/control-loop rig, but give it the same interfaces as the live stack.
-- [x] Consolidate deterministic telemetry and the richer hover/track simulator under `src/core/simulator/`.
+- [x] Consolidate deterministic telemetry and the richer hover/track simulator under `src/simulator/`.
 - [ ] Define explicit schemas for state, telemetry, gate observations, reference paths, planner results, controller outputs, and logs.
 - [ ] Centralize LOCAL_NED, Unreal coordinates, units, quaternion order, and gate through-axis conventions.
 - [ ] Decide which simulator interface is authoritative: Unreal WebSocket, MAVLink UDP, or an adapter supporting both.

@@ -1,8 +1,9 @@
 import json
+import re
 
 import numpy as np
 
-from autonomy.modes.system_mode import SystemMode
+from core.modes.system_mode import SystemMode
 from core.logging import Logger
 
 
@@ -19,6 +20,15 @@ def test_logger_writes_labeled_json(tmp_path) -> None:
     assert payload["metadata"]["scenario"] == "test"
     assert payload["events"][0]["system_mode"] == "IDLE"
     assert payload["cycles"][0]["state_vector"] == [0.0] * 13
+
+
+def test_timestamped_paths_use_whole_seconds_and_do_not_collide(tmp_path) -> None:
+    first = Logger.timestamped_dir(tmp_path)
+    first.mkdir()
+    second = Logger.timestamped_dir(tmp_path)
+
+    assert re.fullmatch(r"run-\d{8}T\d{6}Z", first.name)
+    assert second != first
 
 
 def test_offline_run_logs_consistent_event_snapshots(monkeypatch, tmp_path) -> None:

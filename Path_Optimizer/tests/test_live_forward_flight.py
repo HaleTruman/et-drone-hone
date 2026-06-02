@@ -1,7 +1,7 @@
 import json
 import time
 
-from autonomy.modes.live_forward_flight import LiveForwardFlightConfig, LiveForwardFlightRunner
+from core.modes.live_forward_flight import LiveForwardFlightConfig, LiveForwardFlightRunner
 from sensing.telemetry.mavlink_bridge import TelemetrySample
 
 

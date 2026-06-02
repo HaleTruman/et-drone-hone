@@ -7,11 +7,11 @@ import itertools
 import time
 from pathlib import Path
 
-from autonomy.control.command_mapper import CommandMapper
-from autonomy.control.hover import HoverPIDController
-from autonomy.modes.system_mode import SystemMode, SystemModeManager
+from core.control.command_mapper import CommandMapper
+from core.control.hover import HoverPIDController
+from core.modes.system_mode import SystemMode, SystemModeManager
 from core.logging import Logger
-from core.simulator import TelemetrySimulator
+from simulator import TelemetrySimulator
 from sensing.estimation.state_estimator import StateEstimator
 from sensing.telemetry.mavlink_bridge import MavlinkBridge
 
