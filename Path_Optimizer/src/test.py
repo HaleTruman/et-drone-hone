@@ -1,42 +1,44 @@
-"""Run the first live simulator smoke flight: idle, arm, then fly forward."""
+"""Live simulator smoke test: idle until startup, then hover above start."""
+
+from __future__ import annotations
 
 import argparse
-import math
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
 
 import numpy as np
+import yaml
 
 from core.control.command_mapper import CommandMapper
-from core.modes.system_mode import SystemModeManager
+from core.control.hover import HoverPIDController
 from core.logging import Logger
+from core.modes.system_mode import SystemModeManager
 from sensing.telemetry.mavlink_bridge import MavlinkBridge, TelemetrySample
 from sensing.vision.vision_stream import VisionStreamReceiver
 
 
 @dataclass(frozen=True)
-class LiveForwardFlightConfig:
+class LiveHoverTestConfig:
     endpoint: str = "udpin:127.0.0.1:14550"
     vision_host: str = "0.0.0.0"
     vision_port: int = 5600
-    idle_s: float = 2.0
-    racing_s: float = 8.0
     control_hz: float = 30.0
-    forward_speed_mps: float = 2.0
+    hover_s: float = 8.0
+    hover_altitude_m: float = 1.0
     startup_timeout_s: float = 10.0
     arm_timeout_s: float = 5.0
     heartbeat_stale_s: float = 2.0
     disarm_on_exit: bool = True
 
 
-class LiveForwardFlightRunner:
-    """Exercise the real simulator link before introducing the MPCC planner."""
+class LiveHoverTestRunner:
+    """Exercise the simulator link with a minimal idle-to-hover sequence."""
 
     def __init__(
         self,
-        config: LiveForwardFlightConfig,
+        config: LiveHoverTestConfig,
         *,
         data_dir: str | Path | None = None,
         bridge: MavlinkBridge | None = None,
@@ -54,7 +56,14 @@ class LiveForwardFlightRunner:
         self.sleep = sleep
         self.system_mode = SystemModeManager()
         self.command_mapper = CommandMapper()
-        self.logger = Logger(metadata={"scenario": "live_idle_arm_forward_flight", "config": asdict(config)})
+        params = self._load_quadrotor_params()
+        self.hover_controller = HoverPIDController(
+            mass_kg=params["m"],
+            gravity_mps2=params["g"],
+            thrust_coefficient=params["kf"],
+            dt_s=1.0 / config.control_hz,
+        )
+        self.logger = Logger(metadata={"scenario": "live_idle_then_hover_test", "config": asdict(config)})
         self._cycle = 0
 
     def run(self) -> Path:
@@ -64,19 +73,19 @@ class LiveForwardFlightRunner:
             self.bridge.start_heartbeat()
             self.bridge.subscribe_telemetry()
             self.vision_stream.start_listener()
-            self._wait_for_telemetry()
-            self._log_event("connected")
+            starting_telemetry = self._wait_for_simulator_start()
+            self._set_hover_target(starting_telemetry)
+            self._log_event(
+                "simulator_started",
+                starting_position_local_ned_m=starting_telemetry.position_local_ned_m,
+                target_position_local_ned_m=self.hover_controller.target_position_local_ned_m,
+            )
 
-            self._hold_idle()
             self.bridge.arm()
             self._wait_for_armed()
             self.system_mode.update_mode("arm")
-            self._log_event("armed")
-
-            self._perform_preflight_checks()
-            self.system_mode.update_mode("start")
-            self._log_event("racing_started")
-            self._fly_forward()
+            self._log_event("hover_started")
+            self._hover()
         except Exception as error:
             self.system_mode.handle_fault(str(error))
             self._log_event("fault", error=str(error))
@@ -93,13 +102,17 @@ class LiveForwardFlightRunner:
             self.logger.save_run(run_log)
         return run_log
 
-    def _wait_for_telemetry(self) -> TelemetrySample:
+    def _wait_for_simulator_start(self) -> TelemetrySample:
         deadline = time.monotonic() + self.config.startup_timeout_s
         while time.monotonic() < deadline:
+            self._perform_link_checks(allow_missing_heartbeat=False)
             telemetry = self.bridge.get_latest_telemetry()
             if telemetry is not None:
+                if telemetry.position_local_ned_m is None:
+                    raise RuntimeError("ODOMETRY position is required before hover can start")
                 return telemetry
-            self.sleep(0.02)
+            self._log_cycle(command=None)
+            self.sleep(1.0 / self.config.control_hz)
         raise TimeoutError("No ODOMETRY telemetry received before startup timeout")
 
     def _wait_for_armed(self) -> None:
@@ -110,37 +123,38 @@ class LiveForwardFlightRunner:
             self.sleep(0.02)
         raise TimeoutError("Simulator did not confirm armed state with a heartbeat")
 
-    def _hold_idle(self) -> None:
-        deadline = time.monotonic() + self.config.idle_s
+    def _set_hover_target(self, telemetry: TelemetrySample) -> None:
+        assert telemetry.position_local_ned_m is not None
+        start = np.asarray(telemetry.position_local_ned_m, dtype=float)
+        self.hover_controller.target_position_local_ned_m = start + np.array(
+            [0.0, 0.0, -self.config.hover_altitude_m],
+            dtype=float,
+        )
+
+    def _hover(self) -> None:
+        deadline = time.monotonic() + self.config.hover_s
         while time.monotonic() < deadline:
             self._perform_link_checks()
-            self._log_cycle(command=None)
+            telemetry = self.bridge.get_latest_telemetry()
+            if telemetry is None or telemetry.position_local_ned_m is None:
+                raise RuntimeError("ODOMETRY position is required during hover")
+            acceleration = telemetry.acceleration_local_ned_mps2 or (0.0, 0.0, 0.0)
+            quaternion, thrust = self.hover_controller.update(
+                acceleration,
+                np.asarray(telemetry.position_local_ned_m, dtype=float),
+                telemetry.velocity_local_ned_mps,
+            )
+            target = self.command_mapper.to_attitude_target(quaternion, thrust)
+            self.bridge.send_attitude_target(target)
+            self._log_cycle(command={"set_attitude_target": target})
             self.sleep(1.0 / self.config.control_hz)
 
-    def _fly_forward(self) -> None:
-        target = self.command_mapper.to_velocity_target(np.array([self.config.forward_speed_mps, 0.0, 0.0]))
-        deadline = time.monotonic() + self.config.racing_s
-        while time.monotonic() < deadline:
-            self._perform_link_checks()
-            self.bridge.send_position_target(target)
-            self._log_cycle(command={"set_position_target_local_ned": target})
-            self.sleep(1.0 / self.config.control_hz)
-
-    def _perform_preflight_checks(self) -> None:
-        self._perform_link_checks()
-        telemetry = self.bridge.get_latest_telemetry()
-        assert telemetry is not None
-        if telemetry.position_local_ned_m is None:
-            raise RuntimeError("ODOMETRY position is required for live racing")
-        if not math.isclose(np.linalg.norm(telemetry.attitude), 1.0, abs_tol=0.05):
-            raise RuntimeError("ODOMETRY attitude quaternion is not normalized")
-        if telemetry.reset_count is None:
-            raise RuntimeError("ODOMETRY reset counter is missing")
-
-    def _perform_link_checks(self) -> None:
+    def _perform_link_checks(self, *, allow_missing_heartbeat: bool = False) -> None:
         if not self.bridge.connected:
             raise RuntimeError("MAVLink connection is not active")
         if self.bridge.last_heartbeat_monotonic_s is None:
+            if allow_missing_heartbeat:
+                return
             raise RuntimeError("No MAVLink heartbeat has been observed")
         if time.monotonic() - self.bridge.last_heartbeat_monotonic_s > self.config.heartbeat_stale_s:
             raise RuntimeError("MAVLink heartbeat is stale")
@@ -169,8 +183,13 @@ class LiveForwardFlightRunner:
         )
 
     @staticmethod
+    def _load_quadrotor_params() -> dict[str, Any]:
+        params_path = Path(__file__).resolve().parent / "core" / "quadrotor" / "params.yaml"
+        return yaml.safe_load(params_path.read_text(encoding="utf-8"))
+
+    @staticmethod
     def _create_run_dir(data_dir: str | Path | None) -> Path:
-        root = Path(data_dir) if data_dir is not None else Path(__file__).resolve().parents[2] / "logs" / "runs"
+        root = Path(data_dir) if data_dir is not None else Path(__file__).resolve().parents[1] / "logs" / "runs"
         run_dir = Logger.timestamped_dir(root)
         run_dir.mkdir(parents=True, exist_ok=False)
         return run_dir
@@ -181,22 +200,20 @@ def main() -> None:
     parser.add_argument("--endpoint", default="udpin:127.0.0.1:14550")
     parser.add_argument("--vision-host", default="0.0.0.0")
     parser.add_argument("--vision-port", type=int, default=5600)
-    parser.add_argument("--idle-s", type=float, default=2.0)
-    parser.add_argument("--racing-s", type=float, default=8.0)
     parser.add_argument("--control-hz", type=float, default=30.0)
-    parser.add_argument("--forward-speed-mps", type=float, default=2.0)
+    parser.add_argument("--hover-s", type=float, default=8.0)
+    parser.add_argument("--hover-altitude-m", type=float, default=1.0)
     args = parser.parse_args()
-    config = LiveForwardFlightConfig(
+    config = LiveHoverTestConfig(
         endpoint=args.endpoint,
         vision_host=args.vision_host,
         vision_port=args.vision_port,
-        idle_s=args.idle_s,
-        racing_s=args.racing_s,
         control_hz=args.control_hz,
-        forward_speed_mps=args.forward_speed_mps,
+        hover_s=args.hover_s,
+        hover_altitude_m=args.hover_altitude_m,
     )
-    path = LiveForwardFlightRunner(config).run()
-    print(f"Live forward-flight capture saved to {path}", flush=True)
+    path = LiveHoverTestRunner(config).run()
+    print(f"Live hover test capture saved to {path}", flush=True)
 
 
 if __name__ == "__main__":

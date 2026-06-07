@@ -14,7 +14,6 @@ src/
   autonomy/
     planning/
       mpcc/               # MPCC workbench and planner implementation
-    opt_engine/           # Active spline and speed-profile optimization library
   core/
     control/              # Command mapping and flight controllers
     modes/                # Stack orchestration, safety state, live smoke flight
@@ -39,7 +38,7 @@ $env:PYTHONPATH = "src"
 python src/app.py
 python src/sim.py --scenario scenarios/armed_hover.json --transport inprocess --accelerated
 python -m simulator --scenario scenarios/idle_telemetry.json --transport inprocess --accelerated
-python -m core.modes.live_forward_flight --idle-s 2 --racing-s 8 --forward-speed-mps 2
+python src/test.py --hover-s 8 --hover-altitude-m 1
 python -m pytest -q
 ```
 
@@ -49,7 +48,6 @@ one run.
 
 ## Active Components
 
-- `autonomy/opt_engine/` loads Unreal target exports, samples Hermite splines, computes curvature, and solves feasible speed profiles.
 - `autonomy/planning/mpcc/` contains the MPCC planner workbench that will feed the production stack after further development.
 - `simulator/` owns deterministic MAVLink-shaped flight simulation, scenarios, and logging.
 - `sensing/`, `autonomy/`, and `core/` separate the live stack by responsibility.

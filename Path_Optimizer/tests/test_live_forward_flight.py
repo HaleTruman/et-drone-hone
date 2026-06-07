@@ -1,7 +1,7 @@
 import json
 import time
 
-from core.modes.live_forward_flight import LiveForwardFlightConfig, LiveForwardFlightRunner
+from test import LiveHoverTestConfig, LiveHoverTestRunner
 from sensing.telemetry.mavlink_bridge import TelemetrySample
 
 
@@ -13,14 +13,15 @@ class FakeBridge:
         self.collisions = []
         self.race_status = None
         self.last_heartbeat_monotonic_s = time.monotonic()
-        self.targets = []
+        self.attitude_targets = []
         self.disarmed = False
         self.telemetry = TelemetrySample(
             sim_time_ns=1,
-            position_local_ned_m=(0.0, 0.0, 0.0),
+            position_local_ned_m=(2.0, 3.0, -4.0),
             attitude=(1.0, 0.0, 0.0, 0.0),
             velocity_local_ned_mps=(0.0, 0.0, 0.0),
             body_rates_rps=(0.0, 0.0, 0.0),
+            acceleration_local_ned_mps2=(0.0, 0.0, 0.0),
             reset_count=0,
         )
 
@@ -42,8 +43,8 @@ class FakeBridge:
     def disarm(self) -> None:
         self.disarmed = True
 
-    def send_position_target(self, target) -> None:
-        self.targets.append(target)
+    def send_attitude_target(self, target) -> None:
+        self.attitude_targets.append(target)
 
     def snapshot(self) -> dict:
         return {"connected": self.connected, "armed": self.armed}
@@ -67,21 +68,22 @@ class FakeVisionStream:
         self.stopped = True
 
 
-def test_live_runner_transitions_to_racing_and_sends_forward_velocity(tmp_path) -> None:
+def test_live_runner_transitions_to_hover_and_sends_attitude_target(tmp_path) -> None:
     bridge = FakeBridge()
     vision = FakeVisionStream()
-    config = LiveForwardFlightConfig(idle_s=0.0, racing_s=0.01, control_hz=1000.0)
+    config = LiveHoverTestConfig(hover_s=0.01, control_hz=1000.0)
 
-    log_path = LiveForwardFlightRunner(config, data_dir=tmp_path, bridge=bridge, vision_stream=vision).run()
+    log_path = LiveHoverTestRunner(config, data_dir=tmp_path, bridge=bridge, vision_stream=vision).run()
 
     payload = json.loads(log_path.read_text(encoding="utf-8"))
     assert [event["event"] for event in payload["events"]] == [
-        "connected",
-        "armed",
-        "racing_started",
+        "simulator_started",
+        "hover_started",
         "shutdown",
     ]
-    assert bridge.targets
-    assert bridge.targets[0]["velocity_local_ned_mps"] == [2.0, 0.0, 0.0]
+    assert payload["events"][0]["target_position_local_ned_m"] == [2.0, 3.0, -5.0]
+    assert bridge.attitude_targets
+    assert "quaternion" in bridge.attitude_targets[0]
+    assert "thrust" in bridge.attitude_targets[0]
     assert bridge.disarmed is True
     assert vision.stopped is True

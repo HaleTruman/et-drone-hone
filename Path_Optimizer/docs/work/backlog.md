@@ -69,7 +69,6 @@ Treat the domain packages under `src/` as the future live product, `src/autonomy
 
 - [ ] Update `README.md`; it describes an older tree and commands that no longer exist.
 - [x] Retire the legacy `src/main.py` implementation and preserve it as the canonical production entry-point placeholder.
-- [ ] Decide whether `opt_engine` remains a useful spline/pre-planning library or moves to an archived prototype area.
 - [ ] Remove or archive `notebooks/planner_copy.py` and stale notebook experiments.
 - [ ] Decide whether tracked instance-pose review images are fixtures, documentation examples, or disposable artifacts.
 - [ ] Expand `.gitignore` for `.venv/`, `__pycache__/`, `.ipynb_checkpoints/`, `.DS_Store`, run logs, generated artifacts, and test logs.

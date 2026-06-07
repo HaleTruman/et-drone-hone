@@ -50,14 +50,7 @@ Expose these in the Dash UI (even if default-on), so the user can:
 - see that the constraint is active,
 - widen/tighten `θ_gate_max` while debugging.
 
-### 2) Axis conversion helper (coords)
-
-Add a dedicated function in `opt_engine/coords_unreal.py` to convert axes to internal coordinates:
-
-- **No scaling** (axes are unitless directions)
-- Apply any frame/handedness mapping in exactly one place (currently identity, but this prevents future drift).
-
-### 3) Enforce the constraint in path generation (preferred)
+### 2) Enforce the constraint in path generation (preferred)
 
 The most robust “hard constraint” is to make the spline satisfy it **by construction**, not by hoping a λ grid happens to align tangents.
 
@@ -72,7 +65,7 @@ Approach:
 
 Result: the spline’s derivative at each waypoint is aligned with `d_i`, so the gate-axis constraint is always satisfied (up to floating error).
 
-### 4) Validation + diagnostics (still required)
+### 3) Validation + diagnostics (still required)
 
 Even if enforced by construction, validate and report:
 
@@ -82,7 +75,7 @@ Even if enforced by construction, validate and report:
 
 If violations occur (due to numerical issues or malformed axes), mark the candidate infeasible and show why in the UI summary.
 
-### 5) Visualization (so we can verify correctness)
+### 4) Visualization (so we can verify correctness)
 
 Add a 3D overlay to the Plotly scene:
 

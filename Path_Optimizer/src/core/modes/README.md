@@ -1,15 +1,15 @@
-# Live Simulator Smoke Flight
+# Live Simulator Hover Smoke Test
 
 The first live integration intentionally bypasses the MPCC planner. It connects
-to the organizer simulator, waits in `IDLE`, arms after the configured delay,
-runs preflight checks, enters `RACING`, and sends a local-NED forward velocity
-target while saving FPV JPEG frames.
+to the organizer simulator, remains in `IDLE` until heartbeat and odometry are
+available, arms, and sends attitude targets for a hover 1 meter above the
+starting local-NED position while saving FPV JPEG frames.
 
 From `Path_Optimizer`:
 
 ```powershell
 $env:PYTHONPATH = "src"
-python -m core.modes.live_forward_flight --idle-s 2 --racing-s 8 --forward-speed-mps 2
+python src/test.py --hover-s 8 --hover-altitude-m 1
 ```
 
 Each new run is written under `logs/runs/run-<timestamp>/`:

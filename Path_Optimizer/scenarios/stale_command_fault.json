@@ -1,1 +1,16 @@
-{"name":"stale_command_fault","duration_s":2.0,"initial_modes":{"system":"IDLE"},"events":[{"at_s":0.1,"type":"set_modes","system":"ARMED","flight":"HOVER","control":"POSITION_HOLD"},{"at_s":0.1,"type":"reference","position_ned_m":[0,0,-1]},{"at_s":0.5,"type":"command_outage","duration_s":1.0}]}
+{
+  "name": "stale_command_fault",
+  "duration_s": 2.0,
+  "initial_modes": { "system": "IDLE" },
+  "events": [
+    {
+      "at_s": 0.1,
+      "type": "set_modes",
+      "system": "ARMED",
+      "flight": "HOVER",
+      "control": "POSITION_HOLD"
+    },
+    { "at_s": 0.1, "type": "reference", "position_ned_m": [0, 0, -1] },
+    { "at_s": 0.5, "type": "command_outage", "duration_s": 1.0 }
+  ]
+}

@@ -1,1 +1,30 @@
-{"name":"timed_trajectory","duration_s":4.0,"initial_modes":{"system":"IDLE"},"events":[{"at_s":0.1,"type":"set_modes","system":"RACING","flight":"TRAJECTORY","control":"TRAJECTORY_TRACK"},{"at_s":0.1,"type":"reference","trajectory":[{"t_s":0,"position_ned_m":[0,0,-1],"velocity_ned_mps":[1,0,0]},{"t_s":3,"position_ned_m":[3,0,-1],"velocity_ned_mps":[1,0,0]}]}]}
+{
+  "name": "timed_trajectory",
+  "duration_s": 4.0,
+  "initial_modes": { "system": "IDLE" },
+  "events": [
+    {
+      "at_s": 0.1,
+      "type": "set_modes",
+      "system": "RACING",
+      "flight": "TRAJECTORY",
+      "control": "TRAJECTORY_TRACK"
+    },
+    {
+      "at_s": 0.1,
+      "type": "reference",
+      "trajectory": [
+        {
+          "t_s": 0,
+          "position_ned_m": [0, 0, -1],
+          "velocity_ned_mps": [1, 0, 0]
+        },
+        {
+          "t_s": 3,
+          "position_ned_m": [3, 0, -1],
+          "velocity_ned_mps": [1, 0, 0]
+        }
+      ]
+    }
+  ]
+}

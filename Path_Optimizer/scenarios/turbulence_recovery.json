@@ -1,1 +1,24 @@
-{"name":"turbulence_recovery","duration_s":4.0,"seed":11,"initial_modes":{"system":"IDLE"},"initial_state":{"position_ned_m":[0,0,-1]},"environment":{"temperature_c":20,"pressure_pa":100000},"events":[{"at_s":0.1,"type":"set_modes","system":"ARMED","flight":"HOVER","control":"POSITION_HOLD"},{"at_s":0.1,"type":"reference","position_ned_m":[0,0,-1]},{"at_s":1.0,"type":"turbulence","force_std_n":[0.2,0.2,0.1],"moment_std_nm":[0.01,0.01,0.005]}]}
+{
+  "name": "turbulence_recovery",
+  "duration_s": 4.0,
+  "seed": 11,
+  "initial_modes": { "system": "IDLE" },
+  "initial_state": { "position_ned_m": [0, 0, -1] },
+  "environment": { "temperature_c": 20, "pressure_pa": 100000 },
+  "events": [
+    {
+      "at_s": 0.1,
+      "type": "set_modes",
+      "system": "ARMED",
+      "flight": "HOVER",
+      "control": "POSITION_HOLD"
+    },
+    { "at_s": 0.1, "type": "reference", "position_ned_m": [0, 0, -1] },
+    {
+      "at_s": 1.0,
+      "type": "turbulence",
+      "force_std_n": [0.2, 0.2, 0.1],
+      "moment_std_nm": [0.01, 0.01, 0.005]
+    }
+  ]
+}
