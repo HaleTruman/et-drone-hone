@@ -165,6 +165,13 @@ def _live_runs_page(live_run_options: list[dict[str, str]]) -> html.Div:
             ),
             html.Div(
                 style={**PANEL_STYLE, "marginTop": "16px"},
+                children=[
+                    html.H3("Stored Gate Map At Frame", style={"margin": "0 0 12px"}),
+                    dcc.Graph(id="live-gate-map-3d", style={"height": "620px"}, config={"displaylogo": False}),
+                ],
+            ),
+            html.Div(
+                style={**PANEL_STYLE, "marginTop": "16px"},
                 children=[dcc.Graph(id="live-trajectory-3d", style={"height": "620px"}, config={"displaylogo": False})],
             ),
             _graph_grid(

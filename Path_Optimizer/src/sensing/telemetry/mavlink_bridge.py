@@ -186,6 +186,7 @@ class MavlinkBridge:
         mavutil = self._require_mavutil()
         connection = self._require_connection()
         position = target.get("position_local_ned_m")
+        position_axes = target.get("position_axes")
         velocity = target["velocity_local_ned_mps"]
         yaw = target.get("yaw_rad")
         mask = (
@@ -201,6 +202,16 @@ class MavlinkBridge:
                 | mavutil.mavlink.POSITION_TARGET_TYPEMASK_Y_IGNORE
                 | mavutil.mavlink.POSITION_TARGET_TYPEMASK_Z_IGNORE
             )
+        elif position_axes is not None:
+            axes = [bool(value) for value in position_axes]
+            if len(axes) != 3:
+                raise ValueError("position_axes must contain [use_x, use_y, use_z]")
+            if not axes[0]:
+                mask |= mavutil.mavlink.POSITION_TARGET_TYPEMASK_X_IGNORE
+            if not axes[1]:
+                mask |= mavutil.mavlink.POSITION_TARGET_TYPEMASK_Y_IGNORE
+            if not axes[2]:
+                mask |= mavutil.mavlink.POSITION_TARGET_TYPEMASK_Z_IGNORE
         if yaw is None:
             yaw = 0.0
             mask |= mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_IGNORE
@@ -278,7 +289,7 @@ class MavlinkBridge:
         }
 
     def populate_gate_map(self, gate_map: Any) -> None:
-        from .gate_map import GateRecord
+        from sensing.perception.gate_map import GateRecord
 
         for sequence, gate in enumerate(self.track_gates):
             gate_map.add_or_update_gate(

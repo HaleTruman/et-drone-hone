@@ -4,6 +4,7 @@ import json
 import os
 from typing import Any
 
+import numpy as np
 import plotly.graph_objects as go
 from dash import Dash, Input, Output, State, callback, ctx, html, no_update
 
@@ -125,19 +126,21 @@ def register_live_callbacks(app: Dash, *, root_dir: str) -> None:
         Output("live-frame-image", "src"),
         Output("live-frame-caption", "children"),
         Output("live-frame-telemetry", "children"),
+        Output("live-gate-map-3d", "figure"),
         Input("live-run-path", "value"),
         Input("live-frame-index", "value"),
     )
     def _render_frame(run_path: str | None, frame_index: int | None):
         if not run_path:
-            return "", "No captured run selected.", ""
+            return "", "No captured run selected.", "", _empty_figure()
         try:
             run = load_live_run(run_path)
             if not run.frames:
-                return "", "This run does not contain saved FPV frames.", ""
+                return "", "This run does not contain saved FPV frames.", "", _empty_figure()
             index = min(max(frame_index or 0, 0), len(run.frames) - 1)
             frame = run.frames[index]
             sync = nearest_cycle_for_frame(run, frame)
+            gate_map_figure = _gate_map_figure(run, frame, sync.cycle, index)
             details = {
                 "frame": {
                     "index": index,
@@ -158,9 +161,9 @@ def register_live_callbacks(app: Dash, *, root_dir: str) -> None:
                 f"Frame {index + 1}/{len(run.frames)} | id={frame.frame_id} | "
                 f"timestamp={frame.sim_time_ns} ns | {frame.jpeg_size:,} bytes"
             )
-            return frame_data_uri(run, frame), caption, json.dumps(details, indent=2)
+            return frame_data_uri(run, frame), caption, json.dumps(details, indent=2), gate_map_figure
         except Exception as exc:  # noqa: BLE001
-            return "", f"Unable to render frame: {exc}", ""
+            return "", f"Unable to render frame: {exc}", "", _empty_figure()
 
 
 def _empty_live_dashboard(message: str):
@@ -224,6 +227,76 @@ def _trajectory_figure(run: LiveRun) -> go.Figure:
     return fig
 
 
+def _gate_map_figure(run: LiveRun, frame: Any, cycle: dict[str, Any] | None, frame_index: int) -> go.Figure:
+    fig = go.Figure()
+    gates = _mapped_gates_for_frame(run, frame.frame_id)
+    if not gates:
+        gates = _cycle_gates(cycle)
+
+    points: list[list[float]] = []
+    for gate in gates:
+        position = gate.get("pos")
+        quaternion = gate.get("quat")
+        if not _point3(position):
+            continue
+        points.append(position)
+        fig.add_trace(
+            go.Scatter3d(
+                x=[position[0]],
+                y=[position[1]],
+                z=[position[2]],
+                mode="markers+text",
+                name=str(gate.get("id", "gate")),
+                text=[str(gate.get("id", "gate"))],
+                textposition="top center",
+                marker={"size": 5, "color": "#7c3aed"},
+                showlegend=False,
+            )
+        )
+        if _quat4(quaternion):
+            for trace in _gate_traces(position, quaternion, str(gate.get("id", "gate"))):
+                fig.add_trace(trace)
+
+    telemetry = cycle.get("telemetry") if isinstance(cycle, dict) else None
+    if isinstance(telemetry, dict):
+        drone_position = telemetry.get("position_local_ned_m")
+        drone_quaternion = telemetry.get("attitude")
+        if _point3(drone_position):
+            points.append(drone_position)
+            for trace in _drone_traces(drone_position, drone_quaternion):
+                fig.add_trace(trace)
+
+    title = f"Stored Gate Map At Frame {frame_index + 1} (id={frame.frame_id})"
+    axis_ranges = _trajectory_axis_ranges(points)
+    ui_revision = f"live-gate-map:{run.path}:{frame_index}"
+    fig.update_layout(
+        **_layout(title),
+        dragmode="orbit",
+        uirevision=ui_revision,
+        scene={
+            "xaxis": {"title": "North (m)", "range": axis_ranges[0]},
+            "yaxis": {"title": "East (m)", "range": axis_ranges[1]},
+            "zaxis": {"title": "Down (m)", "range": axis_ranges[2]},
+            "aspectmode": "cube",
+            "camera": {"eye": {"x": 1.55, "y": 1.55, "z": 1.1}},
+            "dragmode": "orbit",
+            "uirevision": ui_revision,
+        },
+        annotations=[
+            {
+                "text": f"gates={len(gates)} | cycle={cycle.get('cycle', 'n/a') if isinstance(cycle, dict) else 'n/a'}",
+                "xref": "paper",
+                "yref": "paper",
+                "x": 0.01,
+                "y": 0.98,
+                "showarrow": False,
+                "font": {"size": 12, "color": "#60708a"},
+            }
+        ],
+    )
+    return fig
+
+
 def _vector_figure(run: LiveRun, title: str, field: str, y_title: str) -> go.Figure:
     fig = go.Figure()
     times = telemetry_times_s(run.cycles)
@@ -253,3 +326,85 @@ def _slider_marks(frame_count: int) -> dict[int, str]:
 
 def _distance(start: list[float], end: list[float]) -> float:
     return sum((float(end[index]) - float(start[index])) ** 2 for index in range(3)) ** 0.5
+
+
+def _cycle_gates(cycle: dict[str, Any] | None) -> list[dict[str, Any]]:
+    gates = value_at(cycle or {}, "vision", "gates")
+    return gates if isinstance(gates, list) else []
+
+
+def _mapped_gates_for_frame(run: LiveRun, frame_id: int) -> list[dict[str, Any]]:
+    records = run.raw.get("vision_frames")
+    if not isinstance(records, list):
+        return []
+    for record in records:
+        frame = record.get("frame") if isinstance(record, dict) else None
+        if not isinstance(frame, dict) or int(frame.get("frame_id", -1)) != int(frame_id):
+            continue
+        gates = frame.get("mapped_gates")
+        if isinstance(gates, list):
+            return gates
+    return []
+
+
+def _gate_traces(position: list[float], quaternion: list[float], gate_id: str) -> list[go.Scatter3d]:
+    center = np.asarray(position, dtype=float)
+    rotation = _rotation_matrix(quaternion)
+    outer = _square_points(center, rotation, size=2.7)
+    inner = _square_points(center, rotation, size=1.5)
+    normal = center + rotation[:, 0] * 1.6
+    traces = [
+        go.Scatter3d(x=outer[:, 0], y=outer[:, 1], z=outer[:, 2], mode="lines", name=f"{gate_id} outer", line={"color": "#7c3aed", "width": 5}, showlegend=False),
+        go.Scatter3d(x=inner[:, 0], y=inner[:, 1], z=inner[:, 2], mode="lines", name=f"{gate_id} inner", line={"color": "#a855f7", "width": 3}, showlegend=False),
+        go.Scatter3d(x=[center[0], normal[0]], y=[center[1], normal[1]], z=[center[2], normal[2]], mode="lines", name=f"{gate_id} normal", line={"color": "#f59e0b", "width": 5}, showlegend=False),
+    ]
+    return traces
+
+
+def _drone_traces(position: list[float], quaternion: list[float] | None) -> list[go.Scatter3d]:
+    center = np.asarray(position, dtype=float)
+    rotation = _rotation_matrix(quaternion if _quat4(quaternion) else [1.0, 0.0, 0.0, 0.0])
+    nose = center + rotation[:, 0] * 1.2
+    right = center + rotation[:, 1] * 0.55
+    left = center - rotation[:, 1] * 0.55
+    return [
+        go.Scatter3d(x=[center[0]], y=[center[1]], z=[center[2]], mode="markers+text", name="Drone", text=["drone"], textposition="bottom center", marker={"size": 7, "color": "#dc2626"}, showlegend=False),
+        go.Scatter3d(x=[center[0], nose[0]], y=[center[1], nose[1]], z=[center[2], nose[2]], mode="lines", name="Drone heading", line={"color": "#dc2626", "width": 7}, showlegend=False),
+        go.Scatter3d(x=[left[0], right[0]], y=[left[1], right[1]], z=[left[2], right[2]], mode="lines", name="Drone body", line={"color": "#111827", "width": 5}, showlegend=False),
+    ]
+
+
+def _square_points(center: np.ndarray, rotation: np.ndarray, *, size: float) -> np.ndarray:
+    half = float(size) / 2.0
+    local = np.array(
+        [
+            [0.0, -half, -half],
+            [0.0, half, -half],
+            [0.0, half, half],
+            [0.0, -half, half],
+            [0.0, -half, -half],
+        ],
+        dtype=float,
+    )
+    return center + local @ rotation.T
+
+
+def _rotation_matrix(quaternion: list[float]) -> np.ndarray:
+    q = np.asarray(quaternion, dtype=float)
+    q = q / max(np.linalg.norm(q), 1e-12)
+    qw, qx, qy, qz = q
+    return np.array(
+        [
+            [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qw * qz), 2 * (qx * qz + qw * qy)],
+            [2 * (qx * qy + qw * qz), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qw * qx)],
+            [2 * (qx * qz - qw * qy), 2 * (qy * qz + qw * qx), 1 - 2 * (qx * qx + qy * qy)],
+        ]
+    )
+
+
+def _point3(value: Any) -> bool:
+    return isinstance(value, list) and len(value) >= 3 and all(isinstance(item, (int, float)) for item in value[:3])
+
+
+def _quat4(value: Any) -> bool:
+    return isinstance(value, list) and len(value) >= 4 and all(isinstance(item, (int, float)) for item in value[:4])

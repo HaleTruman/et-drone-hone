@@ -47,13 +47,14 @@ class MavlinkServer:
             if not self.simulator.armed:
                 return
             mask = int(message.type_mask)
-            ignore_position = (
-                mavutil.mavlink.POSITION_TARGET_TYPEMASK_X_IGNORE
-                | mavutil.mavlink.POSITION_TARGET_TYPEMASK_Y_IGNORE
-                | mavutil.mavlink.POSITION_TARGET_TYPEMASK_Z_IGNORE
-            )
+            position_axes = [
+                not bool(mask & mavutil.mavlink.POSITION_TARGET_TYPEMASK_X_IGNORE),
+                not bool(mask & mavutil.mavlink.POSITION_TARGET_TYPEMASK_Y_IGNORE),
+                not bool(mask & mavutil.mavlink.POSITION_TARGET_TYPEMASK_Z_IGNORE),
+            ]
             self.simulator.apply_position_target({
-                "position_local_ned_m": None if mask & ignore_position == ignore_position else [message.x, message.y, message.z],
+                "position_local_ned_m": None if not any(position_axes) else [message.x, message.y, message.z],
+                "position_axes": position_axes,
                 "velocity_local_ned_mps": [message.vx, message.vy, message.vz],
                 "yaw_rad": None if mask & mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_IGNORE else message.yaw,
             })

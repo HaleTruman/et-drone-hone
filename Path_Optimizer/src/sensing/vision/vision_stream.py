@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import json
 import socket
-import struct
 import threading
 from collections import deque
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-VISION_HEADER_FORMAT = "<IHHIIQ"
-VISION_HEADER_SIZE = struct.calcsize(VISION_HEADER_FORMAT)
+from .io.udp_protocol import VISION_HEADER, VISION_HEADER_SIZE, unpack_packet
+
+VISION_HEADER_FORMAT = VISION_HEADER.format
 
 
 @dataclass(frozen=True)
@@ -63,13 +63,17 @@ class VisionStreamReceiver:
         if len(packet) < VISION_HEADER_SIZE:
             self.invalid_packet_count += 1
             return None
-        frame_id, chunk_id, total_chunks, jpeg_size, payload_size, sim_time_ns = struct.unpack(
-            VISION_HEADER_FORMAT, packet[:VISION_HEADER_SIZE]
-        )
-        payload = packet[VISION_HEADER_SIZE:]
-        if total_chunks < 1 or chunk_id >= total_chunks or payload_size != len(payload):
+        try:
+            unpacked = unpack_packet(packet)
+        except ValueError:
             self.invalid_packet_count += 1
             return None
+        frame_id = unpacked.frame_id
+        chunk_id = unpacked.chunk_id
+        total_chunks = unpacked.total_chunks
+        jpeg_size = unpacked.jpeg_size
+        sim_time_ns = unpacked.sim_time_ns
+        payload = unpacked.payload
         partial = self._partial_frames.setdefault(
             frame_id,
             {"chunks": {}, "total_chunks": total_chunks, "jpeg_size": jpeg_size, "sim_time_ns": sim_time_ns},

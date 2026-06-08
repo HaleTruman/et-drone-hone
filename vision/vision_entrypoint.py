@@ -7,17 +7,22 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from vision.src.cnn.rgb_inference import DEFAULT_CHECKPOINT
-from vision.src.io.udp_protocol import DEFAULT_HOST, DEFAULT_PORT
-from vision.src.landmarker.landmarker_pipeline import LandmarkerPipelineConfig
-from vision.src.pipeline import (
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_FLIGHT_SRC = _PROJECT_ROOT / "Path_Optimizer" / "src"
+if str(_FLIGHT_SRC) not in sys.path:
+    sys.path.insert(0, str(_FLIGHT_SRC))
+
+from sensing.vision.cnn.rgb_inference import DEFAULT_CHECKPOINT
+from sensing.vision.io.udp_protocol import DEFAULT_HOST, DEFAULT_PORT
+from sensing.vision.landmarker.landmarker_pipeline import LandmarkerPipelineConfig
+from sensing.vision.pipeline import (
     DEFAULT_OUTPUT_ROOT,
     VisionPipelineConfig,
     run_landmarker_stage,
     run_live_pipeline,
     run_regressor_stage,
 )
-from vision.src.regressor import DEFAULT_REGRESSOR_CHECKPOINT, RegressorPipelineConfig
+from sensing.vision.regressor import DEFAULT_REGRESSOR_CHECKPOINT, RegressorPipelineConfig
 
 
 def _parse_args() -> argparse.Namespace:

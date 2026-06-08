@@ -18,8 +18,8 @@ class MPCCPlanner:
         self.visualize_result = visualize_result
 
     def plan(self, current_state, gates):
-        if len(gates) != 1:
-            raise ValueError("The basic MPCC scenario expects exactly one gate.")
+        if len(gates) < 1:
+            raise ValueError("MPCC planning requires at least one gate.")
 
         ref = generate_reference(current_state[0:3], gates, self.pack[3]["N"] + 1)
         X, U, theta, info = solve_mpcc(self.pack, np.asarray(current_state, float), ref, self.warm_start)
@@ -36,6 +36,10 @@ class MPCCPlanner:
         info["theta"] = theta
         info["q_des"] = q
         info["thrust_cmd"] = thrust
+        info["planned_path_local_ned_m"] = X[0:3].T.tolist()
+        info["reference_path_local_ned_m"] = ref["pos"].tolist()
+        info["gate_count"] = len(gates)
+        info["gates"] = gates
         info["gate_misses_m"] = misses
         info["gate_crossing_step"] = gate_crossing_step
         info["gate_crossing_time_s"] = gate_crossing_step * float(info.get("dt", self.pack[3]["dt"]))

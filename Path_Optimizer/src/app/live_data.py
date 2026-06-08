@@ -78,13 +78,13 @@ def load_live_run(path: str) -> LiveRun:
         metadata=metadata,
         events=events,
         cycles=cycles,
-        frames=_load_frames(run_dir / "frames" / "frames.jsonl"),
+        frames=_load_frames(_frames_manifest_path(run_dir)),
         raw=raw,
     )
 
 
 def frame_data_uri(run: LiveRun, frame: LiveFrame) -> str:
-    frames_dir = (Path(run.path) / "frames").resolve()
+    frames_dir = _frames_dir(Path(run.path)).resolve()
     image_path = (frames_dir / frame.path).resolve()
     if image_path.parent != frames_dir:
         raise ValueError("Frame path must stay within the run frames directory.")
@@ -146,6 +146,20 @@ def _load_frames(manifest_path: Path) -> list[LiveFrame]:
             )
         )
     return frames
+
+
+def _frames_manifest_path(run_dir: Path) -> Path:
+    frames_manifest = run_dir / "frames" / "frames.jsonl"
+    if frames_manifest.is_file():
+        return frames_manifest
+    return run_dir / "vision_frames" / "frames.jsonl"
+
+
+def _frames_dir(run_dir: Path) -> Path:
+    frames_dir = run_dir / "frames"
+    if frames_dir.is_dir():
+        return frames_dir
+    return run_dir / "vision_frames"
 
 
 def _timesync_offset_ns(events: list[dict[str, Any]]) -> int | None:

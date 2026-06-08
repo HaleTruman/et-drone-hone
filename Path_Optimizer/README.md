@@ -7,7 +7,7 @@ Path planning, simulation, telemetry, and live-flight tooling for the drone raci
 ```text
 src/
   sensing/
-    vision/               # Vision stream ingestion
+    vision/               # Vision UDP ingestion, CNN inference, regressor, and landmarker runtime
     perception/           # Gate observations and gate map
     estimation/           # Vehicle state estimation
     telemetry/            # MAVLink bridge and telemetry synchronization
@@ -50,6 +50,7 @@ one run.
 
 - `autonomy/planning/mpcc/` contains the MPCC planner workbench that will feed the production stack after further development.
 - `simulator/` owns deterministic MAVLink-shaped flight simulation, scenarios, and logging.
+- `sensing/vision/` is the canonical flight-stack home for the production vision runtime. The root `vision/` package is kept only for compatibility with existing review/replay tooling during the merge.
 - `sensing/`, `autonomy/`, and `core/` separate the live stack by responsibility.
 
 ## Course Data

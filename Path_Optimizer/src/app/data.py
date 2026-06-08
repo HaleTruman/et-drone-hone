@@ -29,6 +29,8 @@ def discover_run_files(root_dir: str) -> list[str]:
     logs_dir = Path(root_dir) / "logs"
     paths = [path for path in logs_dir.glob("run-*.json") if path.is_file()]
     paths.extend(path for path in logs_dir.glob("run-*/run.json") if path.is_file())
+    paths.extend(path for path in (logs_dir / "runs").glob("run-*/run.json") if path.is_file())
+    paths.extend(path for path in (logs_dir / "sim").glob("run-*/run.json") if path.is_file())
     return [str(path.resolve()) for path in sorted(paths, key=_run_sort_key, reverse=True)]
 
 

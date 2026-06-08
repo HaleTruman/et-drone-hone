@@ -172,7 +172,9 @@ class TelemetrySimulator:
         velocity = np.asarray(target.get("velocity_local_ned_mps", [0.0, 0.0, 0.0]), dtype=float)
         desired_acceleration = 1.2 * (velocity - state[3:6])
         if position is not None:
-            desired_acceleration += 0.8 * (np.asarray(position, dtype=float) - state[0:3])
+            position_axes = np.asarray(target.get("position_axes", [True, True, True]), dtype=bool)
+            position_error = np.asarray(position, dtype=float) - state[0:3]
+            desired_acceleration += 0.8 * np.where(position_axes, position_error, 0.0)
         roll = float(np.clip(desired_acceleration[1] / self.model.g, -0.35, 0.35))
         pitch = float(np.clip(-desired_acceleration[0] / self.model.g, -0.35, 0.35))
         quaternion = self._quaternion_from_roll_pitch_yaw(roll, pitch, float(target.get("yaw_rad") or 0.0))

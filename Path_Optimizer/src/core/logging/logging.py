@@ -11,6 +11,8 @@ class Logger:
             "metadata": metadata or {},
             "events": [],
             "cycles": [],
+            "vision_frames": [],
+            "planned_paths": [],
         }
         self.telemetry_records: dict[str, Any] = {
             "schema_version": 1,
@@ -34,6 +36,12 @@ class Logger:
 
     def log_mpcc_solution(self, solution: Any) -> None:
         self.log_event("mpcc_solution", solution=solution)
+
+    def log_vision_frame(self, frame: Any, **data: Any) -> None:
+        self.records["vision_frames"].append({"frame": frame, **data})
+
+    def log_planned_path(self, planned_path: Any, **data: Any) -> None:
+        self.records["planned_paths"].append({"planned_path": planned_path, **data})
 
     def save_run(self, path: str | Path) -> None:
         output_path = Path(path)

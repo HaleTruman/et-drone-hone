@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 import numpy as np
 from dash import Dash, Input, Output, State, callback, html, no_update
 
-from app.data import RunLog, cycle_times_s, discover_simulation_run_files, flatten_record, load_run, value_at
+from app.data import RunLog, cycle_times_s, discover_run_files, flatten_record, load_run, value_at
 
 
 GRAPH_IDS = (
@@ -32,7 +32,7 @@ def register_callbacks(app: Dash, *, root_dir: str) -> None:
         State("run-path", "value"),
     )
     def _refresh_runs(_n_intervals: int, selected_path: str | None):
-        paths = discover_simulation_run_files(root_dir)
+        paths = discover_run_files(root_dir)
         options = []
         for path in paths:
             try:
@@ -64,7 +64,7 @@ def register_callbacks(app: Dash, *, root_dir: str) -> None:
     )
     def _render_run(run_path: str | None):
         if not run_path:
-            return _empty_dashboard("No simulation logs were found in logs/sim/.")
+            return _empty_dashboard("No run logs were found in logs/.")
         try:
             run = _load_run(run_path)
         except Exception as exc:  # noqa: BLE001
@@ -138,7 +138,11 @@ def _summary_cards(run: RunLog) -> list[html.Div]:
 def _trajectory_figure(run: RunLog) -> go.Figure:
     fig = go.Figure()
     all_points: list[list[float]] = []
-    for label, key, color in (("Simulator truth", "simulator_truth", "#2563eb"), ("Estimated", "estimated_state", "#dc2626")):
+    for label, key, color in (
+        ("Simulator truth", "simulator_truth", "#2563eb"),
+        ("Estimated", "estimated_state", "#dc2626"),
+        ("Telemetry", "telemetry", "#111827"),
+    ):
         points = [value_at(cycle, key, "position_local_ned_m") for cycle in run.cycles]
         points = [point for point in points if isinstance(point, list) and len(point) >= 3]
         if points:
@@ -148,6 +152,20 @@ def _trajectory_figure(run: RunLog) -> go.Figure:
     if isinstance(target, list) and len(target) >= 3:
         all_points.append(target)
         fig.add_trace(go.Scatter3d(x=[target[0]], y=[target[1]], z=[target[2]], mode="markers", name="Target", marker={"color": "#16a34a", "size": 7, "symbol": "diamond"}))
+    planned_path = _latest_planned_path_points(run)
+    if planned_path:
+        all_points.extend(planned_path)
+        fig.add_trace(
+            go.Scatter3d(
+                x=[point[0] for point in planned_path],
+                y=[point[1] for point in planned_path],
+                z=[point[2] for point in planned_path],
+                mode="lines+markers",
+                name="Planned path",
+                line={"color": "#7c3aed", "width": 6},
+                marker={"color": "#7c3aed", "size": 3},
+            )
+        )
     frames = []
     frame_indices = _playback_frame_indices(run)
     trace_indices = []
@@ -231,6 +249,24 @@ def _trajectory_axis_ranges(points: list[list[float]]) -> list[list[float]]:
         [(minimum + maximum) / 2 - half_span, (minimum + maximum) / 2 + half_span]
         for minimum, maximum in bounds
     ]
+
+
+def _latest_planned_path_points(run: RunLog) -> list[list[float]]:
+    planned_paths = run.raw.get("planned_paths")
+    if isinstance(planned_paths, list):
+        for record in reversed(planned_paths):
+            planned_path = value_at(record, "planned_path", "points_local_ned_m")
+            if _is_point_list(planned_path):
+                return planned_path
+    for cycle in reversed(run.cycles):
+        planned_path = value_at(cycle, "planned_path", "points_local_ned_m")
+        if _is_point_list(planned_path):
+            return planned_path
+    return []
+
+
+def _is_point_list(value: Any) -> bool:
+    return isinstance(value, list) and all(isinstance(point, list) and len(point) >= 3 for point in value)
 
 
 def _vector_figure(run: RunLog, title: str, field: str, y_title: str, *, axes: tuple[str, ...] = ("x", "y", "z")) -> go.Figure:
@@ -368,8 +404,14 @@ def _playback_frame_indices(run: RunLog) -> list[int]:
 
 def _quadrotor_pose(cycle: dict[str, Any]) -> tuple[list[float], list[float]]:
     return (
-        value_at(cycle, "simulator_truth", "position_local_ned_m"),
-        value_at(cycle, "simulator_truth", "attitude_quaternion"),
+        value_at(cycle, "simulator_truth", "position_local_ned_m")
+        or value_at(cycle, "estimated_state", "position_local_ned_m")
+        or value_at(cycle, "telemetry", "position_local_ned_m")
+        or [0.0, 0.0, 0.0],
+        value_at(cycle, "simulator_truth", "attitude_quaternion")
+        or value_at(cycle, "estimated_state", "attitude_quaternion")
+        or value_at(cycle, "telemetry", "attitude")
+        or [1.0, 0.0, 0.0, 0.0],
     )
 
 

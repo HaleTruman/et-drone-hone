@@ -1,5 +1,8 @@
-# Vision
-`vision/src/` owns inference
+# Vision Compatibility Package
+`Path_Optimizer/src/sensing/vision/` owns production inference for the unified flight stack.
+The root `vision/` package is kept for compatibility with existing replay, review, and sample-data tooling while the merge settles.
+
+Historically, `vision/src/` owned inference.
 `vision/tools/` owns replay, review, and sample data
 
 ## Layout
