@@ -1,0 +1,2416 @@
+{
+  "recording_format": {
+    "format_name": "drnk_inline_png_v1",
+    "chunk_magic_ascii": "DRNK",
+    "chunk_magic_hex": "0x4B4E5244",
+    "chunk_magic_u32": 1263424068,
+    "chunk_version": 1,
+    "manifest_schema_version": 1,
+    "frame_index_schema_version": 1,
+    "frame_metadata_schema_version": 1,
+    "rgb_frame": {
+      "storage": "inline_bytes",
+      "pixel_format": "rgba8",
+      "payload_encoding": "png"
+    },
+    "instance_map": {
+      "storage": "inline_bytes",
+      "pixel_format": "r16_uint",
+      "payload_encoding": "png"
+    }
+  },
+  "frame_header": {
+    "session_id": "universe_75m75g50d_nearest_front_facing_75gates_fullrun_retry720_20260605",
+    "episode_id": "universe_75m75g50d_nearest_front_facing_75gates_fullrun_retry720_20260605",
+    "drone_id": "BP_DronePawn_Minimal_C_0",
+    "frame_id": 1650,
+    "timestamp_utc_usec": 1780705209932000,
+    "time_boot_usec": 197200416,
+    "monotonic_usec": 17420810263891,
+    "status_flags": 27
+  },
+  "viewpoint": {
+    "viewpoint_name": "front",
+    "image_width": 640,
+    "image_height": 360,
+    "horizontal_fov_deg": 90,
+    "vertical_fov_deg": 58.7155,
+    "camera_world_origin": {
+      "x": 5071.738044730055,
+      "y": 2900.187453419158,
+      "z": 680.3086939305554
+    },
+    "camera_world_orientation": {
+      "x": 0.5245357833765066,
+      "y": -0.35936100392829556,
+      "z": 0.5486219850147733,
+      "w": -0.5428957526759578
+    },
+    "camera_forward": {
+      "x": 0.13974717284040727,
+      "y": -0.9726845024843432,
+      "z": 0.1853525999545167
+    },
+    "camera_right": {
+      "x": 0.2186936796858741,
+      "y": -0.1522477410245235,
+      "z": -0.9638431925465791
+    },
+    "camera_up": {
+      "x": 0.9657348508511876,
+      "y": 0.17522980334325378,
+      "z": 0.1914437616422091
+    },
+    "rig_offset_from_drone_body": {
+      "x": 4244.209475215348,
+      "y": 2567.5317173691496,
+      "z": -3158.1748985632
+    },
+    "rig_rotation_from_drone_body": {
+      "roll": 78.76581584898653,
+      "pitch": 10.68169043283631,
+      "yaw": 638.1758307491048
+    }
+  },
+  "drone_state": {
+    "drone_world_center": {
+      "x": 827.5285695147068,
+      "y": 332.6557360500083,
+      "z": 3838.483592493755
+    },
+    "drone_world_orientation": {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 0.9999999999509513
+    },
+    "drone_euler_attitude": {
+      "roll": 0,
+      "pitch": 0,
+      "yaw": 0
+    },
+    "linear_velocity_world_cms": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "angular_velocity_body_rad_ps": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "linear_acceleration_world_cms2": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    }
+  },
+  "mavlink_aligned_non_training_state": {
+    "snapshot_revision": 3879,
+    "time_boot_usec": 197200416,
+    "runtime_ready": true,
+    "failsafe": false,
+    "heartbeat": {
+      "vehicle_type": 2,
+      "autopilot_type": 8,
+      "base_mode": 0,
+      "custom_mode": 0,
+      "system_status": 4,
+      "mavlink_version": 3
+    },
+    "timesync": {
+      "tc1_usec": 0,
+      "ts1_usec": 17420810203543
+    },
+    "attitude": {
+      "time_boot_ms": 197200,
+      "roll_rad": 0,
+      "pitch_rad": 0,
+      "yaw_rad": 0,
+      "roll_speed_rad_ps": 0,
+      "pitch_speed_rad_ps": 0,
+      "yaw_speed_rad_ps": 0
+    },
+    "highres_imu": {
+      "time_usec": 197200416,
+      "xacc": 0,
+      "yacc": 0,
+      "zacc": 0,
+      "xgyro": 0,
+      "ygyro": 0,
+      "zgyro": 0,
+      "xmag": 0.22,
+      "ymag": 0,
+      "zmag": 0.42,
+      "absolute_pressure": 1008.64,
+      "differential_pressure": 0,
+      "pressure_altitude": 38.3848,
+      "temperature": 20,
+      "fields_updated": 8191
+    },
+    "odometry": {
+      "time_usec": 197200416,
+      "frame_id": 1,
+      "child_frame_id": 12,
+      "position_x": 8.27529,
+      "position_y": 3.32656,
+      "position_z": -38.3848,
+      "orientation": {
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "w": 0.9999999999509513
+      },
+      "velocity_x": 0,
+      "velocity_y": 0,
+      "velocity_z": 0,
+      "roll_speed": 0,
+      "pitch_speed": 0,
+      "yaw_speed": 0,
+      "pose_covariance": [
+        null,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "velocity_covariance": [
+        null,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "reset_counter": 0,
+      "estimator_type": 1,
+      "quality": 100
+    },
+    "applied_command": {
+      "has_active_command": false,
+      "command_revision": 0,
+      "command_age_seconds": 0,
+      "roll": 0,
+      "pitch": 0,
+      "yaw": 0,
+      "throttle": 0,
+      "position_target_local_ned": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      }
+    }
+  },
+  "applied_command_state": {
+    "has_active_command": false,
+    "last_step_timed_out": false,
+    "active_mode": "none",
+    "command_revision": 0,
+    "roll": 0,
+    "pitch": 0,
+    "yaw": 0,
+    "throttle": 0,
+    "position_target_local_ned": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "last_command_timestamp_seconds": 0,
+    "last_applied_timestamp_seconds": 0,
+    "last_applied_delta_seconds": 0,
+    "last_timeout_timestamp_seconds": 0,
+    "last_applied_world_location": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "last_applied_world_rotation": {
+      "roll": 0,
+      "pitch": 0,
+      "yaw": 0
+    }
+  },
+  "rgb_frame": {
+    "storage": "inline_bytes",
+    "pixel_format": "rgba8",
+    "width": 640,
+    "height": 360,
+    "bytes_per_row": 2560,
+    "inline_payload_byte_count": 145933,
+    "recorder_payload_reference": ""
+  },
+  "instance_map": {
+    "storage": "inline_bytes",
+    "pixel_format": "r16_uint",
+    "width": 640,
+    "height": 360,
+    "bytes_per_row": 1280,
+    "inline_payload_byte_count": 10490,
+    "recorder_payload_reference": ""
+  },
+  "performance": {
+    "total_build_duration_ms": 117.93704330921173,
+    "submit_duration_ms": 59.509292244911194,
+    "proxy_registry_sync_duration_ms": 0.6970837712287903,
+    "rgb_capture_duration_ms": 0.06141886115074158,
+    "annotation_low_byte_capture_duration_ms": 58.088041841983795,
+    "annotation_high_byte_capture_duration_ms": 0.5042478442192078,
+    "queue_wait_duration_ms": 41.46170988678932,
+    "completion_duration_ms": 16.966041177511215,
+    "persistence_duration_ms": 0,
+    "annotation_reconstruction_duration_ms": 0.46208128333091736,
+    "instance_map_encode_duration_ms": 2.3459158837795258
+  },
+  "visible_instances": [
+    {
+      "frame_instance_id": 1,
+      "semantic_class": "circle",
+      "actor_label": "CourseDistractorUniverse_circle_045",
+      "actor_name": "BP_CourseGrid_RotatingVisual_C_44",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.BP_CourseGrid_RotatingVisual_C_44",
+      "world_centroid": {
+        "x": 6037.976421809991,
+        "y": -3457.8978674801433,
+        "z": 2617.99578163843
+      },
+      "actor_world_orientation_quat": {
+        "x": 0.4146253810416538,
+        "y": 0.10356251470303723,
+        "z": 0.8074950656013515,
+        "w": 0.4065861752148225
+      },
+      "drone_to_target_vector": {
+        "x": 5210.447852295284,
+        "y": -3790.5536035301516,
+        "z": -1220.4878108553253
+      },
+      "camera_to_target_vector": {
+        "x": 966.2383770799361,
+        "y": -6358.085320899301,
+        "z": 1937.6870877078745
+      },
+      "distance_to_drone_cm": 6557.95,
+      "distance_to_camera_cm": 6716.66,
+      "relative_yaw_deg": -5.88427,
+      "relative_pitch_deg": 1.62067,
+      "projected_centroid_px": {
+        "x": 286.335,
+        "y": 170.305
+      },
+      "projected_bounds_min_px": {
+        "x": 275,
+        "y": 163
+      },
+      "projected_bounds_max_px": {
+        "x": 298,
+        "y": 178
+      }
+    },
+    {
+      "frame_instance_id": 2,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_017",
+      "actor_name": "StaticMeshActor_16",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_16",
+      "world_centroid": {
+        "x": 6226.328335248044,
+        "y": -2902.736396327584,
+        "z": 2002.3330294847965
+      },
+      "actor_world_orientation_quat": {
+        "x": 0.609553176363225,
+        "y": 0.14275598297636988,
+        "z": -0.48247918097475545,
+        "w": 0.6126005993612685
+      },
+      "drone_to_target_vector": {
+        "x": 5398.799765733337,
+        "y": -3235.392132377592,
+        "z": -1836.1505630089587
+      },
+      "camera_to_target_vector": {
+        "x": 1154.5902905179892,
+        "y": -5802.923849746741,
+        "z": 1322.0243355542411
+      },
+      "distance_to_drone_cm": 6556.39,
+      "distance_to_camera_cm": 6062.57,
+      "relative_yaw_deg": -1.30879,
+      "relative_pitch_deg": 3.32168,
+      "projected_centroid_px": {
+        "x": 312.013,
+        "y": 160.72
+      },
+      "projected_bounds_min_px": {
+        "x": 309,
+        "y": 152
+      },
+      "projected_bounds_max_px": {
+        "x": 315,
+        "y": 170
+      }
+    },
+    {
+      "frame_instance_id": 3,
+      "semantic_class": "pyramid",
+      "actor_label": "CourseDistractorUniverse_pyramid_022",
+      "actor_name": "BP_CourseGrid_RotatingVisual_C_21",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.BP_CourseGrid_RotatingVisual_C_21",
+      "world_centroid": {
+        "x": 4827.477978011895,
+        "y": -3177.741432796236,
+        "z": 745.6765238062717
+      },
+      "actor_world_orientation_quat": {
+        "x": 0.6197613556172201,
+        "y": 0.18443892061638595,
+        "z": -0.415944512192625,
+        "w": 0.6394281111462883
+      },
+      "drone_to_target_vector": {
+        "x": 3999.9494084971884,
+        "y": -3510.3971688462443,
+        "z": -3092.8070686874835
+      },
+      "camera_to_target_vector": {
+        "x": -244.26006671815958,
+        "y": -6077.9288862153935,
+        "z": 65.36782987571632
+      },
+      "distance_to_drone_cm": 6155.32,
+      "distance_to_camera_cm": 6083.19,
+      "relative_yaw_deg": 7.82019,
+      "relative_pitch_deg": -12.2278,
+      "projected_centroid_px": {
+        "x": 365.989,
+        "y": 247.11
+      },
+      "projected_bounds_min_px": {
+        "x": 352,
+        "y": 233
+      },
+      "projected_bounds_max_px": {
+        "x": 380,
+        "y": 262
+      }
+    },
+    {
+      "frame_instance_id": 4,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_060",
+      "actor_name": "StaticMeshActor_59",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_59",
+      "world_centroid": {
+        "x": 3447.9038120321634,
+        "y": -3411.9433181593904,
+        "z": 1069.1990987150407
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.7592161104001175,
+        "y": 0.40680611947957723,
+        "z": -0.46306549126182095,
+        "w": -0.2089737535321906
+      },
+      "drone_to_target_vector": {
+        "x": 2620.3752425174566,
+        "y": -3744.5990542093987,
+        "z": -2769.2844937787145
+      },
+      "camera_to_target_vector": {
+        "x": -1623.8342326978914,
+        "y": -6312.130771578548,
+        "z": 388.8904047844853
+      },
+      "distance_to_drone_cm": 5343.91,
+      "distance_to_camera_cm": 6529.25,
+      "relative_yaw_deg": 2.2109,
+      "relative_pitch_deg": -23.4644,
+      "projected_centroid_px": {
+        "x": 331.824,
+        "y": 318.431
+      },
+      "projected_bounds_min_px": {
+        "x": 327,
+        "y": 310
+      },
+      "projected_bounds_max_px": {
+        "x": 337,
+        "y": 328
+      }
+    },
+    {
+      "frame_instance_id": 5,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_006",
+      "actor_name": "StaticMeshActor_5",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_5",
+      "world_centroid": {
+        "x": 3870.7504399890367,
+        "y": -3360.912690754294,
+        "z": 2001.5157359801042
+      },
+      "actor_world_orientation_quat": {
+        "x": 0.7390628704657287,
+        "y": -0.4301518955965085,
+        "z": -0.41926900488073315,
+        "w": 0.30490805443921987
+      },
+      "drone_to_target_vector": {
+        "x": 3043.22187047433,
+        "y": -3693.5684268043024,
+        "z": -1836.967856513651
+      },
+      "camera_to_target_vector": {
+        "x": -1200.987604741018,
+        "y": -6261.100144173452,
+        "z": 1321.2070420495488
+      },
+      "distance_to_drone_cm": 5126.22,
+      "distance_to_camera_cm": 6510.71,
+      "relative_yaw_deg": -5.39891,
+      "relative_pitch_deg": -17.927,
+      "projected_centroid_px": {
+        "x": 289.652,
+        "y": 283.696
+      },
+      "projected_bounds_min_px": {
+        "x": 283,
+        "y": 276
+      },
+      "projected_bounds_max_px": {
+        "x": 296,
+        "y": 291
+      }
+    },
+    {
+      "frame_instance_id": 6,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_063",
+      "actor_name": "StaticMeshActor_62",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_62",
+      "world_centroid": {
+        "x": 4120.0704666069105,
+        "y": -2344.6295905176653,
+        "z": 1797.6271323958915
+      },
+      "actor_world_orientation_quat": {
+        "x": 0.26890709759947184,
+        "y": 0.6536675378314,
+        "z": -0.46859297745731543,
+        "w": 0.5299323959938202
+      },
+      "drone_to_target_vector": {
+        "x": 3292.5418970922037,
+        "y": -2677.2853265676736,
+        "z": -2040.8564600978636
+      },
+      "camera_to_target_vector": {
+        "x": -951.6675781231443,
+        "y": -5244.817043936823,
+        "z": 1117.3184384653362
+      },
+      "distance_to_drone_cm": 4708.9,
+      "distance_to_camera_cm": 5446.3,
+      "relative_yaw_deg": -5.37025,
+      "relative_pitch_deg": -17.3508,
+      "projected_centroid_px": {
+        "x": 289.1,
+        "y": 280.45
+      },
+      "projected_bounds_min_px": {
+        "x": 283,
+        "y": 270
+      },
+      "projected_bounds_max_px": {
+        "x": 295,
+        "y": 291
+      }
+    },
+    {
+      "frame_instance_id": 7,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_038",
+      "actor_name": "StaticMeshActor_37",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_37",
+      "world_centroid": {
+        "x": 4326.0942673553245,
+        "y": -1946.8059314693814,
+        "z": 2648.2021136500935
+      },
+      "actor_world_orientation_quat": {
+        "x": 0.11087803861790076,
+        "y": -0.7031496770763639,
+        "z": 0.17363936179302816,
+        "w": 0.6805409349316655
+      },
+      "drone_to_target_vector": {
+        "x": 3498.5656978406178,
+        "y": -2279.4616675193897,
+        "z": -1190.2814788436617
+      },
+      "camera_to_target_vector": {
+        "x": -745.6437773747302,
+        "y": -4846.993384888539,
+        "z": 1967.893419719538
+      },
+      "distance_to_drone_cm": 4341.97,
+      "distance_to_camera_cm": 5284.12,
+      "relative_yaw_deg": -14.8794,
+      "relative_pitch_deg": -13.0448,
+      "projected_centroid_px": {
+        "x": 234.297,
+        "y": 256.609
+      },
+      "projected_bounds_min_px": {
+        "x": 230,
+        "y": 245
+      },
+      "projected_bounds_max_px": {
+        "x": 239,
+        "y": 268
+      }
+    },
+    {
+      "frame_instance_id": 8,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_056",
+      "actor_name": "StaticMeshActor_55",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_55",
+      "world_centroid": {
+        "x": 8157.165142889865,
+        "y": -3590.042209447176,
+        "z": 1929.8320500419832
+      },
+      "actor_world_orientation_quat": {
+        "x": 0.18918038456550776,
+        "y": -0.624448598647339,
+        "z": -0.36694203495479033,
+        "w": 0.6630446988161215
+      },
+      "drone_to_target_vector": {
+        "x": 7329.636573375158,
+        "y": -3922.6979454971843,
+        "z": -1908.651542451772
+      },
+      "camera_to_target_vector": {
+        "x": 3085.42709815981,
+        "y": -6490.2296628663335,
+        "z": 1249.5233561114278
+      },
+      "distance_to_drone_cm": 8529.6,
+      "distance_to_camera_cm": 7294.12,
+      "relative_yaw_deg": 3.76086,
+      "relative_pitch_deg": 16.5819,
+      "projected_centroid_px": {
+        "x": 340.389,
+        "y": 83.9815
+      },
+      "projected_bounds_min_px": {
+        "x": 334,
+        "y": 76
+      },
+      "projected_bounds_max_px": {
+        "x": 347,
+        "y": 92
+      }
+    },
+    {
+      "frame_instance_id": 13,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_064",
+      "actor_name": "StaticMeshActor_63",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_63",
+      "world_centroid": {
+        "x": 8496.153553397597,
+        "y": -3041.068855416508,
+        "z": 411.27099640543116
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.09756880468774026,
+        "y": -0.5023844198347243,
+        "z": 0.2552326210489333,
+        "w": 0.8203331836587038
+      },
+      "drone_to_target_vector": {
+        "x": 7668.62498388289,
+        "y": -3373.7245914665164,
+        "z": -3427.212596088324
+      },
+      "camera_to_target_vector": {
+        "x": 3424.415508667542,
+        "y": -5941.256308835666,
+        "z": -269.0376975251242
+      },
+      "distance_to_drone_cm": 9051.83,
+      "distance_to_camera_cm": 6862.76,
+      "relative_yaw_deg": 17.1255,
+      "relative_pitch_deg": 18.8252,
+      "projected_centroid_px": {
+        "x": 418.284,
+        "y": 65.2593
+      },
+      "projected_bounds_min_px": {
+        "x": 410,
+        "y": 59
+      },
+      "projected_bounds_max_px": {
+        "x": 426,
+        "y": 71
+      }
+    },
+    {
+      "frame_instance_id": 14,
+      "semantic_class": "oval",
+      "actor_label": "CourseDistractorUniverse_oval_004",
+      "actor_name": "BP_CourseGrid_RotatingVisual_C_3",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.BP_CourseGrid_RotatingVisual_C_3",
+      "world_centroid": {
+        "x": 7791.978337683154,
+        "y": -2996.737760748903,
+        "z": 2938.547384324334
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.20462196233759064,
+        "y": 0.7310041640823218,
+        "z": -0.07339024437930201,
+        "w": 0.646820405178492
+      },
+      "drone_to_target_vector": {
+        "x": 6964.449768168447,
+        "y": -3329.393496798911,
+        "z": -899.9362081694212
+      },
+      "camera_to_target_vector": {
+        "x": 2720.240292953099,
+        "y": -5896.925214168061,
+        "z": 2258.2386903937786
+      },
+      "distance_to_drone_cm": 7771.63,
+      "distance_to_camera_cm": 6875.54,
+      "relative_yaw_deg": -5.97472,
+      "relative_pitch_deg": 17.138,
+      "projected_centroid_px": {
+        "x": 285.896,
+        "y": 80.1358
+      },
+      "projected_bounds_min_px": {
+        "x": 272,
+        "y": 71
+      },
+      "projected_bounds_max_px": {
+        "x": 299,
+        "y": 89
+      }
+    },
+    {
+      "frame_instance_id": 40,
+      "semantic_class": "oval_ring",
+      "actor_label": "CourseDistractorUniverse_oval_ring_016",
+      "actor_name": "BP_CourseGrid_RotatingVisual_C_15",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.BP_CourseGrid_RotatingVisual_C_15",
+      "world_centroid": {
+        "x": 8139.238629134377,
+        "y": -1694.1373804735244,
+        "z": 5272.369911760511
+      },
+      "actor_world_orientation_quat": {
+        "x": 0.19485307875423422,
+        "y": -0.5024651998069117,
+        "z": 0.6763565668851036,
+        "w": 0.5020983917682823
+      },
+      "drone_to_target_vector": {
+        "x": 7311.710059619671,
+        "y": -2026.7931165235327,
+        "z": 1433.886319266756
+      },
+      "camera_to_target_vector": {
+        "x": 3067.5005844043226,
+        "y": -4594.324833892682,
+        "z": 4592.061217829956
+      },
+      "distance_to_drone_cm": 7721.72,
+      "distance_to_camera_cm": 7183.62,
+      "relative_yaw_deg": -27.993,
+      "relative_pitch_deg": 25.0046,
+      "projected_centroid_px": {
+        "x": 148.624,
+        "y": 10.4592
+      },
+      "projected_bounds_min_px": {
+        "x": 126,
+        "y": 1
+      },
+      "projected_bounds_max_px": {
+        "x": 171,
+        "y": 20
+      }
+    },
+    {
+      "frame_instance_id": 42,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_045",
+      "actor_name": "StaticMeshActor_44",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_44",
+      "world_centroid": {
+        "x": 7138.845678054296,
+        "y": -1274.5643318577975,
+        "z": 4419.4286259786195
+      },
+      "actor_world_orientation_quat": {
+        "x": 0.18101185328240438,
+        "y": -0.8911058279967995,
+        "z": -0.19026372737840383,
+        "w": -0.3700875926417782
+      },
+      "drone_to_target_vector": {
+        "x": 6311.317108539589,
+        "y": -1607.2200679078057,
+        "z": 580.9450334848643
+      },
+      "camera_to_target_vector": {
+        "x": 2067.107633324241,
+        "y": -4174.751785276955,
+        "z": 3739.119932048064
+      },
+      "distance_to_drone_cm": 6538.61,
+      "distance_to_camera_cm": 5973.48,
+      "relative_yaw_deg": -26.5191,
+      "relative_pitch_deg": 19.3635,
+      "projected_centroid_px": {
+        "x": 159.656,
+        "y": 53.6771
+      },
+      "projected_bounds_min_px": {
+        "x": 149,
+        "y": 47
+      },
+      "projected_bounds_max_px": {
+        "x": 171,
+        "y": 61
+      }
+    },
+    {
+      "frame_instance_id": 43,
+      "semantic_class": "cylinder",
+      "actor_label": "CourseDistractorUniverse_cylinder_006",
+      "actor_name": "BP_CourseGrid_RotatingVisual_C_5",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.BP_CourseGrid_RotatingVisual_C_5",
+      "world_centroid": {
+        "x": 7461.676657211338,
+        "y": -2030.2639367250085,
+        "z": 3852.444199127822
+      },
+      "actor_world_orientation_quat": {
+        "x": 0.6728397513688892,
+        "y": -0.002243418585197617,
+        "z": -0.1145305708535571,
+        "w": 0.730865503559146
+      },
+      "drone_to_target_vector": {
+        "x": 6634.148087696632,
+        "y": -2362.919672775017,
+        "z": 13.960606634066608
+      },
+      "camera_to_target_vector": {
+        "x": 2389.9386124812836,
+        "y": -4930.451390144166,
+        "z": 3172.1355051972664
+      },
+      "distance_to_drone_cm": 7042.41,
+      "distance_to_camera_cm": 6331.16,
+      "relative_yaw_deg": -17.3297,
+      "relative_pitch_deg": 18.9057,
+      "projected_centroid_px": {
+        "x": 221.017,
+        "y": 64.144
+      },
+      "projected_bounds_min_px": {
+        "x": 204,
+        "y": 47
+      },
+      "projected_bounds_max_px": {
+        "x": 234,
+        "y": 82
+      }
+    },
+    {
+      "frame_instance_id": 44,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_004",
+      "actor_name": "StaticMeshActor_3",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_3",
+      "world_centroid": {
+        "x": 6810.714334023513,
+        "y": -744.736990063675,
+        "z": 3150.0035911080395
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.6935325709738538,
+        "y": 0.34857334299982107,
+        "z": 0.4869646552380765,
+        "w": 0.400468003714516
+      },
+      "drone_to_target_vector": {
+        "x": 5983.185764508807,
+        "y": -1077.3927261136832,
+        "z": -688.4800013857157
+      },
+      "camera_to_target_vector": {
+        "x": 1738.9762892934586,
+        "y": -3644.924443482833,
+        "z": 2469.694897177484
+      },
+      "distance_to_drone_cm": 6118.28,
+      "distance_to_camera_cm": 4733.8,
+      "relative_yaw_deg": -18.7959,
+      "relative_pitch_deg": 18.6461,
+      "projected_centroid_px": {
+        "x": 210.341,
+        "y": 65.1272
+      },
+      "projected_bounds_min_px": {
+        "x": 205,
+        "y": 54
+      },
+      "projected_bounds_max_px": {
+        "x": 216,
+        "y": 76
+      }
+    },
+    {
+      "frame_instance_id": 45,
+      "semantic_class": "pipe_elbow",
+      "actor_label": "CourseDistractorUniverse_pipe_elbow_020",
+      "actor_name": "BP_CourseGrid_RotatingVisual_C_19",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.BP_CourseGrid_RotatingVisual_C_19",
+      "world_centroid": {
+        "x": 7297.0433539369815,
+        "y": -1264.6430540755568,
+        "z": 1842.9471102272837
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.07588950834437672,
+        "y": 0.9597917825719221,
+        "z": -0.0824340108605899,
+        "w": -0.25738133262923285
+      },
+      "drone_to_target_vector": {
+        "x": 6469.514784422275,
+        "y": -1597.2987901255651,
+        "z": -1995.5364822664715
+      },
+      "camera_to_target_vector": {
+        "x": 2225.3053092069267,
+        "y": -4164.830507494715,
+        "z": 1162.6384162967283
+      },
+      "distance_to_drone_cm": 6956.16,
+      "distance_to_camera_cm": 4863.08,
+      "relative_yaw_deg": 0.00181643,
+      "relative_pitch_deg": 19.7314,
+      "projected_centroid_px": {
+        "x": 319.107,
+        "y": 63.7918
+      },
+      "projected_bounds_min_px": {
+        "x": 309,
+        "y": 48
+      },
+      "projected_bounds_max_px": {
+        "x": 330,
+        "y": 80
+      }
+    },
+    {
+      "frame_instance_id": 46,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_028",
+      "actor_name": "StaticMeshActor_27",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_27",
+      "world_centroid": {
+        "x": 6752.863280156886,
+        "y": -3078.755525841631,
+        "z": 4168.377029047377
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.5804555927634176,
+        "y": 0.559664062660344,
+        "z": 0.0414502451829243,
+        "w": 0.5900248459788505
+      },
+      "drone_to_target_vector": {
+        "x": 5925.334710642179,
+        "y": -3411.4112618916392,
+        "z": 329.89343655362154
+      },
+      "camera_to_target_vector": {
+        "x": 1681.1252354268308,
+        "y": -5978.942979260789,
+        "z": 3488.0683351168213
+      },
+      "distance_to_drone_cm": 6845.16,
+      "distance_to_camera_cm": 7123.24,
+      "relative_yaw_deg": -17.2853,
+      "relative_pitch_deg": 10.0544,
+      "projected_centroid_px": {
+        "x": 219.952,
+        "y": 119.968
+      },
+      "projected_bounds_min_px": {
+        "x": 218,
+        "y": 111
+      },
+      "projected_bounds_max_px": {
+        "x": 222,
+        "y": 129
+      }
+    },
+    {
+      "frame_instance_id": 47,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_067",
+      "actor_name": "StaticMeshActor_66",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_66",
+      "world_centroid": {
+        "x": 6188.741456851366,
+        "y": -1969.6622136275553,
+        "z": 2521.2953549284166
+      },
+      "actor_world_orientation_quat": {
+        "x": 0.8461689918118824,
+        "y": 0.23564363103985786,
+        "z": 0.01310969384816997,
+        "w": 0.47780566371227084
+      },
+      "drone_to_target_vector": {
+        "x": 5361.212887336659,
+        "y": -2302.317949677564,
+        "z": -1317.1882375653386
+      },
+      "camera_to_target_vector": {
+        "x": 1117.0034121213112,
+        "y": -4869.849667046713,
+        "z": 1840.9866609978612
+      },
+      "distance_to_drone_cm": 5981.49,
+      "distance_to_camera_cm": 5324.69,
+      "relative_yaw_deg": -8.56925,
+      "relative_pitch_deg": 6.22997,
+      "projected_centroid_px": {
+        "x": 271.087,
+        "y": 144.146
+      },
+      "projected_bounds_min_px": {
+        "x": 260,
+        "y": 140
+      },
+      "projected_bounds_max_px": {
+        "x": 282,
+        "y": 148
+      }
+    },
+    {
+      "frame_instance_id": 48,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_074",
+      "actor_name": "StaticMeshActor_73",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_73",
+      "world_centroid": {
+        "x": 6320.016081473699,
+        "y": -2903.249280208591,
+        "z": 3221.055086163477
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.6578508297988539,
+        "y": -0.6431062911077957,
+        "z": 0.38330118916438505,
+        "w": -0.08201696384044764
+      },
+      "drone_to_target_vector": {
+        "x": 5492.487511958992,
+        "y": -3235.905016258599,
+        "z": -617.4285063302782
+      },
+      "camera_to_target_vector": {
+        "x": 1248.2780367436444,
+        "y": -5803.436733627748,
+        "z": 2540.7463922329216
+      },
+      "distance_to_drone_cm": 6404.66,
+      "distance_to_camera_cm": 6457.05,
+      "relative_yaw_deg": -11.6098,
+      "relative_pitch_deg": 6.00032,
+      "projected_centroid_px": {
+        "x": 253.743,
+        "y": 145.064
+      },
+      "projected_bounds_min_px": {
+        "x": 245,
+        "y": 136
+      },
+      "projected_bounds_max_px": {
+        "x": 263,
+        "y": 154
+      }
+    },
+    {
+      "frame_instance_id": 64,
+      "semantic_class": "sphere",
+      "actor_label": "CourseDistractorUniverse_sphere_023",
+      "actor_name": "BP_CourseGrid_RotatingVisual_C_22",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.BP_CourseGrid_RotatingVisual_C_22",
+      "world_centroid": {
+        "x": 6830.761688482955,
+        "y": 41.464689835767786,
+        "z": 4141.036622980142
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.5310858648933563,
+        "y": 0.2928068228937824,
+        "z": 0.5320900716650648,
+        "w": 0.5908401849186408
+      },
+      "drone_to_target_vector": {
+        "x": 6003.233118968248,
+        "y": -291.1910462142405,
+        "z": 302.5530304863869
+      },
+      "camera_to_target_vector": {
+        "x": 1759.0236437529002,
+        "y": -2858.72276358339,
+        "z": 3460.7279290495867
+      },
+      "distance_to_drone_cm": 6017.9,
+      "distance_to_camera_cm": 4821.11,
+      "relative_yaw_deg": -34.4447,
+      "relative_pitch_deg": 22.6981,
+      "projected_centroid_px": {
+        "x": 99.5256,
+        "y": 17.4285
+      },
+      "projected_bounds_min_px": {
+        "x": 78,
+        "y": 0
+      },
+      "projected_bounds_max_px": {
+        "x": 121,
+        "y": 37
+      }
+    },
+    {
+      "frame_instance_id": 65,
+      "semantic_class": "sphere",
+      "actor_label": "CourseDistractorUniverse_sphere_003",
+      "actor_name": "BP_CourseGrid_RotatingVisual_C_2",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.BP_CourseGrid_RotatingVisual_C_2",
+      "world_centroid": {
+        "x": 7242.710474689537,
+        "y": -50.23639558039531,
+        "z": 1609.0540826041229
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.1135006940547686,
+        "y": 0.6818894861095353,
+        "z": 0.6453905719679333,
+        "w": 0.3249851239630263
+      },
+      "drone_to_target_vector": {
+        "x": 6415.18190517483,
+        "y": -382.8921316304036,
+        "z": -2229.4295098896323
+      },
+      "camera_to_target_vector": {
+        "x": 2170.972429959482,
+        "y": -2950.4238489995532,
+        "z": 928.7453886735675
+      },
+      "distance_to_drone_cm": 6802.32,
+      "distance_to_camera_cm": 3778.98,
+      "relative_yaw_deg": 0.493387,
+      "relative_pitch_deg": 27.7129,
+      "projected_centroid_px": {
+        "x": 322.303,
+        "y": 14.6931
+      },
+      "projected_bounds_min_px": {
+        "x": 303,
+        "y": 0
+      },
+      "projected_bounds_max_px": {
+        "x": 342,
+        "y": 33
+      }
+    },
+    {
+      "frame_instance_id": 66,
+      "semantic_class": "cube",
+      "actor_label": "CourseDistractorUniverse_cube_041",
+      "actor_name": "BP_CourseGrid_RotatingVisual_C_40",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.BP_CourseGrid_RotatingVisual_C_40",
+      "world_centroid": {
+        "x": 6406.752431667841,
+        "y": -540.4772546609397,
+        "z": 4170.545130061806
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.07681326337100534,
+        "y": -0.7118990230061054,
+        "z": -0.48796913834508077,
+        "w": 0.49918495924648126
+      },
+      "drone_to_target_vector": {
+        "x": 5579.223862153134,
+        "y": -873.132990710948,
+        "z": 332.0615375680509
+      },
+      "camera_to_target_vector": {
+        "x": 1335.0143869377862,
+        "y": -3440.6647080800976,
+        "z": 3490.2364361312507
+      },
+      "distance_to_drone_cm": 5656.89,
+      "distance_to_camera_cm": 5079.59,
+      "relative_yaw_deg": -31.3667,
+      "relative_pitch_deg": 15.4659,
+      "projected_centroid_px": {
+        "x": 123.113,
+        "y": 75.1077
+      },
+      "projected_bounds_min_px": {
+        "x": 92,
+        "y": 50
+      },
+      "projected_bounds_max_px": {
+        "x": 155,
+        "y": 101
+      }
+    },
+    {
+      "frame_instance_id": 67,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_075",
+      "actor_name": "StaticMeshActor_74",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_74",
+      "world_centroid": {
+        "x": 5813.251543756842,
+        "y": -223.41411204411966,
+        "z": 3944.0470393920386
+      },
+      "actor_world_orientation_quat": {
+        "x": 0.7232205035873907,
+        "y": -0.6397946318951181,
+        "z": -0.25995545067701903,
+        "w": 0.006172183754493745
+      },
+      "drone_to_target_vector": {
+        "x": 4985.722974242135,
+        "y": -556.0698480941279,
+        "z": 105.56344689828347
+      },
+      "camera_to_target_vector": {
+        "x": 741.513499026787,
+        "y": -3123.6015654632774,
+        "z": 3263.7383454614833
+      },
+      "distance_to_drone_cm": 5017.75,
+      "distance_to_camera_cm": 4578.07,
+      "relative_yaw_deg": -33.797,
+      "relative_pitch_deg": 9.9823,
+      "projected_centroid_px": {
+        "x": 105.389,
+        "y": 111.822
+      },
+      "projected_bounds_min_px": {
+        "x": 96,
+        "y": 98
+      },
+      "projected_bounds_max_px": {
+        "x": 115,
+        "y": 126
+      }
+    },
+    {
+      "frame_instance_id": 68,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_018",
+      "actor_name": "StaticMeshActor_17",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_17",
+      "world_centroid": {
+        "x": 5342.072531256341,
+        "y": -1714.92658222539,
+        "z": 1785.4431460430592
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.1738589693337922,
+        "y": 0.514900322060297,
+        "z": 0.47468984578535056,
+        "w": 0.6923295944379215
+      },
+      "drone_to_target_vector": {
+        "x": 4514.543961741634,
+        "y": -2047.5823182753982,
+        "z": -2053.040446450696
+      },
+      "camera_to_target_vector": {
+        "x": 270.3344865262861,
+        "y": -4615.114035644548,
+        "z": 1105.1344521125038
+      },
+      "distance_to_drone_cm": 5365.51,
+      "distance_to_camera_cm": 4753.28,
+      "relative_yaw_deg": -3.66903,
+      "relative_pitch_deg": -4.05427,
+      "projected_centroid_px": {
+        "x": 298.757,
+        "y": 202.267
+      },
+      "projected_bounds_min_px": {
+        "x": 290,
+        "y": 190
+      },
+      "projected_bounds_max_px": {
+        "x": 307,
+        "y": 215
+      }
+    },
+    {
+      "frame_instance_id": 75,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_025",
+      "actor_name": "StaticMeshActor_24",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_24",
+      "world_centroid": {
+        "x": 5521.430605480789,
+        "y": 327.6440379151658,
+        "z": 2034.7045274638704
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.5016929402676661,
+        "y": 0.26653398200359674,
+        "z": -0.6139809464467819,
+        "w": 0.5479883460668732
+      },
+      "drone_to_target_vector": {
+        "x": 4693.902035966083,
+        "y": -5.011698134842447,
+        "z": -1803.7790650298848
+      },
+      "camera_to_target_vector": {
+        "x": 449.69256075073463,
+        "y": -2572.543415503992,
+        "z": 1354.395833533315
+      },
+      "distance_to_drone_cm": 5028.55,
+      "distance_to_camera_cm": 2941.87,
+      "relative_yaw_deg": -16.1484,
+      "relative_pitch_deg": 4.73392,
+      "projected_centroid_px": {
+        "x": 226.528,
+        "y": 151.837
+      },
+      "projected_bounds_min_px": {
+        "x": 209,
+        "y": 135
+      },
+      "projected_bounds_max_px": {
+        "x": 245,
+        "y": 169
+      }
+    },
+    {
+      "frame_instance_id": 76,
+      "semantic_class": "cylinder",
+      "actor_label": "CourseDistractorUniverse_cylinder_026",
+      "actor_name": "BP_CourseGrid_RotatingVisual_C_25",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.BP_CourseGrid_RotatingVisual_C_25",
+      "world_centroid": {
+        "x": 4953.517225082642,
+        "y": -137.28386538946506,
+        "z": 3611.933017643966
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.03784595403145905,
+        "y": -0.050563409306670505,
+        "z": -0.5300015119343251,
+        "w": 0.8456414267595734
+      },
+      "drone_to_target_vector": {
+        "x": 4125.988655567935,
+        "y": -469.93960143947334,
+        "z": -226.55057484978897
+      },
+      "camera_to_target_vector": {
+        "x": -118.22081964741301,
+        "y": -3037.471318808623,
+        "z": 2931.624323713411
+      },
+      "distance_to_drone_cm": 4158.84,
+      "distance_to_camera_cm": 4223.11,
+      "relative_yaw_deg": -34.4593,
+      "relative_pitch_deg": -1.15579,
+      "projected_centroid_px": {
+        "x": 98.3906,
+        "y": 187.248
+      },
+      "projected_bounds_min_px": {
+        "x": 64,
+        "y": 167
+      },
+      "projected_bounds_max_px": {
+        "x": 132,
+        "y": 208
+      }
+    },
+    {
+      "frame_instance_id": 77,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_005",
+      "actor_name": "StaticMeshActor_4",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_4",
+      "world_centroid": {
+        "x": 4790.099878703998,
+        "y": -1000.5837241858927,
+        "z": 2685.0761198678706
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.3249662587682249,
+        "y": -0.47230699327855924,
+        "z": 0.19911439343136036,
+        "w": 0.7947807829790012
+      },
+      "drone_to_target_vector": {
+        "x": 3962.5713091892912,
+        "y": -1333.2394602359009,
+        "z": -1153.4074726258846
+      },
+      "camera_to_target_vector": {
+        "x": -281.63816602605675,
+        "y": -3900.7711776050505,
+        "z": 2004.7674259373152
+      },
+      "distance_to_drone_cm": 4337.03,
+      "distance_to_camera_cm": 4394.82,
+      "relative_yaw_deg": -18.7407,
+      "relative_pitch_deg": -7.47476,
+      "projected_centroid_px": {
+        "x": 211.413,
+        "y": 223.452
+      },
+      "projected_bounds_min_px": {
+        "x": 203,
+        "y": 215
+      },
+      "projected_bounds_max_px": {
+        "x": 219,
+        "y": 232
+      }
+    },
+    {
+      "frame_instance_id": 82,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_027",
+      "actor_name": "StaticMeshActor_26",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_26",
+      "world_centroid": {
+        "x": 7269.185896390166,
+        "y": -2018.8155898311263,
+        "z": -19.77006833916795
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.5672661870409234,
+        "y": -0.08326390132285977,
+        "z": -0.5272757746260042,
+        "w": 0.6271016290610312
+      },
+      "drone_to_target_vector": {
+        "x": 6441.657326875459,
+        "y": -2351.4713258811344,
+        "z": -3858.2536608329233
+      },
+      "camera_to_target_vector": {
+        "x": 2197.447851660111,
+        "y": -4919.0030432502845,
+        "z": -700.0787622697233
+      },
+      "distance_to_drone_cm": 7868.32,
+      "distance_to_camera_cm": 5432.81,
+      "relative_yaw_deg": 20.9952,
+      "relative_pitch_deg": 11.9636,
+      "projected_centroid_px": {
+        "x": 442.224,
+        "y": 106.688
+      },
+      "projected_bounds_min_px": {
+        "x": 435,
+        "y": 95
+      },
+      "projected_bounds_max_px": {
+        "x": 449,
+        "y": 118
+      }
+    },
+    {
+      "frame_instance_id": 83,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_037",
+      "actor_name": "StaticMeshActor_36",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_36",
+      "world_centroid": {
+        "x": 6794.801567104645,
+        "y": -2339.6126938765738,
+        "z": 380.0643361658088
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.18431916275297663,
+        "y": 0.2970761984602119,
+        "z": 0.37965413385099683,
+        "w": 0.8565249074616701
+      },
+      "drone_to_target_vector": {
+        "x": 5967.272997589938,
+        "y": -2672.268429926582,
+        "z": -3458.419256327946
+      },
+      "camera_to_target_vector": {
+        "x": 1723.0635223745903,
+        "y": -5239.800147295731,
+        "z": -300.24435776474655
+      },
+      "distance_to_drone_cm": 7396.62,
+      "distance_to_camera_cm": 5524,
+      "relative_yaw_deg": 15.4918,
+      "relative_pitch_deg": 7.15853,
+      "projected_centroid_px": {
+        "x": 408.314,
+        "y": 137.933
+      },
+      "projected_bounds_min_px": {
+        "x": 403,
+        "y": 129
+      },
+      "projected_bounds_max_px": {
+        "x": 414,
+        "y": 147
+      }
+    },
+    {
+      "frame_instance_id": 84,
+      "semantic_class": "thin_ring",
+      "actor_label": "CourseDistractorUniverse_thin_ring_010",
+      "actor_name": "BP_CourseGrid_RotatingVisual_C_9",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.BP_CourseGrid_RotatingVisual_C_9",
+      "world_centroid": {
+        "x": 8033.611124477777,
+        "y": -3690.6197779133417,
+        "z": 5871.630843179053
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.7758151363330598,
+        "y": -0.34927495683021054,
+        "z": 0.011881767730115376,
+        "w": 0.5253348478479019
+      },
+      "drone_to_target_vector": {
+        "x": 7206.08255496307,
+        "y": -4023.27551396335,
+        "z": 2033.1472506852979
+      },
+      "camera_to_target_vector": {
+        "x": 2961.873079747722,
+        "y": -6590.807231332499,
+        "z": 5191.322149248497
+      },
+      "distance_to_drone_cm": 8499.89,
+      "distance_to_camera_cm": 8897.26,
+      "relative_yaw_deg": -23.2929,
+      "relative_pitch_deg": 17.6612,
+      "projected_centroid_px": {
+        "x": 181.378,
+        "y": 67.9797
+      },
+      "projected_bounds_min_px": {
+        "x": 170,
+        "y": 57
+      },
+      "projected_bounds_max_px": {
+        "x": 193,
+        "y": 80
+      }
+    },
+    {
+      "frame_instance_id": 85,
+      "semantic_class": "c_shape_ring",
+      "actor_label": "CourseDistractorUniverse_c_shape_ring_037",
+      "actor_name": "BP_CourseGrid_RotatingVisual_C_36",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.BP_CourseGrid_RotatingVisual_C_36",
+      "world_centroid": {
+        "x": 7401.494894759901,
+        "y": -1754.3963413789447,
+        "z": 6786.646952363268
+      },
+      "actor_world_orientation_quat": {
+        "x": 0.7709924842673113,
+        "y": -0.29367353478689145,
+        "z": 0.4919848155532791,
+        "w": 0.2779881028677321
+      },
+      "drone_to_target_vector": {
+        "x": 6573.966325245195,
+        "y": -2087.052077428953,
+        "z": 2948.1633598695125
+      },
+      "camera_to_target_vector": {
+        "x": 2329.7568500298466,
+        "y": -4654.583794798103,
+        "z": 6106.338258432712
+      },
+      "distance_to_drone_cm": 7500.97,
+      "distance_to_camera_cm": 8023.73,
+      "relative_yaw_deg": -37.9496,
+      "relative_pitch_deg": 18.9325,
+      "projected_centroid_px": {
+        "x": 70.6433,
+        "y": 39.9912
+      },
+      "projected_bounds_min_px": {
+        "x": 59,
+        "y": 24
+      },
+      "projected_bounds_max_px": {
+        "x": 80,
+        "y": 56
+      }
+    },
+    {
+      "frame_instance_id": 86,
+      "semantic_class": "cone",
+      "actor_label": "CourseDistractorUniverse_cone_031",
+      "actor_name": "BP_CourseGrid_RotatingVisual_C_30",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.BP_CourseGrid_RotatingVisual_C_30",
+      "world_centroid": {
+        "x": 6711.87684048334,
+        "y": -2216.3057951013325,
+        "z": 6747.612448703141
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.5893541466499217,
+        "y": 0.16293368437339087,
+        "z": 0.7376861598396671,
+        "w": 0.2862401680511711
+      },
+      "drone_to_target_vector": {
+        "x": 5884.348270968633,
+        "y": -2548.9615311513408,
+        "z": 2909.128856209386
+      },
+      "camera_to_target_vector": {
+        "x": 1640.1387957532852,
+        "y": -5116.49324852049,
+        "z": 6067.303754772585
+      },
+      "distance_to_drone_cm": 7041.72,
+      "distance_to_camera_cm": 8104.37,
+      "relative_yaw_deg": -36.6513,
+      "relative_pitch_deg": 13.1876,
+      "projected_centroid_px": {
+        "x": 83.4874,
+        "y": 76.9748
+      },
+      "projected_bounds_min_px": {
+        "x": 70,
+        "y": 70
+      },
+      "projected_bounds_max_px": {
+        "x": 94,
+        "y": 91
+      }
+    },
+    {
+      "frame_instance_id": 87,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_043",
+      "actor_name": "StaticMeshActor_42",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_42",
+      "world_centroid": {
+        "x": 7660.210455047427,
+        "y": -2627.237055334014,
+        "z": 5937.094618508486
+      },
+      "actor_world_orientation_quat": {
+        "x": 0.6633325296967755,
+        "y": -0.4281803768674598,
+        "z": -0.5960675373879872,
+        "w": -0.14613353717008226
+      },
+      "drone_to_target_vector": {
+        "x": 6832.68188553272,
+        "y": -2959.892791384022,
+        "z": 2098.6110260147307
+      },
+      "camera_to_target_vector": {
+        "x": 2588.472410317372,
+        "y": -5527.424508753172,
+        "z": 5256.785924577931
+      },
+      "distance_to_drone_cm": 7736.32,
+      "distance_to_camera_cm": 8055.21,
+      "relative_yaw_deg": -28.5954,
+      "relative_pitch_deg": 18.3623,
+      "projected_centroid_px": {
+        "x": 145.514,
+        "y": 57.4143
+      },
+      "projected_bounds_min_px": {
+        "x": 142,
+        "y": 51
+      },
+      "projected_bounds_max_px": {
+        "x": 149,
+        "y": 64
+      }
+    },
+    {
+      "frame_instance_id": 90,
+      "semantic_class": "oval",
+      "actor_label": "CourseDistractorUniverse_oval_024",
+      "actor_name": "BP_CourseGrid_RotatingVisual_C_23",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.BP_CourseGrid_RotatingVisual_C_23",
+      "world_centroid": {
+        "x": 6191.5768082794975,
+        "y": -811.3057283645685,
+        "z": 6119.927558706338
+      },
+      "actor_world_orientation_quat": {
+        "x": 0.7468622498391806,
+        "y": 0.5532820375572566,
+        "z": 0.3437197450746289,
+        "w": 0.13391229752857955
+      },
+      "drone_to_target_vector": {
+        "x": 5364.048238764791,
+        "y": -1143.9614644145768,
+        "z": 2281.4439662125824
+      },
+      "camera_to_target_vector": {
+        "x": 1119.8387635494428,
+        "y": -3711.4931817837264,
+        "z": 5439.618864775783
+      },
+      "distance_to_drone_cm": 5940.26,
+      "distance_to_camera_cm": 6679.72,
+      "relative_yaw_deg": -42.8736,
+      "relative_pitch_deg": 12.735,
+      "projected_centroid_px": {
+        "x": 22.5576,
+        "y": 81.7781
+      },
+      "projected_bounds_min_px": {
+        "x": 0,
+        "y": 65
+      },
+      "projected_bounds_max_px": {
+        "x": 46,
+        "y": 95
+      }
+    },
+    {
+      "frame_instance_id": 91,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_068",
+      "actor_name": "StaticMeshActor_67",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_67",
+      "world_centroid": {
+        "x": 6210.498965792869,
+        "y": -522.9125499310129,
+        "z": 5739.108843309336
+      },
+      "actor_world_orientation_quat": {
+        "x": 0.43636809319954195,
+        "y": -0.4470574527523678,
+        "z": 0.3844030771484842,
+        "w": 0.6796740361060142
+      },
+      "drone_to_target_vector": {
+        "x": 5382.970396278162,
+        "y": -855.5682859810212,
+        "z": 1900.6252508155812
+      },
+      "camera_to_target_vector": {
+        "x": 1138.7609210628143,
+        "y": -3423.100003350171,
+        "z": 5058.8001493787815
+      },
+      "distance_to_drone_cm": 5772.41,
+      "distance_to_camera_cm": 6213.36,
+      "relative_yaw_deg": -42.8474,
+      "relative_pitch_deg": 13.6699,
+      "projected_centroid_px": {
+        "x": 22.2803,
+        "y": 73.0838
+      },
+      "projected_bounds_min_px": {
+        "x": 7,
+        "y": 60
+      },
+      "projected_bounds_max_px": {
+        "x": 38,
+        "y": 86
+      }
+    },
+    {
+      "frame_instance_id": 92,
+      "semantic_class": "disk_small_hole",
+      "actor_label": "CourseDistractorUniverse_disk_small_hole_048",
+      "actor_name": "BP_CourseGrid_RotatingVisual_C_47",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.BP_CourseGrid_RotatingVisual_C_47",
+      "world_centroid": {
+        "x": 6454.518008828154,
+        "y": -1943.6850687248,
+        "z": 6077.275074054822
+      },
+      "actor_world_orientation_quat": {
+        "x": 0.028735547781175524,
+        "y": -0.1551654374024562,
+        "z": 0.8891620571179728,
+        "w": 0.42952158433896853
+      },
+      "drone_to_target_vector": {
+        "x": 5626.989439313447,
+        "y": -2276.340804774808,
+        "z": 2238.7914815610666
+      },
+      "camera_to_target_vector": {
+        "x": 1382.7799640980993,
+        "y": -4843.872522143958,
+        "z": 5396.966380124266
+      },
+      "distance_to_drone_cm": 6469.69,
+      "distance_to_camera_cm": 7382.58,
+      "relative_yaw_deg": -35.1763,
+      "relative_pitch_deg": 11.8802,
+      "projected_centroid_px": {
+        "x": 90.2229,
+        "y": 96.15
+      },
+      "projected_bounds_min_px": {
+        "x": 73,
+        "y": 78
+      },
+      "projected_bounds_max_px": {
+        "x": 113,
+        "y": 115
+      }
+    },
+    {
+      "frame_instance_id": 101,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_013",
+      "actor_name": "StaticMeshActor_12",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_12",
+      "world_centroid": {
+        "x": 5466.991876868026,
+        "y": 1781.9889009048684,
+        "z": 132.15010330577394
+      },
+      "actor_world_orientation_quat": {
+        "x": 0.7039818888766393,
+        "y": 0.4992863119520764,
+        "z": 0.49310005327868034,
+        "w": -0.10943041711260319
+      },
+      "drone_to_target_vector": {
+        "x": 4639.46330735332,
+        "y": 1449.3331648548601,
+        "z": -3706.3334891879813
+      },
+      "camera_to_target_vector": {
+        "x": 395.2538321379716,
+        "y": -1118.1985525142895,
+        "z": -548.1585906247815
+      },
+      "distance_to_drone_cm": 6112.45,
+      "distance_to_camera_cm": 1306.55,
+      "relative_yaw_deg": 37.0125,
+      "relative_pitch_deg": 3.54676,
+      "projected_centroid_px": {
+        "x": 569.169,
+        "y": 155.483
+      },
+      "projected_bounds_min_px": {
+        "x": 504,
+        "y": 98
+      },
+      "projected_bounds_max_px": {
+        "x": 639,
+        "y": 211
+      }
+    },
+    {
+      "frame_instance_id": 104,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_047",
+      "actor_name": "StaticMeshActor_46",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_46",
+      "world_centroid": {
+        "x": 5782.09918503222,
+        "y": 335.1988318239546,
+        "z": 199.3735564794452
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.018716389673384102,
+        "y": -0.6966733882763038,
+        "z": -0.017042007569524547,
+        "w": 0.7169417387104141
+      },
+      "drone_to_target_vector": {
+        "x": 4954.570615517513,
+        "y": 2.543095773946334,
+        "z": -3639.11003601431
+      },
+      "camera_to_target_vector": {
+        "x": 710.361140302165,
+        "y": -2564.9886215952033,
+        "z": -480.93513745111017
+      },
+      "distance_to_drone_cm": 6147.43,
+      "distance_to_camera_cm": 2704.64,
+      "relative_yaw_deg": 21.947,
+      "relative_pitch_deg": 3.06229,
+      "projected_centroid_px": {
+        "x": 448.893,
+        "y": 160.61
+      },
+      "projected_bounds_min_px": {
+        "x": 440,
+        "y": 139
+      },
+      "projected_bounds_max_px": {
+        "x": 457,
+        "y": 181
+      }
+    },
+    {
+      "frame_instance_id": 107,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_002",
+      "actor_name": "StaticMeshActor_1",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_1",
+      "world_centroid": {
+        "x": 3682.0332205672476,
+        "y": -2084.1950494320936,
+        "z": 1292.146893925598
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.6194926770315784,
+        "y": 0.6010372250423867,
+        "z": -0.45430322018154495,
+        "w": 0.22043516337503263
+      },
+      "drone_to_target_vector": {
+        "x": 2854.504651052541,
+        "y": -2416.850785482102,
+        "z": -2546.336698568157
+      },
+      "camera_to_target_vector": {
+        "x": -1389.7048241628072,
+        "y": -4984.382502851251,
+        "z": 611.8381999950427
+      },
+      "distance_to_drone_cm": 4524.73,
+      "distance_to_camera_cm": 5210.54,
+      "relative_yaw_deg": -1.61931,
+      "relative_pitch_deg": -23.7481,
+      "projected_centroid_px": {
+        "x": 310.403,
+        "y": 320.447
+      },
+      "projected_bounds_min_px": {
+        "x": 298,
+        "y": 307
+      },
+      "projected_bounds_max_px": {
+        "x": 323,
+        "y": 333
+      }
+    },
+    {
+      "frame_instance_id": 114,
+      "semantic_class": "cube_hole",
+      "actor_label": "CourseDistractorUniverse_cube_hole_012",
+      "actor_name": "BP_CourseGrid_RotatingVisual_C_11",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.BP_CourseGrid_RotatingVisual_C_11",
+      "world_centroid": {
+        "x": 6726.528996019568,
+        "y": -3064.6971675476216,
+        "z": 6987.928091786304
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.8608817314289028,
+        "y": 0.12012947835382638,
+        "z": 0.4756053325577147,
+        "w": 0.13509670783176095
+      },
+      "drone_to_target_vector": {
+        "x": 5899.000426504861,
+        "y": -3397.35290359763,
+        "z": 3149.444499292549
+      },
+      "camera_to_target_vector": {
+        "x": 1654.790951289513,
+        "y": -5964.884620966779,
+        "z": 6307.619397855749
+      },
+      "distance_to_drone_cm": 7500.61,
+      "distance_to_camera_cm": 8837.66,
+      "relative_yaw_deg": -33.7339,
+      "relative_pitch_deg": 11.4899,
+      "projected_centroid_px": {
+        "x": 113.742,
+        "y": 106.368
+      },
+      "projected_bounds_min_px": {
+        "x": 92,
+        "y": 95
+      },
+      "projected_bounds_max_px": {
+        "x": 123,
+        "y": 118
+      }
+    },
+    {
+      "frame_instance_id": 115,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_020",
+      "actor_name": "StaticMeshActor_19",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_19",
+      "world_centroid": {
+        "x": 4108.73974131183,
+        "y": -2072.887682532686,
+        "z": 7269.690781771946
+      },
+      "actor_world_orientation_quat": {
+        "x": 0.6946446641362254,
+        "y": 0.3983877810693918,
+        "z": -0.43784134719854023,
+        "w": 0.40871863312913326
+      },
+      "drone_to_target_vector": {
+        "x": 3281.211171797123,
+        "y": -2405.5434185826944,
+        "z": 3431.2071892781905
+      },
+      "camera_to_target_vector": {
+        "x": -962.9983034182251,
+        "y": -4973.075135951844,
+        "z": 6589.38208784139
+      },
+      "distance_to_drone_cm": 5322.23,
+      "distance_to_camera_cm": 8311.37,
+      "relative_yaw_deg": -44.4166,
+      "relative_pitch_deg": -3.72476,
+      "projected_centroid_px": {
+        "x": 7.67857,
+        "y": 208.435
+      },
+      "projected_bounds_min_px": {
+        "x": 0,
+        "y": 199
+      },
+      "projected_bounds_max_px": {
+        "x": 17,
+        "y": 218
+      }
+    },
+    {
+      "frame_instance_id": 118,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_046",
+      "actor_name": "StaticMeshActor_45",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_45",
+      "world_centroid": {
+        "x": 5595.762243278476,
+        "y": -2359.460934072761,
+        "z": 4899.807938916242
+      },
+      "actor_world_orientation_quat": {
+        "x": 0.6394042625139347,
+        "y": 0.2404977339274443,
+        "z": -0.6806688723847905,
+        "w": 0.2645995374546094
+      },
+      "drone_to_target_vector": {
+        "x": 4768.233673763769,
+        "y": -2692.1166701227694,
+        "z": 1061.324346422487
+      },
+      "camera_to_target_vector": {
+        "x": 524.0241985484208,
+        "y": -5259.6483874919195,
+        "z": 4219.499244985687
+      },
+      "distance_to_drone_cm": 5577.63,
+      "distance_to_camera_cm": 6763.33,
+      "relative_yaw_deg": -27.8244,
+      "relative_pitch_deg": 3.32455,
+      "projected_centroid_px": {
+        "x": 150.452,
+        "y": 158.393
+      },
+      "projected_bounds_min_px": {
+        "x": 144,
+        "y": 149
+      },
+      "projected_bounds_max_px": {
+        "x": 157,
+        "y": 168
+      }
+    },
+    {
+      "frame_instance_id": 119,
+      "semantic_class": "cylinder_tube",
+      "actor_label": "CourseDistractorUniverse_cylinder_tube_007",
+      "actor_name": "BP_CourseGrid_RotatingVisual_C_6",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.BP_CourseGrid_RotatingVisual_C_6",
+      "world_centroid": {
+        "x": 5770.608200999899,
+        "y": -3511.325953481192,
+        "z": 3849.83660027522
+      },
+      "actor_world_orientation_quat": {
+        "x": 0.36541280281485583,
+        "y": -0.5001525618371226,
+        "z": 0.5679650893561963,
+        "w": 0.5419746816976464
+      },
+      "drone_to_target_vector": {
+        "x": 4943.079631485192,
+        "y": -3843.9816895312,
+        "z": 11.35300778146484
+      },
+      "camera_to_target_vector": {
+        "x": 698.8701562698443,
+        "y": -6411.51340690035,
+        "z": 3169.5279063446646
+      },
+      "distance_to_drone_cm": 6261.82,
+      "distance_to_camera_cm": 7186.23,
+      "relative_yaw_deg": -15.5495,
+      "relative_pitch_deg": 1.2616,
+      "projected_centroid_px": {
+        "x": 235.164,
+        "y": 179.686
+      },
+      "projected_bounds_min_px": {
+        "x": 222,
+        "y": 168
+      },
+      "projected_bounds_max_px": {
+        "x": 243,
+        "y": 185
+      }
+    },
+    {
+      "frame_instance_id": 120,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_062",
+      "actor_name": "StaticMeshActor_61",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_61",
+      "world_centroid": {
+        "x": 3658.7675856065352,
+        "y": -938.6902751868995,
+        "z": 2933.718777554445
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.06756080209213296,
+        "y": -0.854727976341259,
+        "z": -0.2955360032488354,
+        "w": 0.4213479502333565
+      },
+      "drone_to_target_vector": {
+        "x": 2831.2390160918285,
+        "y": -1271.3460112369078,
+        "z": -904.7648149393103
+      },
+      "camera_to_target_vector": {
+        "x": -1412.9704591235195,
+        "y": -3838.8777286060576,
+        "z": 2253.4100836238895
+      },
+      "distance_to_drone_cm": 3232.78,
+      "distance_to_camera_cm": 4670.26,
+      "relative_yaw_deg": -25.6227,
+      "relative_pitch_deg": -20.1112,
+      "projected_centroid_px": {
+        "x": 165.647,
+        "y": 309.749
+      },
+      "projected_bounds_min_px": {
+        "x": 155,
+        "y": 296
+      },
+      "projected_bounds_max_px": {
+        "x": 176,
+        "y": 323
+      }
+    },
+    {
+      "frame_instance_id": 121,
+      "semantic_class": "gear_ring",
+      "actor_label": "CourseDistractorUniverse_gear_ring_039",
+      "actor_name": "BP_CourseGrid_RotatingVisual_C_38",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.BP_CourseGrid_RotatingVisual_C_38",
+      "world_centroid": {
+        "x": 4889.8705384267105,
+        "y": 292.06080958237,
+        "z": 2030.8622751562643
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.6008798678336009,
+        "y": 0.290698373618151,
+        "z": 0.6610309519318057,
+        "w": 0.34274760480004357
+      },
+      "drone_to_target_vector": {
+        "x": 4062.3419689120037,
+        "y": -40.59492646763829,
+        "z": -1807.6213173374908
+      },
+      "camera_to_target_vector": {
+        "x": -181.86750630334427,
+        "y": -2608.126643836788,
+        "z": 1350.553581225709
+      },
+      "distance_to_drone_cm": 4446.55,
+      "distance_to_camera_cm": 2942.69,
+      "relative_yaw_deg": -18.8784,
+      "relative_pitch_deg": -7.30376,
+      "projected_centroid_px": {
+        "x": 210.524,
+        "y": 221.753
+      },
+      "projected_bounds_min_px": {
+        "x": 179,
+        "y": 191
+      },
+      "projected_bounds_max_px": {
+        "x": 242,
+        "y": 254
+      }
+    },
+    {
+      "frame_instance_id": 122,
+      "semantic_class": "sphere_hole",
+      "actor_label": "CourseDistractorUniverse_sphere_hole_013",
+      "actor_name": "BP_CourseGrid_RotatingVisual_C_12",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.BP_CourseGrid_RotatingVisual_C_12",
+      "world_centroid": {
+        "x": 5870.376792091332,
+        "y": -535.0278452562566,
+        "z": 1089.3928909786637
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.7642269035036604,
+        "y": -0.25093883383767546,
+        "z": -0.02169912174847895,
+        "w": 0.5937306541274769
+      },
+      "drone_to_target_vector": {
+        "x": 5042.848222576626,
+        "y": -867.6835813062648,
+        "z": -2749.0907015150915
+      },
+      "camera_to_target_vector": {
+        "x": 798.6387473612776,
+        "y": -3435.2152986754145,
+        "z": 409.0841970481083
+      },
+      "distance_to_drone_cm": 5808.67,
+      "distance_to_camera_cm": 3550.48,
+      "relative_yaw_deg": 4.91357,
+      "relative_pitch_deg": 3.9995,
+      "projected_centroid_px": {
+        "x": 347.005,
+        "y": 156.669
+      },
+      "projected_bounds_min_px": {
+        "x": 315,
+        "y": 125
+      },
+      "projected_bounds_max_px": {
+        "x": 379,
+        "y": 189
+      }
+    },
+    {
+      "frame_instance_id": 123,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_012",
+      "actor_name": "StaticMeshActor_11",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_11",
+      "world_centroid": {
+        "x": 6273.07779027364,
+        "y": 60.38335481020499,
+        "z": 1087.5772232567035
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.16801431880438286,
+        "y": -0.685685853499806,
+        "z": -0.17412873638359655,
+        "w": 0.68650220833898
+      },
+      "drone_to_target_vector": {
+        "x": 5445.549220758933,
+        "y": -272.2723812398033,
+        "z": -2750.906369237052
+      },
+      "camera_to_target_vector": {
+        "x": 1201.3397455435852,
+        "y": -2839.8040986089527,
+        "z": 407.26852932614815
+      },
+      "distance_to_drone_cm": 6107.01,
+      "distance_to_camera_cm": 3110.24,
+      "relative_yaw_deg": 5.74788,
+      "relative_pitch_deg": 13.774,
+      "projected_centroid_px": {
+        "x": 351.634,
+        "y": 100.345
+      },
+      "projected_bounds_min_px": {
+        "x": 347,
+        "y": 80
+      },
+      "projected_bounds_max_px": {
+        "x": 356,
+        "y": 121
+      }
+    },
+    {
+      "frame_instance_id": 124,
+      "semantic_class": "official_square_gate",
+      "actor_label": "CourseOfficialSquareGateUniverse_001",
+      "actor_name": "StaticMeshActor_0",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.StaticMeshActor_0",
+      "world_centroid": {
+        "x": 4589.555716364792,
+        "y": -2855.6725885603496,
+        "z": 20.75697465589313
+      },
+      "actor_world_orientation_quat": {
+        "x": -0.7954120310181415,
+        "y": 0.38645256109050335,
+        "z": -0.438116823745467,
+        "w": -0.16133123563424404
+      },
+      "drone_to_target_vector": {
+        "x": 3762.027146850085,
+        "y": -3188.328324610358,
+        "z": -3817.7266178378622
+      },
+      "camera_to_target_vector": {
+        "x": -482.18232836526295,
+        "y": -5755.8600419795075,
+        "z": -659.5517192746622
+      },
+      "distance_to_drone_cm": 6236.45,
+      "distance_to_camera_cm": 5813.56,
+      "relative_yaw_deg": 14.5765,
+      "relative_pitch_deg": -15.9805,
+      "projected_centroid_px": {
+        "x": 402.675,
+        "y": 274.158
+      },
+      "projected_bounds_min_px": {
+        "x": 397,
+        "y": 265
+      },
+      "projected_bounds_max_px": {
+        "x": 409,
+        "y": 284
+      }
+    },
+    {
+      "frame_instance_id": 125,
+      "semantic_class": "pipe_elbow",
+      "actor_label": "CourseDistractorUniverse_pipe_elbow_040",
+      "actor_name": "BP_CourseGrid_RotatingVisual_C_39",
+      "actor_path": "/Game/Course_Content/L_CourseTorus_gate_faceart_75m75g50d_scale3p5_dcolor_20x_sample_20260605_155439/Maps/L_CourseTorus.L_CourseTorus:PersistentLevel.BP_CourseGrid_RotatingVisual_C_39",
+      "world_centroid": {
+        "x": 4070.861508242607,
+        "y": -2456.2306121776796,
+        "z": 587.4991093259031
+      },
+      "actor_world_orientation_quat": {
+        "x": 0.6742355634429995,
+        "y": -0.14677396636042828,
+        "z": -0.23738802738537274,
+        "w": 0.6837475647061642
+      },
+      "drone_to_target_vector": {
+        "x": 3243.3329387279005,
+        "y": -2788.886348227688,
+        "z": -3250.984483167852
+      },
+      "camera_to_target_vector": {
+        "x": -1000.8765364874475,
+        "y": -5356.418065596838,
+        "z": -92.80958460465229
+      },
+      "distance_to_drone_cm": 5372.71,
+      "distance_to_camera_cm": 5449.92,
+      "relative_yaw_deg": 7.73201,
+      "relative_pitch_deg": -20.6612,
+      "projected_centroid_px": {
+        "x": 362.095,
+        "y": 299.248
+      },
+      "projected_bounds_min_px": {
+        "x": 349,
+        "y": 292
+      },
+      "projected_bounds_max_px": {
+        "x": 376,
+        "y": 311
+      }
+    }
+  ],
+  "recorder_metadata": {
+    "queue_sequence": 1650,
+    "chunk_index": 25,
+    "frame_index_in_chunk": 49,
+    "rgb_byte_length": 145933,
+    "instance_byte_length": 10490
+  }
+}

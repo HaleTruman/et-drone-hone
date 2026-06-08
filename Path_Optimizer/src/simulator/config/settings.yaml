@@ -1,0 +1,8 @@
+# Global simulator settings. Scenario-specific flight conditions belong in scenarios/*.json.
+scenario: scenarios/armed_hover.json
+transport: udp
+endpoint: udpout:127.0.0.1:14550
+realtime: true
+telemetry_hz: 100.0
+physics_hz: 100.0
+heartbeat_hz: 2.0
