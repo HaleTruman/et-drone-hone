@@ -2,7 +2,6 @@ import json
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from core.modes import ControlMode, FlightMode, ModeSelection, SystemMode, validate_modes
 from simulator.runtime import SimulatorRuntime
@@ -12,15 +11,10 @@ from simulator.scenario import load_scenario
 SCENARIOS = Path(__file__).resolve().parents[1] / "scenarios"
 
 
-def test_mode_compatibility_and_flight_only_vision_rejection() -> None:
+def test_mode_compatibility_accepts_slim_flight_modes() -> None:
     validate_modes(ModeSelection(SystemMode.ARMED, FlightMode.HOVER, ControlMode.POSITION_HOLD))
-    validate_modes(ModeSelection(SystemMode.ARMED, FlightMode.LANDING, ControlMode.POSITION_HOLD))
-
-    with pytest.raises(ValueError, match="flight-only"):
-        validate_modes(
-            ModeSelection(SystemMode.RACING, FlightMode.GATE_TRACKING, ControlMode.VISION_GATE),
-            flight_only=True,
-        )
+    validate_modes(ModeSelection(SystemMode.ARMED, FlightMode.WAYPOINT, ControlMode.WAYPOINT_FOLLOW))
+    validate_modes(ModeSelection(SystemMode.RACING, FlightMode.TRAJECTORY, ControlMode.TRAJECTORY_TRACK))
 
 
 def test_scenario_normalizes_initial_quaternion() -> None:
@@ -56,3 +50,13 @@ def test_reset_increments_telemetry_reset_counter(tmp_path) -> None:
     cycles = json.loads(path.read_text(encoding="utf-8"))["cycles"]
 
     assert cycles[-1]["telemetry"]["reset_count"] == 1
+
+
+def test_simulator_run_writes_telemetry_sidecar(tmp_path) -> None:
+    runtime = SimulatorRuntime(load_scenario(SCENARIOS / "idle_telemetry.json"), telemetry_hz=10, realtime=False)
+    path = runtime.run(tmp_path / "run-20260607T120000Z" / "run.json")
+
+    payload = json.loads((path.parent / "telemetry.json").read_text(encoding="utf-8"))
+    assert payload["metadata"]["scenario"] == "idle_telemetry"
+    assert payload["samples"][0]["cycle"] == 0
+    assert payload["samples"][0]["telemetry"]["sim_time_ns"] == 0

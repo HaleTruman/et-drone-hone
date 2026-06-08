@@ -9,10 +9,6 @@ class FlightMode(str, Enum):
     HOVER = "HOVER"
     WAYPOINT = "WAYPOINT"
     TRAJECTORY = "TRAJECTORY"
-    MPCC = "MPCC"
-    GATE_TRACKING = "GATE_TRACKING"
-    LANDING = "LANDING"
-    PATH_FOLLOWING = "WAYPOINT"
 
 
 class FlightModeManager:

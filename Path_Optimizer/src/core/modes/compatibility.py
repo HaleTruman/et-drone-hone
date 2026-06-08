@@ -21,18 +21,13 @@ def validate_modes(selection: ModeSelection, *, flight_only: bool = False) -> No
             return
         raise ValueError(f"{system.value} does not allow an active flight or control mode")
 
-    if flight == FlightMode.GATE_TRACKING and control == ControlMode.VISION_GATE:
-        if flight_only:
-            raise ValueError("GATE_TRACKING is unavailable in the flight-only simulator")
-        return
-
     allowed = {
         (SystemMode.ARMED, FlightMode.HOVER, ControlMode.POSITION_HOLD),
-        (SystemMode.ARMED, FlightMode.LANDING, ControlMode.POSITION_HOLD),
+        (SystemMode.ARMED, FlightMode.HOVER, ControlMode.ATTITUDE),
         (SystemMode.ARMED, FlightMode.WAYPOINT, ControlMode.WAYPOINT_FOLLOW),
         (SystemMode.RACING, FlightMode.WAYPOINT, ControlMode.WAYPOINT_FOLLOW),
         (SystemMode.RACING, FlightMode.TRAJECTORY, ControlMode.TRAJECTORY_TRACK),
-        (SystemMode.RACING, FlightMode.MPCC, ControlMode.MPCC_TRACKER),
+        (SystemMode.RACING, FlightMode.TRAJECTORY, ControlMode.MPCC_TRACKER),
     }
     if (system, flight, control) in allowed:
         return

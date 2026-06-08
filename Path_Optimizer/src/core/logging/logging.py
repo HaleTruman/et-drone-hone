@@ -12,14 +12,21 @@ class Logger:
             "events": [],
             "cycles": [],
         }
+        self.telemetry_records: dict[str, Any] = {
+            "schema_version": 1,
+            "metadata": self.records["metadata"],
+            "samples": [],
+        }
 
     def log_event(self, event: str, **data: Any) -> None:
         self.records["events"].append({"event": event, **data})
 
     def log_cycle(self, **data: Any) -> None:
         self.records["cycles"].append(data)
+        self._log_cycle_telemetry(data)
 
-    def log_telemetry(self, telemetry: Any) -> None:
+    def log_telemetry(self, telemetry: Any, **context: Any) -> None:
+        self._append_telemetry_sample(telemetry, context)
         self.log_event("telemetry", telemetry=telemetry)
 
     def log_gate_map(self, gate_map: Any) -> None:
@@ -32,6 +39,10 @@ class Logger:
         output_path = Path(path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(self.records, indent=2, default=self._json_default), encoding="utf-8")
+        self.telemetry_path_for_run(output_path).write_text(
+            json.dumps(self.telemetry_records, indent=2, default=self._json_default),
+            encoding="utf-8",
+        )
 
     @staticmethod
     def timestamped_path(logs_dir: str | Path) -> Path:
@@ -54,6 +65,13 @@ class Logger:
         return path
 
     @staticmethod
+    def telemetry_path_for_run(run_path: str | Path) -> Path:
+        path = Path(run_path)
+        if path.name == "run.json":
+            return path.parent / "telemetry.json"
+        return path.with_name(f"{path.stem}-telemetry.json")
+
+    @staticmethod
     def rounded_timestamp() -> str:
         now = datetime.now(timezone.utc) + timedelta(microseconds=500_000)
         return now.replace(microsecond=0).strftime("%Y%m%dT%H%M%SZ")
@@ -62,6 +80,22 @@ class Logger:
     def _add_second(timestamp: str) -> str:
         value = datetime.strptime(timestamp, "%Y%m%dT%H%M%SZ") + timedelta(seconds=1)
         return value.strftime("%Y%m%dT%H%M%SZ")
+
+    def _log_cycle_telemetry(self, cycle: dict[str, Any]) -> None:
+        telemetry = cycle.get("telemetry")
+        if telemetry is None:
+            return
+        context = {
+            key: cycle[key]
+            for key in ("cycle", "sim_time_ns", "wall_elapsed_ms", "deadline_lateness_ms")
+            if key in cycle
+        }
+        self._append_telemetry_sample(telemetry, context)
+
+    def _append_telemetry_sample(self, telemetry: Any, context: dict[str, Any]) -> None:
+        sample = dict(context)
+        sample["telemetry"] = telemetry
+        self.telemetry_records["samples"].append(sample)
 
     def _json_default(self, value: Any) -> Any:
         if hasattr(value, "value"):

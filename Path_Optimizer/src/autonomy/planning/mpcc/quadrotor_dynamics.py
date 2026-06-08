@@ -1,19 +1,24 @@
 import numpy as np
 import casadi as ca
+import yaml
+from pathlib import Path
 
-m = 0.75
-Ixx = 0.0049
-Iyy = 0.0049
-Izz = 0.0088
-kf = 4.5
-km = 0.08
-Jr = 6e-5
-l = [0.14, 0.14, 0.14, 0.14]
-h = [0.02, 0.02, 0.02, 0.02]
-cd = [0.08, 0.08, 0.12]
-cr = [0.002, 0.002, 0.004]
-d = [1, -1, 1, -1]
-g = 9.81
+PARAMS_PATH = Path(__file__).resolve().parents[3] / "core" / "quadrotor" / "params.yaml"
+params = yaml.safe_load(PARAMS_PATH.read_text(encoding="utf-8"))
+
+m = params["m"]
+Ixx = params["Ixx"]
+Iyy = params["Iyy"]
+Izz = params["Izz"]
+kf = params["kf"]
+km = params["km"]
+Jr = params["Jr"]
+l = params["l"]
+h = params["h"]
+cd = params["cd"]
+cr = params["cr"]
+d = params["d"]
+g = params["g"]
 c = 2**0.5 / 2
 rho = ca.DM([[l[0]*c, l[0]*c, h[0]], [-l[1]*c, l[1]*c, h[1]], [-l[2]*c, -l[2]*c, h[2]], [l[3]*c, -l[3]*c, h[3]]])
 

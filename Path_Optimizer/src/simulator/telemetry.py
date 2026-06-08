@@ -319,6 +319,8 @@ class TelemetrySimulator:
     def _load_params(path: Path) -> dict[str, Any]:
         params: dict[str, Any] = {}
         for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
             key, separator, value = line.partition(":")
             if separator:
                 params[key.strip()] = ast.literal_eval(value.partition("#")[0].strip())

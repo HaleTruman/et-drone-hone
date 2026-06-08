@@ -1,11 +1,16 @@
+# AI Grand Prix Technical Specification VADR-TS-002, section 3.6:
+# 280 mm width, 280 mm length, 160 mm height.
+chassis_width_m: 0.28
+chassis_length_m: 0.28
+chassis_height_m: 0.16
 m: 1.2  # total mass [kg]
-Ixx: 0.02  # body inertia about x-axis [kg*m^2]
-Iyy: 0.02  # body inertia about y-axis [kg*m^2]
-Izz: 0.04  # body inertia about z-axis [kg*m^2]
+Ixx: 0.0104  # body inertia about x-axis [kg*m^2], box estimate from spec dimensions
+Iyy: 0.0104  # body inertia about y-axis [kg*m^2], box estimate from spec dimensions
+Izz: 0.01568  # body inertia about z-axis [kg*m^2], box estimate from spec dimensions
 kf: 12.0  # thrust coefficient [N]
 km: 0.15  # motor reaction torque coefficient [N*m]
 Jr: 0.00006  # rotor polar inertia [kg*m^2]
-l: [0.2, 0.2, 0.2, 0.2]  # motor arm lengths l1..l4 [m]
+l: [0.19799, 0.19799, 0.19799, 0.19799]  # motor arm lengths l1..l4 [m], 280 mm X-frame diagonal radius
 h: [0.0, 0.0, 0.0, 0.0]  # motor vertical offsets h1..h4 [m]
 cd: [0.08, 0.08, 0.12]  # translational drag coefficients [N*s^2/m^2]
 cr: [0.001, 0.001, 0.0015]  # rotational drag coefficients [N*m*s^2]

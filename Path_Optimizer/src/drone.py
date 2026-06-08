@@ -36,12 +36,7 @@ def run(duration_s: float = 3.0, loop_hz: float = 10.0, idle_s: float = 1.0) -> 
     command_mapper = CommandMapper()
     estimator = StateEstimator(initial_state=simulator._harness.initial_state)
     system_mode = SystemModeManager()
-    hover_controller = HoverPIDController(
-        mass_kg=simulator.model.m,
-        gravity_mps2=simulator.model.g,
-        thrust_coefficient=simulator.model.kf,
-        dt_s=1.0 / loop_hz,
-    )
+    hover_controller = HoverPIDController(dt_s=1.0 / loop_hz)
     period_ns = round(1_000_000_000 / loop_hz)
     logger = Logger(
         metadata={
@@ -54,25 +49,17 @@ def run(duration_s: float = 3.0, loop_hz: float = 10.0, idle_s: float = 1.0) -> 
             "position_frame": "local_ned_m",
             "position_origin": "simulator_home",
             "initial_true_state": simulator._harness.initial_state,
-            "target_position_local_ned_m": hover_controller.target_position_local_ned_m,
             "hover_controller": {
-                "position_gain": hover_controller.position_gain,
-                "velocity_gain": hover_controller.velocity_gain,
-                "acceleration_pid": {
-                    "kp": hover_controller.kp,
-                    "ki": hover_controller.ki,
-                    "kd": hover_controller.kd,
-                },
-                "velocity_damping": hover_controller.velocity_damping,
-            },
-            "quadrotor_params": {
-                "mass_kg": simulator.model.m,
-                "gravity_mps2": simulator.model.g,
-                "thrust_coefficient": simulator.model.kf,
+                "neutral_thrust": hover_controller.neutral_thrust,
+                "accel_angle_gain": hover_controller.accel_angle_gain,
+                "attitude_gain": hover_controller.attitude_gain,
+                "thrust_gain": hover_controller.thrust_gain,
+                "integral_gain": hover_controller.integral_gain,
             },
         }
     )
-    log_path = Logger.timestamped_path(Path(__file__).resolve().parents[1] / "logs")
+    run_dir = Logger.timestamped_dir(Path(__file__).resolve().parents[1] / "logs")
+    log_path = run_dir / "run.json"
 
     bridge.connect()
     bridge.start_heartbeat()
@@ -109,8 +96,7 @@ def run(duration_s: float = 3.0, loop_hz: float = 10.0, idle_s: float = 1.0) -> 
             if system_mode.system_mode == SystemMode.ARMED:
                 quaternion, thrust = hover_controller.update(
                     telemetry.raw["acceleration_local_ned_mps2"],
-                    estimator.get_13_state()[0:3],
-                    telemetry.velocity_local_ned_mps,
+                    telemetry.attitude,
                 )
                 target = command_mapper.to_attitude_target(quaternion, thrust)
                 bridge.send_attitude_target(target)

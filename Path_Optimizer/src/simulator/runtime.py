@@ -160,8 +160,6 @@ class SimulatorRuntime:
             })
 
     def _position_target(self) -> dict[str, Any]:
-        if self.modes.flight == FlightMode.LANDING:
-            return {"position_local_ned_m": self.reference.get("position_ned_m", self.scenario.initial_state[0:3].tolist())}
         target = {
             "position_local_ned_m": self.reference.get("position_ned_m"),
             "velocity_local_ned_mps": self.reference.get("velocity_ned_mps", [0.0, 0.0, 0.0]),

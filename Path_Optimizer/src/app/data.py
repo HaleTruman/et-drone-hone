@@ -27,11 +27,9 @@ class RunLog:
 
 def discover_run_files(root_dir: str) -> list[str]:
     logs_dir = Path(root_dir) / "logs"
-    return [
-        str(path.resolve())
-        for path in sorted(logs_dir.glob("run-*.json"), key=_run_sort_key, reverse=True)
-        if path.is_file()
-    ]
+    paths = [path for path in logs_dir.glob("run-*.json") if path.is_file()]
+    paths.extend(path for path in logs_dir.glob("run-*/run.json") if path.is_file())
+    return [str(path.resolve()) for path in sorted(paths, key=_run_sort_key, reverse=True)]
 
 
 def discover_simulation_run_files(root_dir: str) -> list[str]:
