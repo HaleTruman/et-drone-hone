@@ -8,6 +8,7 @@ import numpy as np
 
 from autonomy.planning.mpcc import MPCCPlanner
 from core.control.command_mapper import CommandMapper
+from core.control.forward_velocity import ForwardVelocityAltitudeController
 from core.control.hover import HoverPIDController
 from core.logging import Logger
 from sensing.perception import GateMap, GatePoseEstimator, VisionGateObservation, VisionObservation
@@ -24,8 +25,7 @@ ARM_TIMEOUT_S = 20.0
 VISION_HOST = "0.0.0.0"
 VISION_PORT = 5600
 PLANNER_GATE_LIMIT = 5
-FORWARD_TILT_RAD = 0.12
-FORWARD_THRUST_SCALE = 0.79
+FORWARD_SPEED_MPS = 2.0
 
 
 def telemetry_to_state(telemetry: TelemetrySample) -> np.ndarray:
@@ -51,12 +51,6 @@ def body_to_local_ned_rotation(quaternion: tuple[float, float, float, float] | l
     )
 
 
-def quaternion_from_roll_pitch(roll: float, pitch: float) -> np.ndarray:
-    cr, sr = np.cos(roll / 2.0), np.sin(roll / 2.0)
-    cp, sp = np.cos(pitch / 2.0), np.sin(pitch / 2.0)
-    return np.array([cr * cp, sr * cp, cr * sp, -sr * sp], dtype=float)
-
-
 def forward_velocity_reference(telemetry: TelemetrySample) -> np.ndarray:
     forward = body_to_local_ned_rotation(telemetry.attitude)[:, 0]
     forward_level = np.asarray([forward[0], forward[1], 0.0], dtype=float)
@@ -66,16 +60,16 @@ def forward_velocity_reference(telemetry: TelemetrySample) -> np.ndarray:
     return forward_level / norm
 
 
-def level_forward_attitude_target(hover_thrust: float) -> dict[str, Any]:
-    """Command gentle forward motion with the known-stable attitude target path."""
-
-    return {
-        "quaternion": quaternion_from_roll_pitch(0.0, FORWARD_TILT_RAD).tolist(),
-        "thrust": float(np.clip(hover_thrust * FORWARD_THRUST_SCALE, 0.0, 1.0)),
-        "mode": "level_forward_attitude_bias",
-        "forward_tilt_rad": FORWARD_TILT_RAD,
-        "forward_thrust_scale": FORWARD_THRUST_SCALE,
-    }
+def target_forward_velocity(forward_direction_local_ned: np.ndarray) -> np.ndarray:
+    direction = np.asarray(forward_direction_local_ned, dtype=float)
+    return np.array(
+        [
+            direction[0] * FORWARD_SPEED_MPS,
+            direction[1] * FORWARD_SPEED_MPS,
+            0.0,
+        ],
+        dtype=float,
+    )
 
 
 def gate_records_to_mpcc_gates(records: list[Any]) -> list[dict[str, Any]]:
@@ -317,6 +311,7 @@ def main():
     bridge = MavlinkBridge(ENDPOINT)
     mapper = CommandMapper()
     hover = HoverPIDController(dt_s=1.0 / CONTROL_HZ)
+    forward_controller = ForwardVelocityAltitudeController(dt_s=1.0 / CONTROL_HZ, neutral_thrust=hover.neutral_thrust)
     run_dir = Logger.timestamped_dir(Path(__file__).resolve().parents[1] / "logs" / "runs")
     log_path = run_dir / "run.json"
     logger = Logger(
@@ -325,8 +320,7 @@ def main():
             "endpoint": ENDPOINT,
             "control_hz": CONTROL_HZ,
             "run_s": RUN_S,
-            "forward_tilt_rad": FORWARD_TILT_RAD,
-            "forward_thrust_scale": FORWARD_THRUST_SCALE,
+            "forward_speed_mps": FORWARD_SPEED_MPS,
             "vision": {
                 "schema_version": "vision_frame_to_planning_v1",
                 "host": VISION_HOST,
@@ -380,21 +374,57 @@ def main():
             time.sleep(0.02)
         if not bridge.armed:
             raise TimeoutError("Simulator did not confirm armed state")
-        logger.log_event("hover_started", bridge=bridge.snapshot(), telemetry=telemetry)
+        telemetry = bridge.get_latest_telemetry()
+        if telemetry is None or telemetry.position_local_ned_m is None:
+            raise RuntimeError("ODOMETRY position is required after arming")
+        start_position = np.asarray(telemetry.position_local_ned_m, dtype=float)
+        target_altitude_ned_m = float(start_position[2])
+        start_reset_count = telemetry.reset_count
+        forward_direction = forward_velocity_reference(telemetry)
+        target_velocity = target_forward_velocity(forward_direction)
+        forward_controller.reset()
+        logger.log_event(
+            "forward_flight_started",
+            bridge=bridge.snapshot(),
+            telemetry=telemetry,
+            start_position_local_ned_m=start_position.tolist(),
+            target_altitude_ned_m=target_altitude_ned_m,
+            forward_direction_local_ned=forward_direction.tolist(),
+            target_velocity_local_ned_mps=target_velocity.tolist(),
+            forward_speed_mps=FORWARD_SPEED_MPS,
+        )
 
         end = time.monotonic() + RUN_S
         while time.monotonic() < end:
             telemetry = bridge.get_latest_telemetry()
             if telemetry is None or telemetry.position_local_ned_m is None:
                 raise RuntimeError("ODOMETRY position is required during hover")
+            if not bridge.armed:
+                logger.log_event("control_stopped_disarmed", telemetry=telemetry, bridge=bridge.snapshot())
+                break
+            if start_reset_count is not None and telemetry.reset_count is not None and telemetry.reset_count != start_reset_count:
+                logger.log_event(
+                    "control_stopped_sim_reset",
+                    telemetry=telemetry,
+                    bridge=bridge.snapshot(),
+                    start_reset_count=start_reset_count,
+                    reset_count=telemetry.reset_count,
+                )
+                break
             hover_quaternion, hover_thrust = hover.update(
                 telemetry.acceleration_local_ned_mps2 or (0.0, 0.0, 0.0),
                 telemetry.attitude,
             )
-            target = level_forward_attitude_target(hover_thrust)
-            forward_reference = forward_velocity_reference(telemetry)
-            bridge.send_attitude_target(target)
             now = time.monotonic()
+            target = forward_controller.update(
+                position_local_ned_m=telemetry.position_local_ned_m,
+                velocity_local_ned_mps=telemetry.velocity_local_ned_mps,
+                attitude_quaternion=telemetry.attitude,
+                target_altitude_ned_m=target_altitude_ned_m,
+                target_velocity_local_ned_mps=target_velocity,
+                trim_thrust=hover_thrust,
+            )
+            bridge.send_attitude_target(target)
             vision_snapshot = vision_worker.snapshot()
             planning_snapshot = planner_worker.snapshot()
             with log_lock:
@@ -406,7 +436,7 @@ def main():
                     bridge=bridge.snapshot(),
                     command={
                         "set_attitude_target": target,
-                        "forward_reference_local_ned_unit": forward_reference.tolist(),
+                        "forward_reference_local_ned_unit": forward_direction.tolist(),
                         "hover_attitude_reference": mapper.to_attitude_target(hover_quaternion, hover_thrust),
                     },
                     vision=vision_snapshot,
@@ -422,7 +452,9 @@ def main():
                     f"vision_frames={vision_snapshot['frames_processed']} "
                     f"planning_count={planning_snapshot['plan_count']} "
                     f"planned_points={len(latest_path.get('points_local_ned_m', []))} "
-                    f"forward_ref={np.asarray(forward_reference).round(3).tolist()} "
+                    f"forward_ref={np.asarray(forward_direction).round(3).tolist()} "
+                    f"target_vel={np.asarray(target['target_velocity_local_ned_mps']).round(3).tolist()} "
+                    f"alt_target={target['target_altitude_ned_m']:.3f} "
                     f"cmd_q={np.asarray(target['quaternion']).round(3).tolist()} thrust={target['thrust']:.3f} "
                     f"hover_q={np.asarray(hover_quaternion).round(3).tolist()} hover_thrust={hover_thrust:.3f}",
                     flush=True,

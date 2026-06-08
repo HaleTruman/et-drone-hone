@@ -237,11 +237,12 @@ class MavlinkBridge:
         mavutil = self._require_mavutil()
         connection = self._require_connection()
         body_rates = target.get("body_rates_rps", (0.0, 0.0, 0.0))
+        type_mask = int(target.get("attitude_type_mask", 0 if "body_rates_rps" in target else 7))
         connection.mav.set_attitude_target_send(
             self._time_boot_ms(),
             connection.target_system,
             connection.target_component,
-            0,
+            type_mask,
             target["quaternion"],
             *body_rates,
             target["thrust"],
