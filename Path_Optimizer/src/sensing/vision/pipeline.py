@@ -40,6 +40,7 @@ class VisionPipelineConfig:
     run_landmarker: bool = False
     regressor_checkpoint: Path = DEFAULT_REGRESSOR_CHECKPOINT
     top_k: int = 5
+    passthrough_regressor_targets: bool = False
     ready_event: Any | None = None
     review_sink: Any | None = None
 
@@ -75,6 +76,7 @@ def run_live_pipeline(config: VisionPipelineConfig) -> VisionPipelineStats:
                 "output_root": str(output_root),
                 "run_regressor": config.run_regressor,
                 "run_landmarker": config.run_landmarker,
+                "passthrough_regressor_targets": config.passthrough_regressor_targets,
             }
         )
 
@@ -119,6 +121,7 @@ def run_live_pipeline(config: VisionPipelineConfig) -> VisionPipelineStats:
                 state_path=output_root / "landmarker_state.json",
                 top_k=config.top_k,
                 max_frames=config.max_frames,
+                passthrough_regressor_targets=config.passthrough_regressor_targets,
             )
         )
         record_landmarker = getattr(review_sink, "record_landmarker_outputs", None) if review_sink is not None else None
