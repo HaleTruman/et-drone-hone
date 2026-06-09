@@ -71,6 +71,27 @@ def build_controller_payload(
     }
 
 
+def build_passthrough_controller_payload(
+    frame_payload: dict[str, Any],
+    *,
+    output_dir: Path | str,
+    top_k: int = 5,
+) -> dict[str, Any]:
+    return {
+        "run": {
+            "output_dir": str(Path(output_dir)),
+            "cycle": int((frame_payload.get("run") or {}).get("cycle", 0)),
+            "frame_id": str((frame_payload.get("run") or {}).get("frame_id", "")),
+            "sim_time_ns": int((frame_payload.get("run") or {}).get("sim_time_ns", 0)),
+        },
+        "gates": controller_gates_from_current_gates(
+            (gate for gate in frame_payload.get("gates", []) if isinstance(gate, dict)),
+            top_k=top_k,
+        ),
+        "obstacles": [],
+    }
+
+
 def write_controller_frame(output_dir: Path, payload: dict[str, Any]) -> Path:
     directory = Path(output_dir).expanduser().resolve()
     directory.mkdir(parents=True, exist_ok=True)
@@ -89,6 +110,7 @@ def append_jsonl(path: Path, payload: dict[str, Any]) -> None:
 __all__ = [
     "append_jsonl",
     "build_controller_payload",
+    "build_passthrough_controller_payload",
     "controller_gates_from_current_gates",
     "controller_gates_from_state",
     "write_controller_frame",

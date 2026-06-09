@@ -7,7 +7,7 @@ from typing import Any
 from sensing.perception import VisionGateObservation, VisionObservation
 from sensing.vision.cnn.rgb_inference import DEFAULT_CHECKPOINT, LightmaskInference
 from sensing.vision.cnn.rgb_normalizer import jpeg_bytes_to_tensor
-from sensing.vision.landmarker.landmark_output import build_controller_payload
+from sensing.vision.landmarker.landmark_output import build_controller_payload, build_passthrough_controller_payload
 from sensing.vision.landmarker.landmarker import Landmarker, new_landmarker_state
 from sensing.vision.regressor.cnn_ingress import RawLogitsFrame
 from sensing.vision.regressor.logit_inference import DEFAULT_REGRESSOR_CHECKPOINT, LogitRegressor
@@ -21,6 +21,7 @@ class VisionPerceptionConfig:
     device: str = "auto"
     run_landmarker: bool = True
     top_k: int = 5
+    passthrough_regressor_targets: bool = False
     gate_threshold: float = 0.50
     confidence_threshold: float = 0.50
     min_component_area: int = 3
@@ -56,6 +57,15 @@ class VisionPerceptionService:
         regressor_payload = build_surveyer_payload(regression, output_dir=Path("memory"))
 
         if self.config.run_landmarker:
+            if self.config.passthrough_regressor_targets:
+                # Passthrough preserves controller output shape while skipping landmark state/matching.
+                controller_payload = build_passthrough_controller_payload(
+                    regressor_payload,
+                    output_dir=Path("memory"),
+                    top_k=int(self.config.top_k),
+                )
+                return VisionObservation.from_controller_payload(controller_payload, source="cnn_regressor_passthrough")
+
             update_result = self.landmarker.update_frame(regressor_payload)
             controller_payload = build_controller_payload(
                 self.landmarker.state,
@@ -108,6 +118,7 @@ class VisionPerceptionService:
             "device": self.config.device,
             "run_landmarker": self.config.run_landmarker,
             "top_k": self.config.top_k,
+            "passthrough_regressor_targets": self.config.passthrough_regressor_targets,
             "cnn_loaded": self._cnn is not None,
             "regressor_loaded": self._regressor is not None,
             "landmarker_loaded": self._landmarker is not None,

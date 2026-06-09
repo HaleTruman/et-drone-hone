@@ -6,7 +6,12 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from .landmark_output import append_jsonl, build_controller_payload, write_controller_frame
+from .landmark_output import (
+    append_jsonl,
+    build_controller_payload,
+    build_passthrough_controller_payload,
+    write_controller_frame,
+)
 from .landmarker import Landmarker, load_landmarker_state, save_landmarker_state
 from .regressor_ingress import read_regressor_frames
 
@@ -19,6 +24,7 @@ class LandmarkerPipelineConfig:
     state_path: Path = Path("logs/vision/landmarker_state.json")
     top_k: int = 5
     max_frames: int = 0
+    passthrough_regressor_targets: bool = False
 
 
 @dataclass(frozen=True)
@@ -44,9 +50,29 @@ def run_landmarker_pipeline(config: LandmarkerPipelineConfig) -> LandmarkerPipel
         jsonl_path.unlink()
 
     state_path = Path(config.state_path).expanduser().resolve()
-    landmarker = Landmarker(load_landmarker_state(state_path))
     started = time.perf_counter()
 
+    if config.passthrough_regressor_targets:
+        for frame in frames:
+            # Passthrough preserves controller output shape while skipping landmark state/matching.
+            payload = build_passthrough_controller_payload(
+                frame,
+                output_dir=output_dir,
+                top_k=int(config.top_k),
+            )
+            write_controller_frame(output_dir, payload)
+            append_jsonl(jsonl_path, payload)
+
+        return LandmarkerPipelineStats(
+            frames_processed=len(frames),
+            final_landmark_count=0,
+            elapsed_seconds=time.perf_counter() - started,
+            output_dir=output_dir,
+            state_path=state_path,
+            jsonl_path=jsonl_path,
+        )
+
+    landmarker = Landmarker(load_landmarker_state(state_path))
     for frame in frames:
         update_result = landmarker.update_frame(frame)
         payload = build_controller_payload(
