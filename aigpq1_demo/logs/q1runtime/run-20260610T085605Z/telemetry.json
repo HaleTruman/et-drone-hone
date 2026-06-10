@@ -1,0 +1,233 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "runtime": "q1runtime",
+    "control_method": "body_rate_guidance",
+    "vision_mode": "cnn_regressor_passthrough_top1",
+    "command_stream": "fixed_hz_body_rate_guidance",
+    "run_dir": "/Users/trumanhale/aigp sim v1 download/aigpq1_demo/logs/q1runtime/run-20260610T085605Z",
+    "config": {
+      "mavlink_endpoint": "udpin:127.0.0.1:14550",
+      "heartbeat_timeout_s": 10.0,
+      "arm_timeout_s": 5.0,
+      "wait_for_telemetry_timeout_s": 10.0,
+      "arm_on_start": true,
+      "vision_host": "0.0.0.0",
+      "vision_port": 5600,
+      "vision_max_buffered_frames": 4,
+      "save_raw_frames": true,
+      "run_s": 30.0,
+      "idle_sleep_s": 0.002,
+      "status_interval_s": 1.0,
+      "checkpoint_interval_s": 2.0,
+      "command_hz": 30.0,
+      "command_log_hz": 10.0,
+      "control_method": "body_rate_guidance",
+      "vision_device": "auto",
+      "run_landmarker": true,
+      "passthrough_regressor_targets": true,
+      "vision_candidate_top_k": 8,
+      "min_position_confidence": 0.1,
+      "gate_threshold": 0.1,
+      "confidence_threshold": 0.1,
+      "min_component_area": 3,
+      "max_candidates": 32,
+      "camera_tilt_deg": 20.0,
+      "target_hold_s": 0.75,
+      "target_filter_max_jump_m": 250.0,
+      "target_filter_smoothing_alpha": 1.0,
+      "target_selection_mode": "forward_progress",
+      "target_selection_min_camera_forward_m": 0.1,
+      "target_selection_min_forward_m": 0.5,
+      "target_selection_velocity_min_mps": 0.5,
+      "target_selection_velocity_source": "local_position",
+      "target_selection_allow_camera_fallback_when_routed": false,
+      "command_on_missing_target": false,
+      "reset_on_start": true,
+      "reset_wait_s": 2.0,
+      "reset_ready_timeout_s": 20.0,
+      "reset_stable_s": 2.5,
+      "reset_stable_max_speed_mps": 0.03,
+      "post_reset_delay_s": 3.0,
+      "command_transform_path": null,
+      "command_invert_x": false,
+      "command_invert_y": false,
+      "command_invert_z": false,
+      "command_swap_xy": false,
+      "safety_enabled": true,
+      "safety_max_horizontal_radius_m": 220.0,
+      "safety_min_z_ned_m": -8.0,
+      "safety_max_z_ned_m": 30.0,
+      "safety_max_velocity_mps": 12.0,
+      "safety_telemetry_timeout_s": 0.5,
+      "stop_runtime_on_safety_stop": true,
+      "disarm_on_exit": true,
+      "stop_on_exit_s": 0.2,
+      "dry_run": false,
+      "body_rate_velocity_source": "local_position",
+      "body_rate_prelevel_s": 1.0,
+      "body_rate_prelevel_thrust": 0.2,
+      "body_rate_prelevel_target_roll_deg": 0.0,
+      "body_rate_prelevel_target_pitch_deg": 0.0,
+      "body_rate_base_thrust": 0.255,
+      "body_rate_vertical_kp": 0.14,
+      "body_rate_vertical_kd": 0.18,
+      "body_rate_min_thrust": 0.2,
+      "body_rate_max_thrust": 0.38,
+      "body_rate_roll_kp": 1.2,
+      "body_rate_pitch_kp": 2.0,
+      "body_rate_max_roll_rate_rps": 0.25,
+      "body_rate_max_pitch_rate_rps": 0.5,
+      "body_rate_yaw_rate_rps": 0.0,
+      "body_rate_position_kp_deg_per_m": 32.0,
+      "body_rate_velocity_kd_deg_per_mps": 4.0,
+      "body_rate_max_guidance_tilt_deg": 32.0,
+      "body_rate_position_deadband_m": 0.05,
+      "vision_target_max_horizontal_m": 1.0,
+      "vision_target_max_up_m": 0.4,
+      "vision_target_max_down_m": 2.0,
+      "body_rate_target_stale_abort_s": 999.0,
+      "log_dir": "/Users/trumanhale/aigp sim v1 download/aigpq1_demo/logs/q1runtime",
+      "frame_output_dir": "/Users/trumanhale/aigp sim v1 download/aigpq1_demo/logs/q1runtime/frames/known-good-20260610T085604Z"
+    },
+    "command_streamer": {
+      "hz": 30.0,
+      "interval_s": 0.03333333333333333,
+      "running": false,
+      "next_tick_s": null
+    },
+    "command_transform": {
+      "name": "identity",
+      "matrix": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    },
+    "safety": {
+      "config": {
+        "enabled": true,
+        "max_horizontal_radius_m": 220.0,
+        "min_z_ned_m": -8.0,
+        "max_z_ned_m": 30.0,
+        "max_velocity_mps": 12.0,
+        "telemetry_timeout_s": 0.5,
+        "stop_on_reset": true
+      },
+      "last_reset_count": null,
+      "last_telemetry_monotonic_s": null,
+      "trip_count": 0,
+      "last_decision": {
+        "action": "continue",
+        "reason": "ok",
+        "details": {}
+      }
+    },
+    "body_rate_controller": {
+      "config": {
+        "velocity_source": "local_position",
+        "base_thrust": 0.255,
+        "vertical_kp": 0.14,
+        "vertical_kd": 0.18,
+        "min_thrust": 0.2,
+        "max_thrust": 0.38,
+        "roll_kp": 1.2,
+        "pitch_kp": 2.0,
+        "max_roll_rate_rps": 0.25,
+        "max_pitch_rate_rps": 0.5,
+        "yaw_rate_rps": 0.0,
+        "position_kp_deg_per_m": 32.0,
+        "velocity_kd_deg_per_mps": 4.0,
+        "max_guidance_tilt_deg": 32.0,
+        "position_deadband_m": 0.05,
+        "max_horizontal_target_m": 1.0,
+        "max_up_target_m": 0.4,
+        "max_down_target_m": 2.0,
+        "dry_run": false
+      },
+      "command_transform": {
+        "name": "identity",
+        "matrix": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      },
+      "last_payload": null
+    },
+    "route_state": {
+      "active_gate_index": null,
+      "previous_active_gate_index": null,
+      "gate_index_changed": false,
+      "route_velocity_local_ned_mps": null,
+      "velocity_source": null,
+      "active_gate_position_local_ned_m": null,
+      "active_gate_id": null,
+      "configured_velocity_source": "local_position"
+    }
+  },
+  "samples": [
+    {
+      "cycle": 0,
+      "sim_time_ns": 1781081764971437000,
+      "telemetry": {
+        "sim_time_ns": 2165355000,
+        "attitude": [
+          0.0004191056650597602,
+          -0.15470029413700104,
+          1.883158620330505e-05,
+          -0.9879612922668457
+        ],
+        "velocity_local_ned_mps": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "body_rates_rps": [
+          0.0,
+          0.0,
+          -0.0
+        ],
+        "position_local_ned_m": [
+          -0.00039062497671693563,
+          1.9531249563442543e-05,
+          0.020522460341453552
+        ],
+        "acceleration_local_ned_mps2": [
+          -2.9986796379089355,
+          -0.0016347609926015139,
+          -9.34045124053955
+        ],
+        "system_status": null,
+        "reset_count": 94,
+        "raw": {
+          "source": "ODOMETRY"
+        }
+      }
+    }
+  ]
+}

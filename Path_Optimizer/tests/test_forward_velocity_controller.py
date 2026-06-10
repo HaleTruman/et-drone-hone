@@ -25,7 +25,7 @@ def test_forward_velocity_error_commands_forward_pitch_without_fixed_thrust() ->
     assert target["target_velocity_local_ned_mps"][0] < 2.0
 
 
-def test_measured_yaw_is_not_commanded_back_into_attitude_target() -> None:
+def test_measured_yaw_is_preserved_in_attitude_target() -> None:
     controller = ForwardVelocityAltitudeController(dt_s=0.1, neutral_thrust=0.5)
 
     target = controller.update(
@@ -37,7 +37,7 @@ def test_measured_yaw_is_not_commanded_back_into_attitude_target() -> None:
     )
 
     assert np.isclose(target["measured_roll_pitch_yaw_rad"][2], 1.2)
-    assert target["roll_pitch_yaw_rad"][2] == 0.0
+    assert np.isclose(target["roll_pitch_yaw_rad"][2], 1.2)
 
 
 def test_measured_forward_pitch_damps_forward_pitch_command() -> None:

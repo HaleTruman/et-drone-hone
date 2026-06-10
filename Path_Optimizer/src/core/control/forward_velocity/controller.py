@@ -130,7 +130,7 @@ class ForwardVelocityAltitudeController:
         if altitude_priority_active or altitude_error_ned > 0.0 or vertical_velocity_error > 0.0:
             thrust = min(thrust, trim)
 
-        command_yaw = 0.0
+        command_yaw = yaw
         quaternion = self._quaternion_from_roll_pitch_yaw(roll_cmd, pitch_cmd, command_yaw)
         return {
             "quaternion": quaternion.tolist(),
