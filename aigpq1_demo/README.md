@@ -4,7 +4,7 @@ This is a minimal, self-contained extraction of the exact Q1 runtime path that s
 
 Validated source run:
 
-`aigpq1/Path_Optimizer/logs/q1runtime/run-20260610T083907Z`
+`aigpq1/Flight/logs/q1runtime/run-20260610T083907Z`
 
 Observed result from that run:
 
@@ -26,7 +26,7 @@ Observed result from that run:
 - `src/core/logging/`: JSON run logger.
 - `requirements.txt`: Python dependencies.
 
-The demo does not import from `aigpq1/Path_Optimizer/src`. The runner prepends this folder's local `src` directory to `sys.path`.
+The demo does not import from `aigpq1/Flight/src`. The runner prepends this folder's local `src` directory to `sys.path`.
 
 ## Install
 

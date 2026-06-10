@@ -8,7 +8,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_FLIGHT_SRC = _PROJECT_ROOT / "Path_Optimizer" / "src"
+_FLIGHT_SRC = _PROJECT_ROOT / "Flight" / "src"
 if str(_FLIGHT_SRC) not in sys.path:
     sys.path.insert(0, str(_FLIGHT_SRC))
 
