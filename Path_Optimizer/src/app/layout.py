@@ -132,9 +132,44 @@ def _live_runs_page(live_run_options: list[dict[str, str]]) -> html.Div:
                 ]
             ),
             dcc.Tabs(
-                value="live-events",
+                value="representative-gates",
                 style={"marginTop": "16px"},
                 children=[
+                    dcc.Tab(
+                        label="Representative Gate Map",
+                        value="representative-gates",
+                        children=[
+                            html.Div(
+                                style={**PANEL_STYLE, "marginTop": "16px"},
+                                children=[
+                                    html.H3("Representative Gate Map", style={"margin": "0 0 12px"}),
+                                    html.Div(id="representative-gate-summary", style={"color": COLORS["muted"], "fontSize": "13px", "marginBottom": "12px"}),
+                                    dcc.Graph(id="representative-gate-map-3d", style={"height": "720px"}, config={"displaylogo": False}),
+                                ],
+                            ),
+                            html.Div(
+                                style={**PANEL_STYLE, "marginTop": "16px"},
+                                children=[
+                                    html.H3("Representative Gates", style={"margin": "0 0 12px"}),
+                                    dash_table.DataTable(
+                                        id="representative-gate-table",
+                                        page_action="none",
+                                        sort_action="native",
+                                        style_table={"overflowX": "auto"},
+                                        style_header={"backgroundColor": "#eaf0f8", "fontWeight": "700", "whiteSpace": "normal"},
+                                        style_cell={
+                                            "border": f"1px solid {COLORS['line']}",
+                                            "fontFamily": "SFMono-Regular, Consolas, monospace",
+                                            "fontSize": "12px",
+                                            "padding": "7px",
+                                            "textAlign": "left",
+                                            "whiteSpace": "nowrap",
+                                        },
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
                     dcc.Tab(label="Lifecycle Events", value="live-events", children=[_table_panel("Lifecycle Events", "live-events-table")]),
                     dcc.Tab(label="Telemetry Cycles", value="live-cycles", children=[_table_panel("Telemetry Cycles", "live-cycles-table")]),
                     dcc.Tab(

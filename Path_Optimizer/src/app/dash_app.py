@@ -4,7 +4,7 @@ from dash import Dash
 
 from app.layout import build_layout
 from app.live_callbacks import register_live_callbacks
-from app.live_data import discover_live_run_dirs, load_live_run
+from app.live_data import discover_live_run_dirs, live_run_option
 
 
 ROOT_DIR = str(Path(__file__).resolve().parents[2])
@@ -19,11 +19,7 @@ def create_app() -> Dash:
 
 
 def _live_run_options() -> list[dict[str, str]]:
-    options = []
-    for path in discover_live_run_dirs(ROOT_DIR):
-        run = load_live_run(path)
-        options.append({"label": f"{run.label}  |  {run.name}", "value": path})
-    return options
+    return [live_run_option(path) for path in discover_live_run_dirs(ROOT_DIR)]
 
 
 def run() -> None:

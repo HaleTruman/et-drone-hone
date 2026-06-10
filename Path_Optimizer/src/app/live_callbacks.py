@@ -1,5 +1,6 @@
 import json
 import os
+from functools import lru_cache
 from typing import Any
 
 import numpy as np
@@ -12,7 +13,9 @@ from app.live_data import (
     LiveRun,
     discover_live_run_dirs,
     frame_data_uri,
-    load_live_run,
+    live_run_option,
+    live_run_signature,
+    load_live_run_cached,
     nearest_cycle_for_frame,
     telemetry_times_s,
 )
@@ -27,6 +30,9 @@ LIVE_GRAPH_IDS = (
     "live-system-mode-plot",
 )
 AXIS_COLORS = ("#2563eb", "#dc2626", "#16a34a", "#9333ea")
+MAX_TABLE_ROWS = 500
+MAX_PLOT_POINTS = 5_000
+RAW_PREVIEW_LIMIT_BYTES = 500_000
 
 
 def register_live_callbacks(app: Dash, *, root_dir: str) -> None:
@@ -41,11 +47,10 @@ def register_live_callbacks(app: Dash, *, root_dir: str) -> None:
         options = []
         for path in paths:
             try:
-                run = load_live_run(path)
-                label = f"{run.label}  |  {run.name}"
+                option = live_run_option(path)
             except Exception:  # noqa: BLE001
-                label = os.path.basename(path)
-            options.append({"label": label, "value": path})
+                option = {"label": os.path.basename(path), "value": path}
+            options.append(option)
         values = {option["value"] for option in options}
         selected_value = no_update if selected_path in values else (paths[0] if paths else None)
         return options, selected_value
@@ -72,35 +77,9 @@ def register_live_callbacks(app: Dash, *, root_dir: str) -> None:
         if not run_path:
             return _empty_live_dashboard("No captured runs were found in logs/runs/ or legacy data/live_runs/.")
         try:
-            run = load_live_run(run_path)
+            return _render_live_run_payload(str(run_path), live_run_signature(str(run_path)))
         except Exception as exc:  # noqa: BLE001
             return _empty_live_dashboard(f"Unable to load {run_path}: {exc}")
-
-        event_rows = _rows(run.events)
-        cycle_rows = _rows(run.cycles)
-        frame_max = max(len(run.frames) - 1, 0)
-        marks = _slider_marks(len(run.frames))
-        return (
-            "",
-            _summary_cards(run),
-            _trajectory_figure(run),
-            _vector_figure(run, "Position (LOCAL_NED)", "position_local_ned_m", "LOCAL_NED position (m)"),
-            _vector_figure(run, "Velocity (LOCAL_NED)", "velocity_local_ned_mps", "LOCAL_NED velocity (m/s)"),
-            _vector_figure(run, "Acceleration (LOCAL_NED)", "acceleration_local_ned_mps2", "LOCAL_NED acceleration (m/s^2)"),
-            _vector_figure(run, "Body Rates", "body_rates_rps", "Rate (rad/s)"),
-            _system_mode_figure(run),
-            event_rows,
-            _columns(event_rows),
-            _header_tooltips(event_rows),
-            _tooltips(event_rows),
-            cycle_rows,
-            _columns(cycle_rows),
-            _header_tooltips(cycle_rows),
-            _tooltips(cycle_rows),
-            json.dumps(run.raw, indent=2),
-            frame_max,
-            marks,
-        )
 
     @callback(
         Output("live-frame-index", "value"),
@@ -132,7 +111,7 @@ def register_live_callbacks(app: Dash, *, root_dir: str) -> None:
         if not run_path:
             return "", "No captured run selected.", "", _empty_figure()
         try:
-            run = load_live_run(run_path)
+            run = load_live_run_cached(run_path)
             if not run.frames:
                 return "", "This run does not contain saved FPV frames.", "", _empty_figure()
             index = min(max(frame_index or 0, 0), len(run.frames) - 1)
@@ -162,6 +141,60 @@ def register_live_callbacks(app: Dash, *, root_dir: str) -> None:
             return frame_data_uri(run, frame), caption, json.dumps(details, indent=2), gate_map_figure
         except Exception as exc:  # noqa: BLE001
             return "", f"Unable to render frame: {exc}", "", _empty_figure()
+
+    @callback(
+        Output("representative-gate-map-3d", "figure"),
+        Output("representative-gate-summary", "children"),
+        Output("representative-gate-table", "data"),
+        Output("representative-gate-table", "columns"),
+        Input("live-run-path", "value"),
+        Input("run-poll", "n_intervals"),
+    )
+    def _render_representative_gate_map(run_path: str | None, _n_intervals: int):
+        if not run_path:
+            return _empty_figure(), "No captured run selected.", [], []
+        try:
+            run = load_live_run_cached(run_path)
+            records = _stored_gate_map_records(run)
+            representatives = _representative_gates(records)
+            rows = _representative_gate_rows(representatives)
+            summary = (
+                f"{len(representatives)} representative gates from {len(records)} stored gate records "
+                f"in {run.name}."
+            )
+            return _representative_gate_map_figure(run, records, representatives), summary, rows, _columns(rows)
+        except Exception as exc:  # noqa: BLE001
+            return _empty_figure(), f"Unable to render representative gate map: {exc}", [], []
+
+
+@lru_cache(maxsize=8)
+def _render_live_run_payload(run_path: str, _signature: tuple[int, int, int]):
+    run = load_live_run_cached(run_path)
+    event_rows = _rows(_recent_records(run.events, MAX_TABLE_ROWS))
+    cycle_rows = _rows(_recent_records(run.cycles, MAX_TABLE_ROWS))
+    frame_max = max(len(run.frames) - 1, 0)
+    marks = _slider_marks(len(run.frames))
+    return (
+        "",
+        _summary_cards(run),
+        _trajectory_figure(run),
+        _vector_figure(run, "Position (LOCAL_NED)", "position_local_ned_m", "LOCAL_NED position (m)"),
+        _vector_figure(run, "Velocity (LOCAL_NED)", "velocity_local_ned_mps", "LOCAL_NED velocity (m/s)"),
+        _vector_figure(run, "Acceleration (LOCAL_NED)", "acceleration_local_ned_mps2", "LOCAL_NED acceleration (m/s^2)"),
+        _vector_figure(run, "Body Rates", "body_rates_rps", "Rate (rad/s)"),
+        _system_mode_figure(run),
+        event_rows,
+        _columns(event_rows),
+        _header_tooltips(event_rows),
+        _tooltips(event_rows),
+        cycle_rows,
+        _columns(cycle_rows),
+        _header_tooltips(cycle_rows),
+        _tooltips(cycle_rows),
+        _raw_preview(run),
+        frame_max,
+        marks,
+    )
 
 
 def _empty_live_dashboard(message: str):
@@ -202,7 +235,8 @@ def _summary_cards(run: LiveRun) -> list[html.Div]:
 
 def _trajectory_figure(run: LiveRun) -> go.Figure:
     fig = go.Figure()
-    points = [value_at(cycle, "telemetry", "position_local_ned_m") for cycle in run.cycles]
+    cycles = _plot_cycles(run.cycles)
+    points = [value_at(cycle, "telemetry", "position_local_ned_m") for cycle in cycles]
     points = [point for point in points if isinstance(point, list) and len(point) >= 3]
     if points:
         fig.add_trace(go.Scatter3d(x=[p[0] for p in points], y=[p[1] for p in points], z=[p[2] for p in points], mode="lines+markers", name="Local-NED odometry", line={"color": "#2563eb", "width": 5}, marker={"size": 2}))
@@ -233,8 +267,8 @@ def _gate_map_figure(run: LiveRun, frame: Any, cycle: dict[str, Any] | None, fra
 
     points: list[list[float]] = []
     for gate in gates:
-        position = gate.get("pos")
-        quaternion = gate.get("quat")
+        position = _gate_position(gate)
+        quaternion = _gate_quaternion(gate)
         if not _point3(position):
             continue
         points.append(position)
@@ -297,9 +331,10 @@ def _gate_map_figure(run: LiveRun, frame: Any, cycle: dict[str, Any] | None, fra
 
 def _vector_figure(run: LiveRun, title: str, field: str, y_title: str) -> go.Figure:
     fig = go.Figure()
-    times = telemetry_times_s(run.cycles)
+    cycles = _plot_cycles(run.cycles)
+    times = telemetry_times_s(cycles)
     for index, axis in enumerate(("x", "y", "z")):
-        values = [value_at(cycle, "telemetry", field, index) for cycle in run.cycles]
+        values = [value_at(cycle, "telemetry", field, index) for cycle in cycles]
         if any(value is not None for value in values):
             fig.add_trace(go.Scatter(x=times, y=values, mode="lines", name=axis, line={"color": AXIS_COLORS[index]}))
     fig.update_layout(**_layout(title), xaxis_title="Telemetry time (s)", yaxis_title=y_title)
@@ -308,8 +343,9 @@ def _vector_figure(run: LiveRun, title: str, field: str, y_title: str) -> go.Fig
 
 def _system_mode_figure(run: LiveRun) -> go.Figure:
     fig = go.Figure()
-    times = telemetry_times_s(run.cycles)
-    modes = [str(cycle.get("system_mode", "unknown")) for cycle in run.cycles]
+    cycles = _plot_cycles(run.cycles)
+    times = telemetry_times_s(cycles)
+    modes = [str(cycle.get("system_mode", "unknown")) for cycle in cycles]
     fig.add_trace(go.Scatter(x=times, y=modes, mode="lines+markers", name="System mode", line={"color": "#9333ea", "shape": "hv"}))
     fig.update_layout(**_layout("System Mode"), xaxis_title="Telemetry time (s)", yaxis_title="System mode")
     return fig
@@ -345,15 +381,196 @@ def _mapped_gates_for_frame(run: LiveRun, frame_id: int) -> list[dict[str, Any]]
     return []
 
 
-def _gate_traces(position: list[float], quaternion: list[float], gate_id: str) -> list[go.Scatter3d]:
+def _stored_gate_map_records(run: LiveRun) -> list[dict[str, Any]]:
+    for event in reversed(run.events):
+        gate_map = event.get("gate_map") if isinstance(event, dict) else None
+        if isinstance(gate_map, list):
+            return [gate for gate in gate_map if isinstance(gate, dict) and _point3(_gate_position(gate))]
+
+    records = run.raw.get("vision_frames")
+    if isinstance(records, list):
+        for record in reversed(records):
+            frame = record.get("frame") if isinstance(record, dict) else None
+            gates = frame.get("mapped_gates") if isinstance(frame, dict) else None
+            if isinstance(gates, list):
+                return [gate for gate in gates if isinstance(gate, dict) and _point3(_gate_position(gate))]
+    return []
+
+
+def _representative_gates(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[int, list[dict[str, Any]]] = {}
+    for index, gate in enumerate(records):
+        sequence = gate.get("sequence")
+        if not isinstance(sequence, int):
+            sequence = index
+        grouped.setdefault(sequence, []).append(gate)
+
+    representatives: list[dict[str, Any]] = []
+    for sequence, gates in sorted(grouped.items()):
+        positions = np.asarray([_gate_position(gate) for gate in gates], dtype=float)
+        quaternions = np.asarray(
+            [_gate_quaternion(gate) or [1.0, 0.0, 0.0, 0.0] for gate in gates],
+            dtype=float,
+        )
+        quaternion = np.median(quaternions, axis=0)
+        quaternion = quaternion / max(np.linalg.norm(quaternion), 1e-12)
+        confidences = [float(gate.get("confidence", 0.0)) for gate in gates if isinstance(gate.get("confidence"), (int, float))]
+        representatives.append(
+            {
+                "id": f"sequence-{sequence}",
+                "sequence": sequence,
+                "position_local_ned_m": np.median(positions, axis=0).tolist(),
+                "quaternion": quaternion.tolist(),
+                "confidence": float(np.median(confidences)) if confidences else 0.0,
+                "observation_count": len(gates),
+            }
+        )
+    return representatives
+
+
+def _representative_gate_map_figure(
+    run: LiveRun,
+    records: list[dict[str, Any]],
+    representatives: list[dict[str, Any]],
+) -> go.Figure:
+    fig = go.Figure()
+    raw_points = [_gate_position(gate) for gate in records if _point3(_gate_position(gate))]
+    points: list[list[float]] = list(raw_points)
+    if raw_points:
+        fig.add_trace(
+            go.Scatter3d(
+                x=[point[0] for point in raw_points],
+                y=[point[1] for point in raw_points],
+                z=[point[2] for point in raw_points],
+                mode="markers",
+                name="Stored records",
+                marker={"size": 2, "color": "#94a3b8", "opacity": 0.28},
+                showlegend=True,
+            )
+        )
+
+    colors = ("#2563eb", "#dc2626", "#16a34a", "#9333ea", "#f59e0b", "#0f766e")
+    for index, gate in enumerate(representatives):
+        position = _gate_position(gate)
+        quaternion = _gate_quaternion(gate)
+        if not _point3(position):
+            continue
+        points.append(position)
+        gate_id = str(gate.get("id", f"gate-{index}"))
+        color = colors[index % len(colors)]
+        fig.add_trace(
+            go.Scatter3d(
+                x=[position[0]],
+                y=[position[1]],
+                z=[position[2]],
+                mode="markers+text",
+                name=gate_id,
+                text=[gate_id],
+                textposition="top center",
+                marker={"size": 7, "color": color},
+                showlegend=True,
+            )
+        )
+        if _quat4(quaternion):
+            for trace in _gate_traces(position, quaternion, gate_id, color=color):
+                fig.add_trace(trace)
+
+    axis_ranges = _trajectory_axis_ranges(points)
+    fig.update_layout(
+        **_layout("Representative Gate Map"),
+        dragmode="orbit",
+        uirevision=f"representative-gates:{run.path}",
+        scene={
+            "xaxis": {"title": "North (m)", "range": axis_ranges[0]},
+            "yaxis": {"title": "East (m)", "range": axis_ranges[1]},
+            "zaxis": {"title": "Down (m)", "range": axis_ranges[2]},
+            "aspectmode": "cube",
+            "camera": {"eye": {"x": 1.55, "y": 1.55, "z": 1.1}},
+            "dragmode": "orbit",
+        },
+    )
+    return fig
+
+
+def _representative_gate_rows(gates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for gate in gates:
+        position = _gate_position(gate) or [None, None, None]
+        quaternion = _gate_quaternion(gate) or [None, None, None, None]
+        rows.append(
+            {
+                "id": gate.get("id", ""),
+                "sequence": gate.get("sequence", ""),
+                "observations": gate.get("observation_count", ""),
+                "north_m": _round(position[0]),
+                "east_m": _round(position[1]),
+                "down_m": _round(position[2]),
+                "qw": _round(quaternion[0]),
+                "qx": _round(quaternion[1]),
+                "qy": _round(quaternion[2]),
+                "qz": _round(quaternion[3]),
+                "confidence": _round(gate.get("confidence")),
+            }
+        )
+    return rows
+
+
+def _recent_records(records: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    if len(records) <= limit:
+        return records
+    return records[-limit:]
+
+
+def _plot_cycles(cycles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if len(cycles) <= MAX_PLOT_POINTS:
+        return cycles
+    stride = max(1, int(np.ceil(len(cycles) / MAX_PLOT_POINTS)))
+    sampled = cycles[::stride]
+    if sampled[-1] is not cycles[-1]:
+        sampled.append(cycles[-1])
+    return sampled
+
+
+def _raw_preview(run: LiveRun) -> str:
+    raw = run.raw
+    raw_size = _run_json_size(run)
+    if raw_size <= RAW_PREVIEW_LIMIT_BYTES:
+        return json.dumps(raw, indent=2)
+    preview = {
+        "path": run.path,
+        "name": run.name,
+        "schema_version": run.schema_version,
+        "metadata": run.metadata,
+        "counts": {
+            "events": len(run.events),
+            "cycles": len(run.cycles),
+            "frames": len(run.frames),
+            "vision_frames": len(raw.get("vision_frames", [])) if isinstance(raw.get("vision_frames"), list) else 0,
+            "planned_paths": len(raw.get("planned_paths", [])) if isinstance(raw.get("planned_paths"), list) else 0,
+        },
+        "events_tail": _recent_records(run.events, 50),
+        "cycles_tail": _recent_records(run.cycles, 20),
+        "note": f"Raw JSON is {raw_size:,} bytes, so this tab shows a bounded preview for dashboard responsiveness.",
+    }
+    return json.dumps(preview, indent=2)
+
+
+def _run_json_size(run: LiveRun) -> int:
+    try:
+        return os.path.getsize(os.path.join(run.path, "run.json"))
+    except OSError:
+        return RAW_PREVIEW_LIMIT_BYTES + 1
+
+
+def _gate_traces(position: list[float], quaternion: list[float], gate_id: str, *, color: str = "#7c3aed") -> list[go.Scatter3d]:
     center = np.asarray(position, dtype=float)
     rotation = _rotation_matrix(quaternion)
     outer = _square_points(center, rotation, size=2.7)
     inner = _square_points(center, rotation, size=1.5)
     normal = center + rotation[:, 0] * 1.6
     traces = [
-        go.Scatter3d(x=outer[:, 0], y=outer[:, 1], z=outer[:, 2], mode="lines", name=f"{gate_id} outer", line={"color": "#7c3aed", "width": 5}, showlegend=False),
-        go.Scatter3d(x=inner[:, 0], y=inner[:, 1], z=inner[:, 2], mode="lines", name=f"{gate_id} inner", line={"color": "#a855f7", "width": 3}, showlegend=False),
+        go.Scatter3d(x=outer[:, 0], y=outer[:, 1], z=outer[:, 2], mode="lines", name=f"{gate_id} outer", line={"color": color, "width": 5}, showlegend=False),
+        go.Scatter3d(x=inner[:, 0], y=inner[:, 1], z=inner[:, 2], mode="lines", name=f"{gate_id} inner", line={"color": color, "width": 3}, showlegend=False, opacity=0.65),
         go.Scatter3d(x=[center[0], normal[0]], y=[center[1], normal[1]], z=[center[2], normal[2]], mode="lines", name=f"{gate_id} normal", line={"color": "#f59e0b", "width": 5}, showlegend=False),
     ]
     return traces
@@ -406,3 +623,19 @@ def _point3(value: Any) -> bool:
 
 def _quat4(value: Any) -> bool:
     return isinstance(value, list) and len(value) >= 4 and all(isinstance(item, (int, float)) for item in value[:4])
+
+
+def _gate_position(gate: dict[str, Any]) -> list[float] | None:
+    position = gate.get("position_local_ned_m") or gate.get("pos")
+    return position if _point3(position) else None
+
+
+def _gate_quaternion(gate: dict[str, Any]) -> list[float] | None:
+    quaternion = gate.get("quaternion") or gate.get("quat")
+    return quaternion if _quat4(quaternion) else None
+
+
+def _round(value: Any, digits: int = 3) -> float | str:
+    if not isinstance(value, (int, float)):
+        return ""
+    return round(float(value), digits)

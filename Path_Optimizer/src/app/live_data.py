@@ -2,6 +2,7 @@ import base64
 import json
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from statistics import median
 from typing import Any
@@ -52,6 +53,26 @@ def discover_live_run_dirs(root_dir: str) -> list[str]:
         for path in sorted(paths, key=_run_sort_key, reverse=True)
         if path.is_dir() and (path / "run.json").is_file()
     ]
+
+
+def live_run_option(path: str) -> dict[str, str]:
+    run_dir = Path(path).resolve()
+    timestamp = _timestamp_from_name(run_dir.name)
+    if timestamp is None:
+        label = run_dir.name
+    else:
+        pattern = "%Y-%m-%d %H:%M:%S.%f UTC" if timestamp.microsecond else "%Y-%m-%d %H:%M:%S UTC"
+        label = timestamp.strftime(pattern)
+    return {"label": f"{label}  |  {run_dir.name}", "value": str(run_dir)}
+
+
+def load_live_run_cached(path: str) -> LiveRun:
+    run_dir = Path(path).resolve()
+    return _load_live_run_cached(str(run_dir), *live_run_signature(str(run_dir)))
+
+
+def live_run_signature(path: str) -> tuple[int, int, int]:
+    return _run_signature(Path(path).resolve())
 
 
 def load_live_run(path: str) -> LiveRun:
@@ -154,6 +175,34 @@ def _load_frames(manifest_path: Path) -> list[LiveFrame]:
             )
         )
     return frames
+
+
+@lru_cache(maxsize=16)
+def _load_live_run_cached(
+    resolved_path: str,
+    run_mtime_ns: int,
+    telemetry_mtime_ns: int,
+    frames_mtime_ns: int,
+) -> LiveRun:
+    return load_live_run(resolved_path)
+
+
+def _run_signature(run_dir: Path) -> tuple[int, int, int]:
+    run_path = run_dir / "run.json"
+    telemetry_path = run_dir / "telemetry.json"
+    frames_path = _frames_manifest_path(run_dir)
+    return (
+        _mtime_ns(run_path),
+        _mtime_ns(telemetry_path),
+        _mtime_ns(frames_path),
+    )
+
+
+def _mtime_ns(path: Path) -> int:
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return 0
 
 
 def _frames_manifest_path(run_dir: Path) -> Path:

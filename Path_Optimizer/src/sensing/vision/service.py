@@ -12,6 +12,7 @@ from sensing.vision.landmarker.landmarker import Landmarker, new_landmarker_stat
 from sensing.vision.regressor.cnn_ingress import RawLogitsFrame
 from sensing.vision.regressor.logit_inference import DEFAULT_REGRESSOR_CHECKPOINT, LogitRegressor
 from sensing.vision.regressor.regression_output import build_surveyer_payload
+from sensing.vision.vision_stream import VisionFrame
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,16 @@ class VisionPerceptionService:
             gates=gates,
             source="cnn_regressor",
         )
+
+    def process_vision_frame(self, frame: VisionFrame) -> VisionObservation:
+        return self.process_frame(
+            frame_id=frame.frame_id,
+            sim_time_ns=frame.sim_time_ns,
+            jpeg_bytes=frame.jpeg_bytes,
+        )
+
+    def detect_gates(self, frame: VisionFrame) -> tuple[VisionGateObservation, ...]:
+        return self.process_vision_frame(frame).gates
 
     @property
     def cnn(self) -> LightmaskInference:
