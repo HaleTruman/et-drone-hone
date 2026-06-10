@@ -3,16 +3,12 @@ et-drone-hone/
 ├── docs/
 │   ├── scope.md                        # v0 scope and explicit non-goals.
 │   └── architecture.md                 # Data/control flow across modules.
-├── path_optimizer/
+├── Flight/
 │   ├── physics/                        # model physical constrains
 │   │   ├── local/                      # Per-prop thrust/torque + mixing model.
 │   │   └── global/                     # Vehicle-level limits abstracted from local.
-│   ├── course_model/                   # model course constrains 
-│   │   ├── targets/                    # Rings/gates/waypoints as goal volumes.
-│   │   ├── obstacles/                  # No-go volumes with uncertainty weights.
-│   │   └── free_space/                 # Known traversable regions.
-│   ├── optimizer/                      # Cost functions, constraints (physics + course_model), gradients, splines.
-│   └── planner/                        # Trajectory & path solver using physics + course_model + optimizer
+│   ├── optimizer/                      # Cost functions, constraints, gradients, splines.
+│   └── planner/                        # Trajectory & path solver using physics + optimizer
 │
 │ #Live UE
 │
@@ -40,7 +36,7 @@ et-drone-hone/
 │   ├── http_bridge/                    # Python utilities for in-engine HTTP control for unreal + any endpoint
 │   ├── runtime/                        # Live loop: perceive → plan → act → log.
 │   ├── models/                         # Inference wrappers + model artifacts.
-│   ├── optimizer/                      # Glue to call path_optimizer with beliefs.
+│   ├── optimizer/                      # Glue to call the flight planner with beliefs.
 │   └── interfaces/                     # UE sim IO, real-drone IO, logging shims.
 ├── learning/
 │   ├── online/                         # Live adaptation and drift handling.
