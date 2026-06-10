@@ -7,9 +7,9 @@ import numpy as np
 
 @dataclass(frozen=True)
 class BodyRatePositionGuidanceConfig:
-    position_kp_deg_per_m: float = 32.0
+    position_kp_deg_per_m: float = 16.0
     velocity_kd_deg_per_mps: float = 4.0
-    max_tilt_deg: float = 32.0
+    max_tilt_deg: float = 16.0
     position_deadband_m: float = 0.05
 
 

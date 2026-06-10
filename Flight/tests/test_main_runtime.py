@@ -81,6 +81,7 @@ def test_body_rate_guidance_builds_attitude_target_toward_gate() -> None:
     assert payload["attitude_type_mask"] == 128
     assert payload["thrust"] > controller.config.base_thrust
     assert payload["body_rates_rps"][1] > 0.0
+    assert payload["target_roll_pitch_deg"] == [0.0, 16.0]
     assert payload["gate_id"] == "gate-1"
     assert payload["vision_frame_id"] == 12
     np.testing.assert_allclose(payload["target_control"]["target_position_local_ned_m"], [1.0, 0.0, -0.4])
