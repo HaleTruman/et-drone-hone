@@ -1,7 +1,8 @@
 import numpy as np
 
+from core.schemas import ImuSample
+from sensing.odometry import initial_odometry_state, integrate_highres_imu
 from simulator import TelemetrySimulator
-from sensing.estimation.state_estimator import StateEstimator
 
 
 def test_emits_expected_mavlink_telemetry_messages() -> None:
@@ -34,29 +35,37 @@ def test_bridge_samples_are_normalized_and_fall_under_gravity() -> None:
     np.testing.assert_allclose(np.linalg.norm(samples[0].attitude), 1.0)
     assert np.linalg.norm(samples[0].velocity_local_ned_mps) < 0.1
     assert samples[-1].velocity_local_ned_mps[2] > 0.0
-    assert samples[-1].raw["acceleration_local_ned_mps2"][2] > 0.0
+    assert samples[-1].acceleration_local_ned_mps2[2] > 0.0
 
 
-def test_state_estimator_tracks_relative_fall_from_telemetry() -> None:
+def test_local_ned_odometry_integrates_highres_imu_velocity() -> None:
+    state = initial_odometry_state()
+    imu = ImuSample(
+        sim_time_ns=1_000_000_000,
+        acceleration_local_ned_mps2=(0.0, 0.0, 0.0),
+        gyro_frd_rps=(0.0, 0.0, 0.0),
+        velocity_local_ned_mps=(2.0, 0.0, -1.0),
+    )
+
+    updated = integrate_highres_imu(state, imu)
+
+    np.testing.assert_allclose(updated.position_local_ned_m, (1.0, 0.0, -0.5))
+
+
+def test_highres_imu_odometry_tracks_truth_when_initialized_in_simulator_frame() -> None:
     simulator = TelemetrySimulator(telemetry_hz=10.0)
-    estimator = StateEstimator()
+    state = initial_odometry_state(position_local_ned_m=tuple(simulator._harness.initial_state[0:3]))
 
     for sample in simulator.telemetry_samples(duration_s=0.5):
-        estimator.update_from_telemetry(sample)
+        imu = ImuSample(
+            sim_time_ns=sample.sim_time_ns,
+            acceleration_local_ned_mps2=sample.acceleration_local_ned_mps2,
+            gyro_frd_rps=sample.body_rates_rps,
+            velocity_local_ned_mps=sample.velocity_local_ned_mps,
+        )
+        state = integrate_highres_imu(state, imu)
 
-    estimated_relative_z = estimator.get_13_state()[2]
-    model_relative_z = simulator._harness.state[2] - simulator._harness.initial_state[2]
-    np.testing.assert_allclose(estimated_relative_z, model_relative_z, atol=0.05)
-
-
-def test_state_estimator_tracks_truth_when_initialized_in_simulator_frame() -> None:
-    simulator = TelemetrySimulator(telemetry_hz=10.0)
-    estimator = StateEstimator(initial_state=simulator._harness.initial_state)
-
-    for sample in simulator.telemetry_samples(duration_s=0.5):
-        estimator.update_from_telemetry(sample)
-
-    np.testing.assert_allclose(estimator.get_13_state()[0:3], simulator._harness.state[0:3], atol=0.05)
+    np.testing.assert_allclose(state.position_local_ned_m, simulator._harness.state[0:3], atol=0.05)
 
 
 def test_noise_is_repeatable_and_changes_ideal_velocity() -> None:

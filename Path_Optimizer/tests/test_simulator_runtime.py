@@ -3,7 +3,7 @@ from pathlib import Path
 
 import numpy as np
 
-from core.modes import ControlMode, FlightMode, ModeSelection, SystemMode, validate_modes
+from core.modes import ModeState, RaceMode, SystemMode
 from simulator.runtime import SimulatorRuntime
 from simulator.scenario import load_scenario
 
@@ -11,10 +11,11 @@ from simulator.scenario import load_scenario
 SCENARIOS = Path(__file__).resolve().parents[1] / "scenarios"
 
 
-def test_mode_compatibility_accepts_slim_flight_modes() -> None:
-    validate_modes(ModeSelection(SystemMode.ARMED, FlightMode.HOVER, ControlMode.POSITION_HOLD))
-    validate_modes(ModeSelection(SystemMode.ARMED, FlightMode.WAYPOINT, ControlMode.WAYPOINT_FOLLOW))
-    validate_modes(ModeSelection(SystemMode.RACING, FlightMode.TRAJECTORY, ControlMode.TRAJECTORY_TRACK))
+def test_runtime_modes_are_system_plus_race_intent() -> None:
+    modes = ModeState(SystemMode.ARMED, RaceMode.HOLD)
+
+    assert modes.system == SystemMode.ARMED
+    assert modes.race == RaceMode.HOLD
 
 
 def test_scenario_normalizes_initial_quaternion() -> None:
@@ -24,8 +25,20 @@ def test_scenario_normalizes_initial_quaternion() -> None:
     assert scenario.initial_state[2] == -1.0
 
 
-def test_invalid_mode_event_faults_and_is_logged(tmp_path) -> None:
-    runtime = SimulatorRuntime(load_scenario(SCENARIOS / "invalid_mode_fault.json"), telemetry_hz=10, realtime=False)
+def test_invalid_system_mode_event_faults_and_is_logged(tmp_path) -> None:
+    scenario_path = tmp_path / "invalid_system.json"
+    scenario_path.write_text(
+        json.dumps(
+            {
+                "name": "invalid_system",
+                "duration_s": 1.0,
+                "initial_modes": {"system": "IDLE"},
+                "events": [{"at_s": 0.1, "type": "set_modes", "system": "NOT_A_MODE"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    runtime = SimulatorRuntime(load_scenario(scenario_path), telemetry_hz=10, realtime=False)
     path = runtime.run(tmp_path / "run.json")
     payload = json.loads(path.read_text(encoding="utf-8"))
 

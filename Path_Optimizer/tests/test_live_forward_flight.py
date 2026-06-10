@@ -2,7 +2,7 @@ import json
 import time
 
 from test import LiveHoverTestConfig, LiveHoverTestRunner
-from sensing.telemetry.mavlink_bridge import TelemetrySample
+from core.schemas import TelemetrySample
 
 
 class FakeBridge:

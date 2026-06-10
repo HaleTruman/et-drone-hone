@@ -6,7 +6,7 @@ import json
 import socket
 import threading
 from collections import deque
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -43,6 +43,7 @@ class VisionStreamReceiver:
         self._socket: socket.socket | None = None
         self._running = threading.Event()
         self._lock = threading.Lock()
+        self._saved_frame_paths: dict[int, str] = {}
         self.saved_frame_count = 0
         self.invalid_packet_count = 0
         self.dropped_partial_frame_count = 0
@@ -146,14 +147,36 @@ class VisionStreamReceiver:
     def _save_frame(self, frame_id: int, sim_time_ns: int, jpeg_bytes: bytes) -> str | None:
         if self.output_dir is None:
             return None
+        if frame_id in self._saved_frame_paths:
+            return self._saved_frame_paths[frame_id]
         filename = f"frame-{frame_id:08d}-{sim_time_ns}.jpg"
         path = self.output_dir / filename
         path.write_bytes(jpeg_bytes)
-        metadata = {"frame_id": frame_id, "sim_time_ns": sim_time_ns, "jpeg_size": len(jpeg_bytes), "path": filename}
-        with (self.output_dir / "frames.jsonl").open("a", encoding="utf-8") as manifest:
+        manifest_path = self._manifest_path()
+        manifest_record_path = self._manifest_record_path(path, manifest_path)
+        metadata = {
+            "frame_id": frame_id,
+            "sim_time_ns": sim_time_ns,
+            "jpeg_size": len(jpeg_bytes),
+            "path": manifest_record_path,
+        }
+        with manifest_path.open("a", encoding="utf-8") as manifest:
             manifest.write(json.dumps(metadata, separators=(",", ":")) + "\n")
+        self._saved_frame_paths[frame_id] = str(path)
         self.saved_frame_count += 1
         return str(path)
+
+    def _manifest_path(self) -> Path:
+        assert self.output_dir is not None
+        if self.output_dir.name in {"frames", "vision_frames"}:
+            return self.output_dir.parent / "frames.jsonl"
+        return self.output_dir / "frames.jsonl"
+
+    def _manifest_record_path(self, image_path: Path, manifest_path: Path) -> str:
+        try:
+            return image_path.relative_to(manifest_path.parent).as_posix()
+        except ValueError:
+            return image_path.name
 
     def _trim_partial_frames(self) -> None:
         while len(self._partial_frames) > self.max_partial_frames:

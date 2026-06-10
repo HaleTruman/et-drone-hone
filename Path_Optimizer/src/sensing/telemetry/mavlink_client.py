@@ -1,57 +1,40 @@
-"""MAVLink transport and state cache for the AI GP simulator."""
-
-from __future__ import annotations
+"""MAVLink client and raw message cache for the AI GP simulator."""
 
 import struct
 import threading
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from typing import Any, Callable
+
+from core.coordinates import quat_wxyz, quaternion_from_roll_pitch_yaw, vec3
+from core.schemas import (
+    CollisionEvent,
+    MavlinkActuatorOutputStatus,
+    MavlinkAttitude,
+    MavlinkHeartbeat,
+    MavlinkHighresImu,
+    MavlinkLocalPositionNed,
+    MavlinkOdometry,
+    MavlinkTimesync,
+    OdometryState,
+    RaceStatus,
+    RuntimeStatus,
+    TelemetrySample,
+    TrackGate,
+    Vec3,
+)
 
 ENCAPSULATED_RACE_STATUS_MSG_ID = 1
 ENCAPSULATED_TRACK_INFO_MSG_ID = 2
 MAVLINK_CMD_SIM_RESET = 31000
+MAV_FRAME_LOCAL_NED = 1
+MAV_FRAME_BODY_FRD = 12
+MAV_MODE_FLAG_SAFETY_ARMED = 128
+ZERO_VEC3 = (0.0, 0.0, 0.0)
+IDENTITY_QUATERNION = (1.0, 0.0, 0.0, 0.0)
 
 
-@dataclass(frozen=True)
-class TelemetrySample:
-    sim_time_ns: int
-    attitude: tuple[float, float, float, float]
-    velocity_local_ned_mps: tuple[float, float, float]
-    body_rates_rps: tuple[float, float, float]
-    position_local_ned_m: tuple[float, float, float] | None = None
-    acceleration_local_ned_mps2: tuple[float, float, float] | None = None
-    system_status: str | None = None
-    reset_count: int | None = None
-    raw: dict[str, Any] | None = None
-
-
-@dataclass(frozen=True)
-class RaceStatus:
-    sim_boot_time_ms: int
-    race_start_boot_time_ms: int
-    race_finish_time_ns: int
-    active_gate_index: int
-    last_gate_race_time: int
-
-
-@dataclass(frozen=True)
-class TrackGate:
-    gate_id: int
-    position_local_ned_m: tuple[float, float, float]
-    quaternion: tuple[float, float, float, float]
-    width_m: float
-    height_m: float
-
-
-@dataclass(frozen=True)
-class CollisionEvent:
-    collision_id: int
-    threat_level: int
-    impact_kg_mps: float
-
-
-class MavlinkBridge:
+class MavlinkClient:
     """Live MAVLink UDP client with a transport-neutral offline fallback."""
 
     def __init__(
@@ -73,23 +56,24 @@ class MavlinkBridge:
         self._track_chunks: dict[int, dict[int, bytes]] = {}
         self._expected_track_chunks: dict[int, int] = {}
 
-        self._latest_telemetry: TelemetrySample | None = None
-        self.starting_telemetry: TelemetrySample | None = None
         self.connected = False
         self.heartbeat_started = False
         self.telemetry_subscribed = False
         self.armed = False
         self.last_heartbeat_monotonic_s: float | None = None
-        self.latest_timesync: dict[str, int] | None = None
-        self.latest_attitude: dict[str, Any] | None = None
-        self.latest_local_position: dict[str, Any] | None = None
-        self.latest_imu: dict[str, Any] | None = None
-        self.latest_actuator_output: dict[str, Any] | None = None
+        self.latest_timesync: MavlinkTimesync | None = None
+        self.latest_heartbeat: MavlinkHeartbeat | None = None
+        self.latest_attitude: MavlinkAttitude | None = None
+        self.latest_local_position: MavlinkLocalPositionNed | None = None
+        self.latest_imu: MavlinkHighresImu | None = None
+        self.latest_odometry: MavlinkOdometry | None = None
+        self.latest_actuator_output: MavlinkActuatorOutputStatus | None = None
         self.race_status: RaceStatus | None = None
         self.track_gates: list[TrackGate] = []
         self.collisions: list[CollisionEvent] = []
         self.latest_position_target: dict[str, Any] | None = None
         self.latest_attitude_target: dict[str, Any] | None = None
+        self._latest_message_monotonic_s: float | None = None
 
     @property
     def is_live(self) -> bool:
@@ -262,28 +246,56 @@ class MavlinkBridge:
         )
 
     def get_latest_telemetry(self) -> TelemetrySample | None:
-        with self._lock:
-            return self._latest_telemetry
+        """Build controller-facing telemetry from cached raw MAVLink messages."""
 
-    def update_latest_telemetry(self, sample: TelemetrySample) -> None:
-        with self._lock:
-            self._latest_telemetry = sample
-            if self.starting_telemetry is None:
-                self.starting_telemetry = sample
+        if self.latest_odometry is None and self.latest_local_position is None:
+            return None
+
+        sim_time_ns = self._latest_sample_time_ns()
+        state = OdometryState(
+            sim_time_ns=sim_time_ns,
+            position_local_ned_m=self._latest_position_local_ned_m(),
+            velocity_local_ned_mps=self._latest_velocity_local_ned_mps(),
+            attitude_quaternion=self._latest_attitude_quaternion(),
+            body_rates_frd_rps=self._latest_body_rates_frd_rps(),
+            acceleration_local_ned_mps2=ZERO_VEC3,
+        )
+        return TelemetrySample(
+            sim_time_ns=sim_time_ns,
+            odometry=state,
+            system_status=self._latest_system_status(),
+            reset_count=None if self.latest_odometry is None else self.latest_odometry.reset_count,
+            diagnostic_odometry=None if self.latest_odometry is None else asdict(self.latest_odometry),
+            raw={"source": "mavlink_client"},
+        )
+
+    def status(self) -> RuntimeStatus:
+        now = time.monotonic()
+        message_age_s = None if self._latest_message_monotonic_s is None else now - self._latest_message_monotonic_s
+        heartbeat_age_s = None if self.last_heartbeat_monotonic_s is None else now - self.last_heartbeat_monotonic_s
+        return RuntimeStatus(
+            connected=self.connected,
+            running=self._running.is_set(),
+            heartbeat_started=self.heartbeat_started,
+            telemetry_subscribed=self.telemetry_subscribed,
+            armed=self.armed,
+            latest_message_age_s=message_age_s,
+            latest_heartbeat_age_s=heartbeat_age_s,
+        )
 
     def snapshot(self) -> dict[str, Any]:
-        telemetry = self.get_latest_telemetry()
         return {
             "endpoint": self.endpoint,
             "connected": self.connected,
             "armed": self.armed,
-            "latest_telemetry": asdict(telemetry) if telemetry else None,
-            "starting_telemetry": asdict(self.starting_telemetry) if self.starting_telemetry else None,
-            "latest_timesync": self.latest_timesync,
-            "latest_attitude": self.latest_attitude,
-            "latest_local_position": self.latest_local_position,
-            "latest_imu": self.latest_imu,
-            "latest_actuator_output": self.latest_actuator_output,
+            "status": asdict(self.status()),
+            "latest_heartbeat": self._snapshot_value(self.latest_heartbeat),
+            "latest_timesync": self._snapshot_value(self.latest_timesync),
+            "latest_attitude": self._snapshot_value(self.latest_attitude),
+            "latest_local_position": self._snapshot_value(self.latest_local_position),
+            "latest_imu": self._snapshot_value(self.latest_imu),
+            "latest_odometry": self._snapshot_value(self.latest_odometry),
+            "latest_actuator_output": self._snapshot_value(self.latest_actuator_output),
             "race_status": asdict(self.race_status) if self.race_status else None,
             "track_gates": [asdict(gate) for gate in self.track_gates],
             "collisions": [asdict(collision) for collision in self.collisions],
@@ -355,47 +367,98 @@ class MavlinkBridge:
             time.sleep(1.0 / self.timesync_hz)
 
     def _on_heartbeat(self, msg: Any) -> None:
-        mavutil = self._require_mavutil()
-        self.armed = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
+        self.armed = bool(msg.base_mode & MAV_MODE_FLAG_SAFETY_ARMED)
         self.last_heartbeat_monotonic_s = time.monotonic()
+        self.latest_heartbeat = MavlinkHeartbeat(
+            type=getattr(msg, "type", None),
+            autopilot=getattr(msg, "autopilot", None),
+            base_mode=int(msg.base_mode),
+            custom_mode=getattr(msg, "custom_mode", None),
+            system_status=getattr(msg, "system_status", None),
+            mavlink_version=getattr(msg, "mavlink_version", None),
+        )
+        self._mark_message_received()
 
     def _on_timesync(self, msg: Any) -> None:
-        self.latest_timesync = {"request_time_ns": int(msg.ts1), "response_time_ns": int(msg.tc1)}
+        self.latest_timesync = MavlinkTimesync(ts1=int(msg.ts1), tc1=int(msg.tc1))
+        self._mark_message_received()
 
     def _on_attitude(self, msg: Any) -> None:
-        self.latest_attitude = {
-            "time_boot_ms": int(msg.time_boot_ms),
-            "euler_rad": (float(msg.roll), float(msg.pitch), float(msg.yaw)),
-            "body_rates_rps": (float(msg.rollspeed), float(msg.pitchspeed), float(msg.yawspeed)),
-        }
+        self.latest_attitude = MavlinkAttitude(
+            time_boot_ms=int(msg.time_boot_ms),
+            roll_rad=float(msg.roll),
+            pitch_rad=float(msg.pitch),
+            yaw_rad=float(msg.yaw),
+            angular_velocity_body_frd_rps=vec3((float(msg.rollspeed), float(msg.pitchspeed), float(msg.yawspeed))),
+        )
+        self._mark_message_received()
 
     def _on_local_position_ned(self, msg: Any) -> None:
-        self.latest_local_position = {
-            "time_boot_ms": int(msg.time_boot_ms),
-            "position_local_ned_m": (float(msg.x), float(msg.y), float(msg.z)),
-            "velocity_local_ned_mps": (float(msg.vx), float(msg.vy), float(msg.vz)),
-        }
+        self.latest_local_position = MavlinkLocalPositionNed(
+            time_boot_ms=int(msg.time_boot_ms),
+            position_local_ned_m=(float(msg.x), float(msg.y), float(msg.z)),
+            velocity_local_ned_mps=(float(msg.vx), float(msg.vy), float(msg.vz)),
+        )
+        self._mark_message_received()
 
     def _on_odometry(self, msg: Any) -> None:
-        acceleration = None if self.latest_imu is None else self.latest_imu["acceleration_local_ned_mps2"]
-        sample = TelemetrySample(
-            sim_time_ns=int(msg.time_usec) * 1_000,
-            position_local_ned_m=(float(msg.x), float(msg.y), float(msg.z)),
-            attitude=tuple(float(value) for value in msg.q),
-            velocity_local_ned_mps=(float(msg.vx), float(msg.vy), float(msg.vz)),
-            body_rates_rps=(float(msg.rollspeed), float(msg.pitchspeed), float(msg.yawspeed)),
-            acceleration_local_ned_mps2=acceleration,
+        frame_id = int(msg.frame_id)
+        child_frame_id = int(msg.child_frame_id)
+        position_local_ned_m = None
+        velocity_local_ned_mps = None
+        position_m = None
+        velocity_mps = None
+        angular_velocity_body_frd_rps = None
+        angular_velocity_rps = None
+        if int(msg.frame_id) == MAV_FRAME_LOCAL_NED:
+            position_local_ned_m = (float(msg.x), float(msg.y), float(msg.z))
+            velocity_local_ned_mps = (float(msg.vx), float(msg.vy), float(msg.vz))
+        else:
+            position_m = (float(msg.x), float(msg.y), float(msg.z))
+            velocity_mps = (float(msg.vx), float(msg.vy), float(msg.vz))
+        if int(msg.child_frame_id) == MAV_FRAME_BODY_FRD:
+            angular_velocity_body_frd_rps = (
+                float(msg.rollspeed),
+                float(msg.pitchspeed),
+                float(msg.yawspeed),
+            )
+        else:
+            angular_velocity_rps = (float(msg.rollspeed), float(msg.pitchspeed), float(msg.yawspeed))
+        self.latest_odometry = MavlinkOdometry(
+            time_usec=int(msg.time_usec),
+            frame_id=frame_id,
+            child_frame_id=child_frame_id,
+            attitude_quaternion=quat_wxyz(msg.q),
+            pose_covariance=tuple(float(value) for value in getattr(msg, "pose_covariance", ())),
+            velocity_covariance=tuple(float(value) for value in getattr(msg, "velocity_covariance", ())),
             reset_count=int(msg.reset_counter),
-            raw={"source": "ODOMETRY"},
+            estimator_type=int(msg.estimator_type),
+            position_local_ned_m=position_local_ned_m,
+            velocity_local_ned_mps=velocity_local_ned_mps,
+            position_m=position_m,
+            velocity_mps=velocity_mps,
+            angular_velocity_body_frd_rps=angular_velocity_body_frd_rps,
+            angular_velocity_rps=angular_velocity_rps,
         )
-        self.update_latest_telemetry(sample)
+        self._mark_message_received()
 
     def _on_highres_imu(self, msg: Any) -> None:
-        self.latest_imu = {
-            "time_boot_us": int(msg.time_usec),
-            "acceleration_local_ned_mps2": (float(msg.xacc), float(msg.yacc), float(msg.zacc)),
-            "gyro_rps": (float(msg.xgyro), float(msg.ygyro), float(msg.zgyro)),
-        }
+        magnetic_field_gauss = None
+        if all(hasattr(msg, axis) for axis in ("xmag", "ymag", "zmag")):
+            magnetic_field_gauss = vec3((float(msg.xmag), float(msg.ymag), float(msg.zmag)))
+        self.latest_imu = MavlinkHighresImu(
+            time_boot_us=int(msg.time_usec),
+            acceleration_body_frd_mps2=vec3((float(msg.xacc), float(msg.yacc), float(msg.zacc))),
+            gyro_body_frd_rps=vec3((float(msg.xgyro), float(msg.ygyro), float(msg.zgyro))),
+            magnetic_field_gauss=magnetic_field_gauss,
+            absolute_pressure_hpa=None if not hasattr(msg, "abs_pressure") else float(msg.abs_pressure),
+            differential_pressure_hpa=None if not hasattr(msg, "diff_pressure") else float(msg.diff_pressure),
+            pressure_altitude_m=None if not hasattr(msg, "pressure_alt") else float(msg.pressure_alt),
+            temperature_c=None if not hasattr(msg, "temperature") else float(msg.temperature),
+            fields_updated=None if not hasattr(msg, "fields_updated") else int(msg.fields_updated),
+            id=None if not hasattr(msg, "id") else int(msg.id),
+        )
+        self._mark_message_received()
 
     def _on_encapsulated_data(self, msg: Any) -> None:
         raw_payload = bytes(msg.data)
@@ -444,22 +507,89 @@ class MavlinkBridge:
         self.track_gates = gates
 
     def _on_actuator_output_status(self, msg: Any) -> None:
-        self.latest_actuator_output = {
-            "time_boot_us": int(msg.time_usec),
-            "motor_commands": tuple(float(value) for value in msg.actuator[:4]),
-        }
+        self.latest_actuator_output = MavlinkActuatorOutputStatus(
+            time_boot_us=int(msg.time_usec),
+            active=int(msg.active),
+            actuator=tuple(float(value) for value in msg.actuator),
+        )
+        self._mark_message_received()
 
     def _on_collision(self, msg: Any) -> None:
         self.collisions.append(CollisionEvent(int(msg.id), int(msg.threat_level), float(msg.horizontal_minimum_delta)))
+        self._mark_message_received()
 
     def _time_boot_ms(self) -> int:
-        if self._latest_telemetry is not None:
-            return self._latest_telemetry.sim_time_ns // 1_000_000
+        if self.latest_odometry is not None:
+            return self.latest_odometry.time_usec // 1_000
+        if self.latest_imu is not None:
+            return self.latest_imu.time_boot_us // 1_000
+        if self.latest_local_position is not None:
+            return self.latest_local_position.time_boot_ms
+        if self.latest_attitude is not None:
+            return self.latest_attitude.time_boot_ms
         return 0
+
+    def _latest_sample_time_ns(self) -> int:
+        if self.latest_odometry is not None:
+            return self.latest_odometry.time_usec * 1_000
+        if self.latest_local_position is not None:
+            return self.latest_local_position.time_boot_ms * 1_000_000
+        if self.latest_attitude is not None:
+            return self.latest_attitude.time_boot_ms * 1_000_000
+        return 0
+
+    def _latest_position_local_ned_m(self) -> Vec3:
+        if self.latest_odometry is not None and self.latest_odometry.position_local_ned_m is not None:
+            return self.latest_odometry.position_local_ned_m
+        if self.latest_local_position is not None:
+            return self.latest_local_position.position_local_ned_m
+        return ZERO_VEC3
+
+    def _latest_velocity_local_ned_mps(self) -> Vec3:
+        if self.latest_odometry is not None and self.latest_odometry.velocity_local_ned_mps is not None:
+            return self.latest_odometry.velocity_local_ned_mps
+        if self.latest_local_position is not None:
+            return self.latest_local_position.velocity_local_ned_mps
+        return ZERO_VEC3
+
+    def _latest_attitude_quaternion(self) -> tuple[float, float, float, float]:
+        if self.latest_odometry is not None:
+            return self.latest_odometry.attitude_quaternion
+        if self.latest_attitude is None:
+            return IDENTITY_QUATERNION
+        return quaternion_from_roll_pitch_yaw(
+            -self.latest_attitude.roll_rad,
+            -self.latest_attitude.pitch_rad,
+            self.latest_attitude.yaw_rad,
+        )
+
+    def _latest_body_rates_frd_rps(self) -> Vec3:
+        if (
+            self.latest_odometry is not None
+            and self.latest_odometry.angular_velocity_body_frd_rps is not None
+        ):
+            return self.latest_odometry.angular_velocity_body_frd_rps
+        if self.latest_attitude is not None:
+            return self.latest_attitude.angular_velocity_body_frd_rps
+        return ZERO_VEC3
+
+    def _latest_system_status(self) -> str | None:
+        if self.latest_heartbeat is None or self.latest_heartbeat.system_status is None:
+            return None
+        return str(self.latest_heartbeat.system_status)
+
+    def _mark_message_received(self) -> None:
+        self._latest_message_monotonic_s = time.monotonic()
+
+    @staticmethod
+    def _snapshot_value(value: Any) -> Any:
+        if hasattr(value, "__dataclass_fields__"):
+            return asdict(value)
+        return value
 
     def _require_connection(self) -> Any:
         if self._connection is None:
-            raise RuntimeError("MAVLink bridge is not connected")
+            raise RuntimeError("MAVLink client is not connected")
         return self._connection
 
     @staticmethod

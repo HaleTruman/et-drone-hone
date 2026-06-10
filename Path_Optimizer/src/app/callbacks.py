@@ -77,8 +77,8 @@ def register_callbacks(app: Dash, *, root_dir: str) -> None:
             "",
             _summary_cards(run),
             _trajectory_figure(run),
-            _vector_figure(run, "Position", "position_local_ned_m", "Position (m)"),
-            _vector_figure(run, "Velocity", "velocity_local_ned_mps", "Velocity (m/s)"),
+            _vector_figure(run, "Position (LOCAL_NED)", "position_local_ned_m", "LOCAL_NED position (m)"),
+            _vector_figure(run, "Velocity (LOCAL_NED)", "velocity_local_ned_mps", "LOCAL_NED velocity (m/s)"),
             _controls_figure(run),
             _vector_figure(run, "Attitude Quaternion", "attitude_quaternion", "Quaternion", axes=("w", "x", "y", "z")),
             _vector_figure(run, "Body Rates", "body_rates_rps", "Rate (rad/s)"),
@@ -141,7 +141,8 @@ def _trajectory_figure(run: RunLog) -> go.Figure:
     for label, key, color in (
         ("Simulator truth", "simulator_truth", "#2563eb"),
         ("Estimated", "estimated_state", "#dc2626"),
-        ("Telemetry", "telemetry", "#111827"),
+        ("Odometry", "odometry", "#111827"),
+        ("Telemetry", "telemetry", "#64748b"),
     ):
         points = [value_at(cycle, key, "position_local_ned_m") for cycle in run.cycles]
         points = [point for point in points if isinstance(point, list) and len(point) >= 3]
@@ -185,7 +186,7 @@ def _trajectory_figure(run: RunLog) -> go.Figure:
     axis_ranges = _trajectory_axis_ranges(all_points)
     ui_revision = f"trajectory:{run.path}"
     fig.update_layout(
-        **_layout("Trajectory (Local NED)"),
+        **_layout("Trajectory (LOCAL_NED)"),
         dragmode="orbit",
         uirevision=ui_revision,
         scene={
@@ -272,7 +273,12 @@ def _is_point_list(value: Any) -> bool:
 def _vector_figure(run: RunLog, title: str, field: str, y_title: str, *, axes: tuple[str, ...] = ("x", "y", "z")) -> go.Figure:
     fig = go.Figure()
     times = cycle_times_s(run.cycles)
-    for source_label, source_key, dash in (("Truth", "simulator_truth", "solid"), ("Estimate", "estimated_state", "dash")):
+    for source_label, source_key, dash in (
+        ("Truth", "simulator_truth", "solid"),
+        ("Odometry", "odometry", "dash"),
+        ("Telemetry", "telemetry", "dot"),
+        ("Estimate", "estimated_state", "dashdot"),
+    ):
         for index, axis in enumerate(axes):
             values = [value_at(cycle, source_key, field, index) for cycle in run.cycles]
             if any(value is not None for value in values):
@@ -309,7 +315,7 @@ def _timing_figure(run: RunLog) -> go.Figure:
 def _modes_figure(run: RunLog) -> go.Figure:
     fig = go.Figure()
     times = cycle_times_s(run.cycles)
-    for label, key in (("System", "system"), ("Flight", "flight"), ("Control", "control")):
+    for label, key in (("System", "system"), ("Race", "race")):
         values = [value_at(cycle, "modes", key) for cycle in run.cycles]
         if any(value is not None for value in values):
             fig.add_trace(go.Scatter(x=times, y=values, mode="lines", name=label, line={"shape": "hv"}))
@@ -405,11 +411,14 @@ def _playback_frame_indices(run: RunLog) -> list[int]:
 def _quadrotor_pose(cycle: dict[str, Any]) -> tuple[list[float], list[float]]:
     return (
         value_at(cycle, "simulator_truth", "position_local_ned_m")
+        or value_at(cycle, "odometry", "position_local_ned_m")
         or value_at(cycle, "estimated_state", "position_local_ned_m")
         or value_at(cycle, "telemetry", "position_local_ned_m")
         or [0.0, 0.0, 0.0],
         value_at(cycle, "simulator_truth", "attitude_quaternion")
+        or value_at(cycle, "odometry", "attitude_quaternion")
         or value_at(cycle, "estimated_state", "attitude_quaternion")
+        or value_at(cycle, "telemetry", "attitude_quaternion")
         or value_at(cycle, "telemetry", "attitude")
         or [1.0, 0.0, 0.0, 0.0],
     )

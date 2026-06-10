@@ -19,7 +19,7 @@ PANEL_STYLE = {
 }
 
 
-def build_layout(*, simulation_options: list[dict[str, str]], live_run_options: list[dict[str, str]]) -> html.Div:
+def build_layout(*, live_run_options: list[dict[str, str]]) -> html.Div:
     return html.Div(
         style={
             "background": COLORS["canvas"],
@@ -39,68 +39,16 @@ def build_layout(*, simulation_options: list[dict[str, str]], live_run_options: 
                         children=[
                             html.Div(
                                 children=[
-                                    html.H1("Racing Stack Run Explorer", style={"fontSize": "30px", "margin": "0 0 4px"}),
+                                    html.H1("Live Run Explorer", style={"fontSize": "30px", "margin": "0 0 4px"}),
                                     html.P(
-                                        "Inspect offline logs and captured simulator runs.",
+                                        "Inspect captured MAVLink telemetry and FPV frame runs.",
                                         style={"color": COLORS["muted"], "margin": 0},
                                     ),
                                 ]
                             ),
                         ],
                     ),
-                    dcc.Tabs(
-                        value="simulations",
-                        style={"marginTop": "20px"},
-                        children=[
-                            dcc.Tab(
-                                label="Simulations",
-                                value="simulations",
-                                children=[_simulations_page(simulation_options)],
-                            ),
-                            dcc.Tab(
-                                label="Actual Runs",
-                                value="actual-runs",
-                                children=[_live_runs_page(live_run_options)],
-                            ),
-                        ],
-                    ),
-                ],
-            ),
-        ],
-    )
-
-
-def _simulations_page(simulation_options: list[dict[str, str]]) -> html.Div:
-    selected_run = simulation_options[0]["value"] if simulation_options else None
-    return html.Div(
-        children=[
-            html.Div(
-                style={**PANEL_STYLE, "marginTop": "16px"},
-                children=[
-                    html.Label("Simulation run", style={"display": "block", "fontSize": "13px", "fontWeight": 700, "marginBottom": "6px"}),
-                    dcc.Dropdown(id="run-path", options=simulation_options, value=selected_run, clearable=False, placeholder="No simulation logs found in logs/sim"),
-                ],
-            ),
-            html.Div(id="load-error", style={"color": "#b91c1c", "marginTop": "16px"}),
-            html.Div(id="summary-cards", style={"display": "grid", "gap": "12px", "gridTemplateColumns": "repeat(auto-fit, minmax(150px, 1fr))", "margin": "20px 0"}),
-            dcc.Tabs(
-                value="overview",
-                children=[
-                    dcc.Tab(label="Overview", value="overview", children=[
-                        html.Div(style={**PANEL_STYLE, "marginTop": "16px"}, children=[
-                            dcc.Graph(id="trajectory-3d", style={"height": "620px"}, config={"displaylogo": False}),
-                        ]),
-                        _graph_grid([
-                            ("Position", "position-plot", "360px"), ("Velocity", "velocity-plot", "360px"),
-                            ("Controls", "controls-plot", "360px"), ("Attitude Quaternion", "attitude-plot", "360px"),
-                            ("Body Rates", "rates-plot", "360px"), ("Loop Timing", "timing-plot", "360px"),
-                            ("Modes", "modes-plot", "360px"), ("Disturbance", "disturbance-plot", "360px"),
-                        ]),
-                    ]),
-                    dcc.Tab(label="Metadata", value="metadata", children=[_table_panel("Run Metadata", "metadata-table")]),
-                    dcc.Tab(label="Events", value="events", children=[_table_panel("Lifecycle Events", "events-table")]),
-                    dcc.Tab(label="Cycles", value="cycles", children=[_table_panel("Cycle Records", "cycles-table")]),
-                    dcc.Tab(label="Raw JSON", value="raw", children=[html.Div(style={**PANEL_STYLE, "marginTop": "16px"}, children=[html.Pre(id="raw-json", style=_pre_style("78vh"))])]),
+                    _live_runs_page(live_run_options),
                 ],
             ),
         ],
@@ -127,7 +75,7 @@ def _live_runs_page(live_run_options: list[dict[str, str]]) -> html.Div:
                             ),
                         ]
                     ),
-                    html.Div("Source: logs/runs/ and legacy data/live_runs/", style={"color": COLORS["muted"], "fontSize": "13px", "paddingBottom": "9px"}),
+                    html.Div("Source: run.json, telemetry.json, and frames.jsonl in logs/runs/", style={"color": COLORS["muted"], "fontSize": "13px", "paddingBottom": "9px"}),
                 ],
             ),
             html.Div(id="live-load-error", style={"color": "#b91c1c", "marginTop": "16px"}),

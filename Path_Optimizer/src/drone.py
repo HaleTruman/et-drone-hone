@@ -1,7 +1,5 @@
 """Minimal offline rig for telemetry ingestion and control-loop timing."""
 
-from __future__ import annotations
-
 import argparse
 import itertools
 import time
@@ -12,11 +10,10 @@ from core.control.hover import HoverPIDController
 from core.modes.system_mode import SystemMode, SystemModeManager
 from core.logging import Logger
 from simulator import TelemetrySimulator
-from sensing.estimation.state_estimator import StateEstimator
-from sensing.telemetry.mavlink_bridge import MavlinkBridge
+from sensing.telemetry.mavlink_client import MavlinkClient
 
 
-def _event_snapshot(*, sim_time_ns: int, system_mode: SystemModeManager, bridge: MavlinkBridge) -> dict:
+def _event_snapshot(*, sim_time_ns: int, system_mode: SystemModeManager, bridge: MavlinkClient) -> dict:
     return {
         "sim_time_ns": sim_time_ns,
         "system_mode": system_mode.system_mode,
@@ -32,9 +29,8 @@ def run(duration_s: float = 3.0, loop_hz: float = 10.0, idle_s: float = 1.0) -> 
     if idle_s < 1.0:
         raise ValueError("idle_s must be at least 1 second")
     simulator = TelemetrySimulator(telemetry_hz=loop_hz)
-    bridge = MavlinkBridge(endpoint="telemetry-simulator")
+    bridge = MavlinkClient(endpoint="telemetry-simulator")
     command_mapper = CommandMapper()
-    estimator = StateEstimator(initial_state=simulator._harness.initial_state)
     system_mode = SystemModeManager()
     hover_controller = HoverPIDController(dt_s=1.0 / loop_hz)
     period_ns = round(1_000_000_000 / loop_hz)
@@ -50,11 +46,11 @@ def run(duration_s: float = 3.0, loop_hz: float = 10.0, idle_s: float = 1.0) -> 
             "position_origin": "simulator_home",
             "initial_true_state": simulator._harness.initial_state,
             "hover_controller": {
-                "neutral_thrust": hover_controller.neutral_thrust,
-                "accel_angle_gain": hover_controller.accel_angle_gain,
-                "attitude_gain": hover_controller.attitude_gain,
-                "thrust_gain": hover_controller.thrust_gain,
-                "integral_gain": hover_controller.integral_gain,
+                "position_gain": hover_controller.position_gain,
+                "velocity_gain": hover_controller.velocity_gain,
+                "mass_kg": hover_controller.mass_kg,
+                "thrust_coefficient_n": hover_controller.thrust_coefficient_n,
+                "gravity_mps2": hover_controller.gravity_mps2,
             },
         }
     )
@@ -73,6 +69,7 @@ def run(duration_s: float = 3.0, loop_hz: float = 10.0, idle_s: float = 1.0) -> 
     samples = simulator.telemetry_samples(duration_s)
     first_sample = next(samples, None)
     start_ns = time.perf_counter_ns()
+    hold_position_local_ned_m = None
     try:
         for cycle, sample in enumerate(itertools.chain([first_sample], samples) if first_sample else []):
             deadline_ns = start_ns + cycle * period_ns
@@ -80,12 +77,12 @@ def run(duration_s: float = 3.0, loop_hz: float = 10.0, idle_s: float = 1.0) -> 
             if remaining_ns > 0:
                 time.sleep(remaining_ns / 1_000_000_000)
 
-            bridge.update_latest_telemetry(sample)
-            telemetry = bridge.get_latest_telemetry()
+            telemetry = sample
             if telemetry is None:
                 continue
+            if hold_position_local_ned_m is None:
+                hold_position_local_ned_m = telemetry.position_local_ned_m
 
-            estimator.update_from_telemetry(telemetry)
             target = None
             if system_mode.system_mode == SystemMode.IDLE and telemetry.sim_time_ns >= idle_s * 1e9:
                 system_mode.update_mode("arm")
@@ -95,13 +92,15 @@ def run(duration_s: float = 3.0, loop_hz: float = 10.0, idle_s: float = 1.0) -> 
                 )
             if system_mode.system_mode == SystemMode.ARMED:
                 quaternion, thrust = hover_controller.update(
-                    telemetry.raw["acceleration_local_ned_mps2"],
-                    telemetry.attitude,
+                    position_local_ned_m=telemetry.position_local_ned_m,
+                    velocity_local_ned_mps=telemetry.velocity_local_ned_mps,
+                    attitude_quaternion=telemetry.attitude,
+                    target_position_local_ned_m=hold_position_local_ned_m,
                 )
                 target = command_mapper.to_attitude_target(quaternion, thrust)
                 bridge.send_attitude_target(target)
                 simulator.apply_attitude_target(target)
-            state = estimator.get_13_state()
+            state = simulator._harness.state.copy()
             elapsed_ms = (time.perf_counter_ns() - start_ns) / 1_000_000
             truth_acceleration = simulator.model.state_derivative(
                 simulator._harness.state,

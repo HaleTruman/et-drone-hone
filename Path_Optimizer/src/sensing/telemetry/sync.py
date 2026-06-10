@@ -1,7 +1,7 @@
 from collections import deque
 from typing import Any, Iterable
 
-from .mavlink_bridge import TelemetrySample
+from core.schemas import TelemetrySample
 from sensing.perception import VisionObservation
 from sensing.vision.vision_stream import VisionFrame
 

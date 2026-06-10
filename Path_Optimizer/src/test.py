@@ -11,8 +11,9 @@ from core.control.command_mapper import CommandMapper
 from core.control.forward_velocity import ForwardVelocityAltitudeController
 from core.control.hover import HoverPIDController
 from core.logging import Logger
+from core.schemas import TelemetrySample
 from sensing.perception import GateMap, GatePoseEstimator, VisionGateObservation, VisionObservation
-from sensing.telemetry.mavlink_bridge import MavlinkBridge, TelemetrySample
+from sensing.telemetry.mavlink_client import MavlinkClient
 from sensing.vision.service import VisionPerceptionConfig, VisionPerceptionService
 from sensing.vision.vision_stream import VisionStreamReceiver
 
@@ -199,7 +200,7 @@ class VisionWorker:
         *,
         receiver: VisionStreamReceiver,
         service: VisionPerceptionService,
-        bridge: MavlinkBridge,
+        bridge: MavlinkClient,
         gate_map: GateMap,
         planner: PlannerWorker,
         logger: Logger,
@@ -308,10 +309,10 @@ class VisionWorker:
 
 
 def main():
-    bridge = MavlinkBridge(ENDPOINT)
+    bridge = MavlinkClient(ENDPOINT)
     mapper = CommandMapper()
     hover = HoverPIDController(dt_s=1.0 / CONTROL_HZ)
-    forward_controller = ForwardVelocityAltitudeController(dt_s=1.0 / CONTROL_HZ, neutral_thrust=hover.neutral_thrust)
+    forward_controller = ForwardVelocityAltitudeController(dt_s=1.0 / CONTROL_HZ)
     run_dir = Logger.timestamped_dir(Path(__file__).resolve().parents[1] / "logs" / "runs")
     log_path = run_dir / "run.json"
     logger = Logger(
@@ -412,8 +413,10 @@ def main():
                 )
                 break
             hover_quaternion, hover_thrust = hover.update(
-                telemetry.acceleration_local_ned_mps2 or (0.0, 0.0, 0.0),
-                telemetry.attitude,
+                position_local_ned_m=telemetry.position_local_ned_m,
+                velocity_local_ned_mps=telemetry.velocity_local_ned_mps,
+                attitude_quaternion=telemetry.attitude,
+                target_position_local_ned_m=start_position,
             )
             now = time.monotonic()
             target = forward_controller.update(

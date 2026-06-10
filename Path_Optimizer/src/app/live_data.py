@@ -56,7 +56,7 @@ def discover_live_run_dirs(root_dir: str) -> list[str]:
 
 def load_live_run(path: str) -> LiveRun:
     run_dir = Path(path).resolve()
-    raw = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    raw = json.loads((run_dir / "run.json").read_text(encoding="utf-8-sig"))
     if not isinstance(raw, dict):
         raise ValueError("Live run log root must be a JSON object.")
 
@@ -69,6 +69,9 @@ def load_live_run(path: str) -> LiveRun:
         raise ValueError("events must be a list of JSON objects.")
     if not isinstance(cycles, list) or not all(isinstance(cycle, dict) for cycle in cycles):
         raise ValueError("cycles must be a list of JSON objects.")
+    from app.data import _load_telemetry_sidecar, _normalized_cycles
+
+    cycles = _normalized_cycles(cycles, _load_telemetry_sidecar(run_dir / "run.json"))
 
     return LiveRun(
         path=str(run_dir),
@@ -84,10 +87,14 @@ def load_live_run(path: str) -> LiveRun:
 
 
 def frame_data_uri(run: LiveRun, frame: LiveFrame) -> str:
-    frames_dir = _frames_dir(Path(run.path)).resolve()
-    image_path = (frames_dir / frame.path).resolve()
-    if image_path.parent != frames_dir:
-        raise ValueError("Frame path must stay within the run frames directory.")
+    run_dir = Path(run.path).resolve()
+    frame_path = Path(frame.path)
+    if frame_path.parent == Path("."):
+        image_path = (_frames_dir(run_dir) / frame_path).resolve()
+    else:
+        image_path = (run_dir / frame_path).resolve()
+    if not _is_relative_to(image_path, run_dir):
+        raise ValueError("Frame path must stay within the run directory.")
     encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
     return f"data:image/jpeg;base64,{encoded}"
 
@@ -128,18 +135,19 @@ def _load_frames(manifest_path: Path) -> list[LiveFrame]:
     if not manifest_path.is_file():
         return []
     frames: list[LiveFrame] = []
-    seen_paths: set[str] = set()
-    for line in manifest_path.read_text(encoding="utf-8").splitlines():
+    seen_frame_ids: set[int] = set()
+    for line in manifest_path.read_text(encoding="utf-8-sig").splitlines():
         if not line.strip():
             continue
         record = json.loads(line)
-        path = str(record["path"])
-        if path in seen_paths:
+        frame_id = int(record["frame_id"])
+        if frame_id in seen_frame_ids:
             continue
-        seen_paths.add(path)
+        seen_frame_ids.add(frame_id)
+        path = str(record["path"])
         frames.append(
             LiveFrame(
-                frame_id=int(record["frame_id"]),
+                frame_id=frame_id,
                 sim_time_ns=int(record["sim_time_ns"]),
                 jpeg_size=int(record["jpeg_size"]),
                 path=path,
@@ -149,6 +157,9 @@ def _load_frames(manifest_path: Path) -> list[LiveFrame]:
 
 
 def _frames_manifest_path(run_dir: Path) -> Path:
+    frames_manifest = run_dir / "frames.jsonl"
+    if frames_manifest.is_file():
+        return frames_manifest
     frames_manifest = run_dir / "frames" / "frames.jsonl"
     if frames_manifest.is_file():
         return frames_manifest
@@ -162,6 +173,14 @@ def _frames_dir(run_dir: Path) -> Path:
     return run_dir / "vision_frames"
 
 
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
+
+
 def _timesync_offset_ns(events: list[dict[str, Any]]) -> int | None:
     offsets: list[int] = []
     for event in events:
@@ -169,11 +188,13 @@ def _timesync_offset_ns(events: list[dict[str, Any]]) -> int | None:
         if not isinstance(bridge, dict):
             continue
         timesync = bridge.get("latest_timesync")
-        telemetry = bridge.get("latest_telemetry")
+        telemetry = bridge.get("latest_telemetry") or bridge.get("latest_odometry")
         if not isinstance(timesync, dict) or not isinstance(telemetry, dict):
             continue
-        response_time_ns = timesync.get("response_time_ns")
+        response_time_ns = timesync.get("response_time_ns", timesync.get("tc1"))
         sim_time_ns = telemetry.get("sim_time_ns")
+        if sim_time_ns is None and isinstance(telemetry.get("time_usec"), int):
+            sim_time_ns = telemetry["time_usec"] * 1_000
         if isinstance(response_time_ns, int) and isinstance(sim_time_ns, int):
             offsets.append(response_time_ns - sim_time_ns)
     return round(median(offsets)) if offsets else None

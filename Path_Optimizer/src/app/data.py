@@ -30,7 +30,6 @@ def discover_run_files(root_dir: str) -> list[str]:
     paths = [path for path in logs_dir.glob("run-*.json") if path.is_file()]
     paths.extend(path for path in logs_dir.glob("run-*/run.json") if path.is_file())
     paths.extend(path for path in (logs_dir / "runs").glob("run-*/run.json") if path.is_file())
-    paths.extend(path for path in (logs_dir / "sim").glob("run-*/run.json") if path.is_file())
     return [str(path.resolve()) for path in sorted(paths, key=_run_sort_key, reverse=True)]
 
 
@@ -50,6 +49,7 @@ def load_run(path: str) -> RunLog:
     if not isinstance(raw, dict):
         raise ValueError("Run log root must be a JSON object.")
 
+    file_path = Path(resolved_path)
     metadata = raw.get("metadata", {})
     events = raw.get("events", [])
     cycles = raw.get("cycles", [])
@@ -59,8 +59,8 @@ def load_run(path: str) -> RunLog:
         raise ValueError("events must be a list of JSON objects.")
     if not isinstance(cycles, list) or not all(isinstance(cycle, dict) for cycle in cycles):
         raise ValueError("cycles must be a list of JSON objects.")
+    cycles = _normalized_cycles(cycles, _load_telemetry_sidecar(file_path))
 
-    file_path = Path(resolved_path)
     name = file_path.parent.name if file_path.name == "run.json" else file_path.name
     return RunLog(
         path=resolved_path,
@@ -119,6 +119,69 @@ def cycle_times_s(cycles: list[dict[str, Any]]) -> list[float]:
         else float(index)
         for index, cycle in enumerate(cycles)
     ]
+
+
+def _load_telemetry_sidecar(run_path: Path) -> list[dict[str, Any]]:
+    candidates = [
+        run_path.parent / "telemetry.json",
+        run_path.with_name(f"{run_path.stem}-telemetry.json"),
+    ]
+    for path in candidates:
+        if not path.is_file():
+            continue
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        samples = raw.get("samples", []) if isinstance(raw, dict) else []
+        if isinstance(samples, list):
+            return [sample for sample in samples if isinstance(sample, dict)]
+    return []
+
+
+def _normalized_cycles(cycles: list[dict[str, Any]], telemetry_samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not cycles and telemetry_samples:
+        cycles = telemetry_samples
+    return [_normalized_cycle(cycle) for cycle in cycles]
+
+
+def _normalized_cycle(cycle: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(cycle)
+    telemetry = normalized.get("telemetry")
+    if isinstance(telemetry, dict):
+        telemetry = _normalized_telemetry(telemetry)
+        normalized["telemetry"] = telemetry
+        normalized.setdefault("odometry", telemetry.get("odometry"))
+    odometry = normalized.get("odometry")
+    if isinstance(odometry, dict):
+        normalized["odometry"] = _normalized_odometry(odometry)
+    return normalized
+
+
+def _normalized_telemetry(telemetry: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(telemetry)
+    odometry = normalized.get("odometry")
+    if isinstance(odometry, dict):
+        odometry = _normalized_odometry(odometry)
+        normalized["odometry"] = odometry
+        for key in (
+            "position_local_ned_m",
+            "velocity_local_ned_mps",
+            "attitude_quaternion",
+            "body_rates_frd_rps",
+            "acceleration_local_ned_mps2",
+        ):
+            if key in odometry:
+                normalized.setdefault(key, odometry[key])
+        normalized.setdefault("attitude", odometry.get("attitude_quaternion"))
+        normalized.setdefault("body_rates_rps", odometry.get("body_rates_frd_rps"))
+    return normalized
+
+
+def _normalized_odometry(odometry: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(odometry)
+    if "body_rates_frd_rps" not in normalized and "body_rates_rps" in normalized:
+        normalized["body_rates_frd_rps"] = normalized["body_rates_rps"]
+    if "attitude_quaternion" not in normalized and "attitude" in normalized:
+        normalized["attitude_quaternion"] = normalized["attitude"]
+    return normalized
 
 
 def _run_sort_key(path: Path) -> tuple[datetime, str]:

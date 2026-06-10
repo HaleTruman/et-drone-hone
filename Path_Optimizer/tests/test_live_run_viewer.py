@@ -29,8 +29,8 @@ def _write_run(tmp_path):
         ),
         encoding="utf-8",
     )
-    frame = {"frame_id": 7, "sim_time_ns": 1_000_039_000_000, "jpeg_size": 3, "path": "frame.jpg"}
-    (frames_dir / "frames.jsonl").write_text(f"{json.dumps(frame)}\n{json.dumps(frame)}\n", encoding="utf-8")
+    frame = {"frame_id": 7, "sim_time_ns": 1_000_039_000_000, "jpeg_size": 3, "path": "frames/frame.jpg"}
+    (run_dir / "frames.jsonl").write_text(f"{json.dumps(frame)}\n{json.dumps(frame)}\n", encoding="utf-8")
     (frames_dir / "frame.jpg").write_bytes(b"jpg")
     return run_dir
 

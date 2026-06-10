@@ -1,7 +1,5 @@
 """Local entrypoint for the racing-stack run explorer."""
 
-from __future__ import annotations
-
 import sys
 from pathlib import Path
 

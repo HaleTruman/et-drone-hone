@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from core.modes import ControlMode, FlightMode, ModeSelection, SystemMode, validate_modes
+from core.modes import ModeState, RaceMode, SystemMode
 
 
 @dataclass(frozen=True)
@@ -15,7 +15,7 @@ class Scenario:
     name: str
     duration_s: float
     initial_state: np.ndarray
-    initial_modes: ModeSelection
+    initial_modes: ModeState
     events: list[dict[str, Any]] = field(default_factory=list)
     seed: int = 7
     environment: dict[str, float] = field(default_factory=dict)
@@ -38,7 +38,6 @@ def load_scenario(path: str | Path) -> Scenario:
     if times and (times[0] < 0.0 or times[-1] > duration_s):
         raise ValueError("event timestamps must stay within scenario duration")
     modes = _modes(data.get("initial_modes", {"system": "IDLE"}))
-    validate_modes(modes, flight_only=True)
     return Scenario(
         name=str(data.get("name", Path(path).stem)),
         duration_s=duration_s,
@@ -51,15 +50,14 @@ def load_scenario(path: str | Path) -> Scenario:
     )
 
 
-def modes_from_event(event: dict[str, Any]) -> ModeSelection:
+def modes_from_event(event: dict[str, Any]) -> ModeState:
     return _modes(event)
 
 
-def _modes(data: dict[str, Any]) -> ModeSelection:
-    return ModeSelection(
+def _modes(data: dict[str, Any]) -> ModeState:
+    return ModeState(
         system=SystemMode(data["system"]),
-        flight=FlightMode(data["flight"]) if data.get("flight") else None,
-        control=ControlMode(data["control"]) if data.get("control") else None,
+        race=RaceMode(data.get("race", RaceMode.HOLD.value)),
     )
 
 

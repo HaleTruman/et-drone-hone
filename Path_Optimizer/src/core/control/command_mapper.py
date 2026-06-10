@@ -41,4 +41,4 @@ class CommandMapper:
         return payload
 
     def scale_thrust(self, thrust: float) -> float:
-        return float(np.clip(thrust, 0.0, 1.0))
+        return float(thrust)

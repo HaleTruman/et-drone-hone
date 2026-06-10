@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 
 from core.logging import Logger
-from core.modes import ControlMode, FlightMode, ModeSelection, SystemMode, validate_modes
+from core.modes import ModeState, SystemMode
 from simulator.scenario import Scenario, modes_from_event
 from simulator.telemetry import TelemetrySimulator
 
@@ -104,9 +104,8 @@ class SimulatorRuntime:
         if event_type == "set_modes":
             try:
                 modes = modes_from_event(event)
-                validate_modes(modes, flight_only=True)
             except ValueError as error:
-                self.modes = ModeSelection(SystemMode.FAULT)
+                self.modes = ModeState(SystemMode.FAULT)
                 self.simulator.disarm()
                 self._log_event("fault", sim_time_ns, reason=str(error))
                 return
@@ -145,14 +144,13 @@ class SimulatorRuntime:
             return
         if self.outage_until_s is not None and self.sim_time_s < self.outage_until_s:
             if self.outage_started_s is not None and self.sim_time_s - self.outage_started_s >= self.command_timeout_s:
-                self.modes = ModeSelection(SystemMode.FAULT)
+                self.modes = ModeState(SystemMode.FAULT)
                 self.simulator.disarm()
                 self._log_event("fault", round(self.sim_time_s * 1e9), reason="command timeout")
             return
-        control = self.modes.control
-        if control in (ControlMode.POSITION_HOLD, ControlMode.VELOCITY, ControlMode.WAYPOINT_FOLLOW, ControlMode.TRAJECTORY_TRACK, ControlMode.MPCC_TRACKER):
+        if any(key in self.reference for key in ("position_ned_m", "velocity_ned_mps", "trajectory", "waypoints")):
             self.simulator.apply_position_target(self._position_target())
-        elif control in (ControlMode.ATTITUDE, ControlMode.RATE_DIRECT):
+        elif any(key in self.reference for key in ("quaternion", "body_rates_rps", "thrust")):
             self.simulator.apply_attitude_target({
                 "quaternion": self.reference.get("quaternion", [1.0, 0.0, 0.0, 0.0]),
                 "body_rates_rps": self.reference.get("body_rates_rps", [0.0, 0.0, 0.0]),

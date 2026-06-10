@@ -9,9 +9,10 @@ from pathlib import Path
 from typing import Any, Iterator
 
 import numpy as np
+from core.coordinates import quat_wxyz, vec3
 from core.quadrotor.model import Quadrotor
+from core.schemas import OdometryState, TelemetrySample
 from simulator.harness import QuadrotorSimulatorHarness
-from sensing.telemetry.mavlink_bridge import TelemetrySample
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,94 @@ class MavlinkMessage:
     message_type: str
     sim_time_ns: int
     fields: dict[str, Any]
+
+    def get_type(self) -> str:
+        return self.message_type
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self.fields[name]
+        except KeyError as error:
+            raise AttributeError(name) from error
+
+
+def mavlink_messages_for_sample(
+    simulator: "TelemetrySimulator",
+    sample: "TelemetrySample",
+    *,
+    heartbeat: bool = False,
+) -> Iterator[MavlinkMessage]:
+    if heartbeat:
+        yield MavlinkMessage(
+            "HEARTBEAT",
+            sample.sim_time_ns,
+            {
+                "type": "MAV_TYPE_QUADROTOR",
+                "autopilot": "MAV_AUTOPILOT_GENERIC",
+                "base_mode": 128 if simulator.armed else 0,
+                "system_status": sample.system_status,
+            },
+        )
+    yield MavlinkMessage("TIMESYNC", sample.sim_time_ns, {"tc1": 0, "ts1": sample.sim_time_ns})
+
+    roll, pitch, yaw = simulator._euler_from_quaternion(sample.attitude)
+    rollspeed, pitchspeed, yawspeed = sample.body_rates_rps
+    yield MavlinkMessage(
+        "ATTITUDE",
+        sample.sim_time_ns,
+        {
+            "time_boot_ms": sample.sim_time_ns // 1_000_000,
+            "roll": roll,
+            "pitch": pitch,
+            "yaw": yaw,
+            "rollspeed": rollspeed,
+            "pitchspeed": pitchspeed,
+            "yawspeed": yawspeed,
+        },
+    )
+    acceleration = sample.acceleration_local_ned_mps2
+    yield MavlinkMessage(
+        "HIGHRES_IMU",
+        sample.sim_time_ns,
+        {
+            "time_usec": sample.sim_time_ns // 1_000,
+            "xacc": acceleration[0],
+            "yacc": acceleration[1],
+            "zacc": acceleration[2],
+            "xgyro": rollspeed,
+            "ygyro": pitchspeed,
+            "zgyro": yawspeed,
+            "velocity_local_ned_mps": sample.velocity_local_ned_mps,
+        },
+    )
+    position = sample.position_local_ned_m
+    velocity = sample.velocity_local_ned_mps
+    yield MavlinkMessage(
+        "LOCAL_POSITION_NED",
+        sample.sim_time_ns,
+        {
+            "time_boot_ms": sample.sim_time_ns // 1_000_000,
+            "x": position[0], "y": position[1], "z": position[2],
+            "vx": velocity[0], "vy": velocity[1], "vz": velocity[2],
+        },
+    )
+    yield MavlinkMessage(
+        "ODOMETRY",
+        sample.sim_time_ns,
+        {
+            "time_usec": sample.sim_time_ns // 1_000,
+            "x": position[0], "y": position[1], "z": position[2],
+            "q": sample.attitude,
+            "vx": velocity[0], "vy": velocity[1], "vz": velocity[2],
+            "rollspeed": rollspeed, "pitchspeed": pitchspeed, "yawspeed": yawspeed,
+            "reset_counter": sample.reset_count,
+        },
+    )
+    yield MavlinkMessage(
+        "ACTUATOR_OUTPUT_STATUS",
+        sample.sim_time_ns,
+        {"time_usec": sample.sim_time_ns // 1_000, "actuator": tuple(simulator._motor_command)},
+    )
 
 
 class TelemetrySimulator:
@@ -130,18 +219,22 @@ class TelemetrySimulator:
         velocity = state[3:6] + self._rng.normal(0.0, self.sensor_noise["velocity_mps"], size=3)
         body_rates = state[10:13] + self._rng.normal(0.0, self.sensor_noise["body_rate_rps"], size=3)
         acceleration = acceleration + self._rng.normal(0.0, self.sensor_noise["acceleration_mps2"], size=3)
+        sim_time_ns = round(self._step / self.telemetry_hz * 1_000_000_000)
+        odometry = OdometryState(
+            sim_time_ns=sim_time_ns,
+            position_local_ned_m=vec3(state[0:3]),
+            attitude_quaternion=quat_wxyz(attitude),
+            velocity_local_ned_mps=vec3(velocity),
+            body_rates_frd_rps=vec3(body_rates),
+            acceleration_local_ned_mps2=vec3(acceleration),
+        )
         return TelemetrySample(
-            sim_time_ns=round(self._step / self.telemetry_hz * 1_000_000_000),
-            position_local_ned_m=tuple(float(value) for value in state[0:3]),
-            attitude=tuple(float(value) for value in attitude),
-            velocity_local_ned_mps=tuple(float(value) for value in velocity),
-            body_rates_rps=tuple(float(value) for value in body_rates),
-            acceleration_local_ned_mps2=tuple(float(value) for value in acceleration),
+            sim_time_ns=sim_time_ns,
+            odometry=odometry,
             system_status="MAV_STATE_ACTIVE" if self.armed else "MAV_STATE_STANDBY",
             reset_count=self._reset_count,
             raw={
                 "source": "quadrotor_model",
-                "acceleration_local_ned_mps2": tuple(float(value) for value in acceleration),
             },
         )
 
@@ -187,78 +280,7 @@ class TelemetrySimulator:
 
         heartbeat_interval = max(1, round(self.telemetry_hz / self.heartbeat_hz))
         for step, sample in enumerate(self.telemetry_samples(duration_s)):
-            if step % heartbeat_interval == 0:
-                yield MavlinkMessage(
-                    "HEARTBEAT",
-                    sample.sim_time_ns,
-                    {
-                        "type": "MAV_TYPE_QUADROTOR",
-                        "autopilot": "MAV_AUTOPILOT_GENERIC",
-                        "base_mode": "MAV_MODE_FLAG_SAFETY_ARMED" if self.armed else 0,
-                        "system_status": sample.system_status,
-                    },
-                )
-            yield MavlinkMessage("TIMESYNC", sample.sim_time_ns, {"tc1": 0, "ts1": sample.sim_time_ns})
-
-            roll, pitch, yaw = self._euler_from_quaternion(sample.attitude)
-            rollspeed, pitchspeed, yawspeed = sample.body_rates_rps
-            yield MavlinkMessage(
-                "ATTITUDE",
-                sample.sim_time_ns,
-                {
-                    "time_boot_ms": sample.sim_time_ns // 1_000_000,
-                    "roll": roll,
-                    "pitch": pitch,
-                    "yaw": yaw,
-                    "rollspeed": rollspeed,
-                    "pitchspeed": pitchspeed,
-                    "yawspeed": yawspeed,
-                },
-            )
-            acceleration = sample.raw["acceleration_local_ned_mps2"]
-            yield MavlinkMessage(
-                "HIGHRES_IMU",
-                sample.sim_time_ns,
-                {
-                    "time_usec": sample.sim_time_ns // 1_000,
-                    "xacc": acceleration[0],
-                    "yacc": acceleration[1],
-                    "zacc": acceleration[2],
-                    "xgyro": rollspeed,
-                    "ygyro": pitchspeed,
-                    "zgyro": yawspeed,
-                    # Expected simulator API extension used by the racing stack.
-                    "velocity_local_ned_mps": sample.velocity_local_ned_mps,
-                },
-            )
-            position = sample.position_local_ned_m
-            velocity = sample.velocity_local_ned_mps
-            yield MavlinkMessage(
-                "LOCAL_POSITION_NED",
-                sample.sim_time_ns,
-                {
-                    "time_boot_ms": sample.sim_time_ns // 1_000_000,
-                    "x": position[0], "y": position[1], "z": position[2],
-                    "vx": velocity[0], "vy": velocity[1], "vz": velocity[2],
-                },
-            )
-            yield MavlinkMessage(
-                "ODOMETRY",
-                sample.sim_time_ns,
-                {
-                    "time_usec": sample.sim_time_ns // 1_000,
-                    "x": position[0], "y": position[1], "z": position[2],
-                    "q": sample.attitude,
-                    "vx": velocity[0], "vy": velocity[1], "vz": velocity[2],
-                    "rollspeed": rollspeed, "pitchspeed": pitchspeed, "yawspeed": yawspeed,
-                    "reset_counter": sample.reset_count,
-                },
-            )
-            yield MavlinkMessage(
-                "ACTUATOR_OUTPUT_STATUS",
-                sample.sim_time_ns,
-                {"time_usec": sample.sim_time_ns // 1_000, "actuator": tuple(self._motor_command)},
-            )
+            yield from mavlink_messages_for_sample(self, sample, heartbeat=step % heartbeat_interval == 0)
 
     def telemetry_samples(self, duration_s: float) -> Iterator[TelemetrySample]:
         """Yield bridge-ready samples while stepping the powered-off model."""

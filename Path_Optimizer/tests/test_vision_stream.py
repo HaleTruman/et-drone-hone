@@ -24,6 +24,25 @@ def test_reassembles_and_persists_chunked_jpeg(tmp_path) -> None:
     assert receiver.snapshot()["saved_frame_count"] == 1
 
 
+def test_persists_one_manifest_entry_per_frame_id(tmp_path) -> None:
+    receiver = VisionStreamReceiver(output_dir=tmp_path / "vision_frames")
+    receiver.output_dir.mkdir()
+    jpeg = b"\xff\xd8mock-jpeg\xff\xd9"
+
+    first = receiver.process_packet(packet(7, 0, 1, len(jpeg), 99, jpeg))
+    replay = receiver.process_packet(packet(7, 0, 1, len(jpeg), 100, jpeg))
+
+    assert first is not None
+    assert replay is not None
+    manifest_lines = (tmp_path / "frames.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(manifest_lines) == 1
+    manifest = json.loads(manifest_lines[0])
+    assert manifest["frame_id"] == 7
+    assert manifest["sim_time_ns"] == 99
+    assert manifest["path"] == "vision_frames/frame-00000007-99.jpg"
+    assert receiver.snapshot()["saved_frame_count"] == 1
+
+
 def test_rejects_invalid_packet_payload_size() -> None:
     receiver = VisionStreamReceiver()
     bad_packet = struct.pack(VISION_HEADER_FORMAT, 1, 0, 1, 3, 10, 100) + b"abc"

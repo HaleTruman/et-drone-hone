@@ -1,17 +1,9 @@
-from core.modes import ControlMode, ControlModeManager, FlightMode, FlightModeManager
+from core.modes import RaceMode, RaceModeManager
 
 
-def test_flight_mode_manager_defaults_to_hover_and_selects_waypoint() -> None:
-    manager = FlightModeManager()
+def test_race_mode_manager_defaults_to_hold_and_selects_race() -> None:
+    manager = RaceModeManager()
 
-    assert manager.flight_mode == FlightMode.HOVER
-    assert manager.set_mode(FlightMode.WAYPOINT) == FlightMode.WAYPOINT
-    assert manager.flight_mode == FlightMode.WAYPOINT
-
-
-def test_control_mode_manager_defaults_to_attitude_and_selects_rate() -> None:
-    manager = ControlModeManager()
-
-    assert manager.control_mode == ControlMode.ATTITUDE
-    assert manager.set_mode(ControlMode.RATE) == ControlMode.RATE
-    assert manager.control_mode == ControlMode.RATE
+    assert manager.race_mode == RaceMode.HOLD
+    assert manager.set_mode(RaceMode.RACE) == RaceMode.RACE
+    assert manager.race_mode == RaceMode.RACE

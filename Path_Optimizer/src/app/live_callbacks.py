@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 import os
 from typing import Any
@@ -86,9 +84,9 @@ def register_live_callbacks(app: Dash, *, root_dir: str) -> None:
             "",
             _summary_cards(run),
             _trajectory_figure(run),
-            _vector_figure(run, "Position", "position_local_ned_m", "Position (m)"),
-            _vector_figure(run, "Velocity", "velocity_local_ned_mps", "Velocity (m/s)"),
-            _vector_figure(run, "Acceleration", "acceleration_local_ned_mps2", "Acceleration (m/s^2)"),
+            _vector_figure(run, "Position (LOCAL_NED)", "position_local_ned_m", "LOCAL_NED position (m)"),
+            _vector_figure(run, "Velocity (LOCAL_NED)", "velocity_local_ned_mps", "LOCAL_NED velocity (m/s)"),
+            _vector_figure(run, "Acceleration (LOCAL_NED)", "acceleration_local_ned_mps2", "LOCAL_NED acceleration (m/s^2)"),
             _vector_figure(run, "Body Rates", "body_rates_rps", "Rate (rad/s)"),
             _system_mode_figure(run),
             event_rows,
@@ -207,11 +205,11 @@ def _trajectory_figure(run: LiveRun) -> go.Figure:
     points = [value_at(cycle, "telemetry", "position_local_ned_m") for cycle in run.cycles]
     points = [point for point in points if isinstance(point, list) and len(point) >= 3]
     if points:
-        fig.add_trace(go.Scatter3d(x=[p[0] for p in points], y=[p[1] for p in points], z=[p[2] for p in points], mode="lines+markers", name="ODOMETRY", line={"color": "#2563eb", "width": 5}, marker={"size": 2}))
+        fig.add_trace(go.Scatter3d(x=[p[0] for p in points], y=[p[1] for p in points], z=[p[2] for p in points], mode="lines+markers", name="Local-NED odometry", line={"color": "#2563eb", "width": 5}, marker={"size": 2}))
     axis_ranges = _trajectory_axis_ranges(points)
     ui_revision = f"live-trajectory:{run.path}"
     fig.update_layout(
-        **_layout("Live Trajectory (Local NED)"),
+        **_layout("Live Trajectory (LOCAL_NED)"),
         dragmode="orbit",
         uirevision=ui_revision,
         scene={
@@ -260,7 +258,7 @@ def _gate_map_figure(run: LiveRun, frame: Any, cycle: dict[str, Any] | None, fra
     telemetry = cycle.get("telemetry") if isinstance(cycle, dict) else None
     if isinstance(telemetry, dict):
         drone_position = telemetry.get("position_local_ned_m")
-        drone_quaternion = telemetry.get("attitude")
+        drone_quaternion = telemetry.get("attitude_quaternion") or telemetry.get("attitude")
         if _point3(drone_position):
             points.append(drone_position)
             for trace in _drone_traces(drone_position, drone_quaternion):

@@ -1,10 +1,109 @@
-"""Reserved entry point for the production racing stack."""
+"""Minimal live MAVLink and vision stream entry point."""
+
+from pathlib import Path
+import time
+
+from core.logging import Logger
+from sensing.telemetry import MavlinkClient
+from sensing.vision import VisionStreamReceiver
+from sensing.odometry import VehicleState
+
+
+MAVLINK_ENDPOINT = "udpin:127.0.0.1:14550"
+VISION_HOST = "0.0.0.0"
+VISION_PORT = 5600
+LOOP_HZ = 30.0
+HEARTBEAT_TIMEOUT_S = 120.0
+RUN_S: float | None = None
 
 
 def main() -> int:
-    """Keep the canonical entry point explicit until the live stack is wired."""
+    period_s = 1.0 / LOOP_HZ
+    run_dir = Logger.timestamped_dir(Path(__file__).resolve().parents[1] / "logs" / "runs")
+    log_path = run_dir / "run.json"
+    logger = Logger(
+        {
+            "scenario": "live_stream_minimal",
+            "mavlink_endpoint": MAVLINK_ENDPOINT,
+            "vision_host": VISION_HOST,
+            "vision_port": VISION_PORT,
+            "loop_hz": LOOP_HZ,
+        }
+    )
 
-    print("The production racing stack entry point is not wired yet.")
+    vehicle_state = VehicleState()
+    mavlink_client = MavlinkClient(MAVLINK_ENDPOINT)
+    vision = VisionStreamReceiver(host=VISION_HOST, port=VISION_PORT, output_dir=run_dir / "vision_frames")
+
+    cycle = 0
+    started_s = time.perf_counter()
+    next_cycle_s = started_s
+
+    try:
+        vision.start_listener()
+        logger.log_event("vision_started", receiver=vision.snapshot())
+
+        mavlink_client.connect(heartbeat_timeout_s=HEARTBEAT_TIMEOUT_S)
+        mavlink_client.start_heartbeat()
+        mavlink_client.subscribe_telemetry()
+        logger.log_event("mavlink_connected", bridge=mavlink_client.snapshot())
+
+        while RUN_S is None or time.perf_counter() - started_s < RUN_S:
+            loop_started_s = time.perf_counter()
+            scheduled_s = next_cycle_s
+            telemetry = mavlink_client.get_latest_telemetry()
+            frame = vision.get_next_frame()
+
+
+            if telemetry is not None:
+                logger.log_telemetry(telemetry, cycle=cycle)
+            if frame is not None:
+                logger.log_vision_frame(
+                    {
+                        "frame_id": frame.frame_id,
+                        "sim_time_ns": frame.sim_time_ns,
+                        "saved_path": frame.saved_path,
+                        "jpeg_size": len(frame.jpeg_bytes),
+                    },
+                    cycle=cycle,
+                )
+
+            next_cycle_s += period_s
+            sleep_s = max(0.0, next_cycle_s - time.perf_counter())
+            loop_elapsed_ms = (time.perf_counter() - loop_started_s) * 1000.0
+            logger.log_cycle(
+                cycle=cycle,
+                sim_time_ns=telemetry.sim_time_ns if telemetry else None,
+                wall_elapsed_ms=(loop_started_s - started_s) * 1000.0,
+                loop_elapsed_ms=loop_elapsed_ms,
+                deadline_lateness_ms=max(0.0, loop_started_s - scheduled_s) * 1000.0,
+                sleep_ms=sleep_s * 1000.0,
+                telemetry=telemetry,
+                vision_frame_id=frame.frame_id if frame else None,
+                bridge=mavlink_client.snapshot(),
+                vision=vision.snapshot(),
+            )
+            if cycle % int(LOOP_HZ) == 0:
+                print(
+                    f"cycle={cycle} Odometry.position_local_ned={mavlink_client.latest_odometry.position_local_ned_m if mavlink_client.latest_odometry else 'no ODOMETRY'} "
+                    f"IMU.Acceleration_body_frd={mavlink_client.latest_imu.acceleration_body_frd_mps2 if mavlink_client.latest_imu else 'no HIGHRES_IMU'} "
+                    f"vision_frame={frame.frame_id if frame else 'none'} "
+                    f"loop_ms={loop_elapsed_ms:.2f}",
+                    flush=True,
+                )
+        
+            cycle += 1
+            if sleep_s > 0.0:
+                time.sleep(sleep_s)
+    except KeyboardInterrupt:
+        logger.log_event("interrupted")
+    finally:
+        vision.shutdown()
+        mavlink_client.shutdown()
+        logger.log_event("shutdown", bridge=mavlink_client.snapshot(), vision=vision.snapshot())
+        logger.save_run(log_path)
+        print(f"Log saved to {log_path}", flush=True)
+
     return 0
 
 
