@@ -7,6 +7,9 @@ from core.schemas import MavlinkHighresImu
 from sensing.odometry import VehicleState
 
 
+GRAVITY_MPS2 = 9.80665
+
+
 def imu_sample(
     time_boot_us: int,
     *,
@@ -46,13 +49,29 @@ def test_imu_acceleration_integrates_position_and_velocity() -> None:
     odometry = state.update_from_imu(
         imu_sample(
             1_000_000,
-            acceleration_body_frd_mps2=(2.0, 0.0, -1.0),
+            acceleration_body_frd_mps2=(2.0, 0.0, -GRAVITY_MPS2),
         )
     )
 
-    np.testing.assert_allclose(odometry.velocity_local_ned_mps, (2.0, 0.0, -1.0))
-    np.testing.assert_allclose(odometry.position_local_ned_m, (1.0, 0.0, -0.5))
-    np.testing.assert_allclose(odometry.acceleration_local_ned_mps2, (2.0, 0.0, -1.0))
+    np.testing.assert_allclose(odometry.velocity_local_ned_mps, (2.0, 0.0, 0.0))
+    np.testing.assert_allclose(odometry.position_local_ned_m, (1.0, 0.0, 0.0))
+    np.testing.assert_allclose(odometry.acceleration_local_ned_mps2, (2.0, 0.0, 0.0))
+
+
+def test_stationary_specific_force_does_not_integrate_gravity() -> None:
+    state = VehicleState()
+    state.update_from_imu(imu_sample(0))
+
+    odometry = state.update_from_imu(
+        imu_sample(
+            1_000_000,
+            acceleration_body_frd_mps2=(0.0, 0.0, -GRAVITY_MPS2),
+        )
+    )
+
+    np.testing.assert_allclose(odometry.acceleration_local_ned_mps2, (0.0, 0.0, 0.0))
+    np.testing.assert_allclose(odometry.velocity_local_ned_mps, (0.0, 0.0, 0.0))
+    np.testing.assert_allclose(odometry.position_local_ned_m, (0.0, 0.0, 0.0))
 
 
 def test_imu_gyro_integrates_yaw_attitude_and_stays_normalized() -> None:
@@ -90,7 +109,7 @@ def test_non_increasing_imu_timestamp_does_not_integrate_state() -> None:
     position = state.position_local_ned_m
     velocity = state.velocity_local_ned_mps
 
-    state.update_from_imu(imu_sample(2_000_000, acceleration_body_frd_mps2=(10.0, 0.0, 0.0)))
+    state.update_from_imu(imu_sample(2_000_000, acceleration_body_frd_mps2=(10.0, 0.0, -GRAVITY_MPS2)))
 
     assert state.position_local_ned_m == position
     assert state.velocity_local_ned_mps == velocity

@@ -171,7 +171,7 @@ class MavlinkClient:
         connection = self._require_connection()
         position = target.get("position_local_ned_m")
         position_axes = target.get("position_axes")
-        velocity = target["velocity_local_ned_mps"]
+        velocity = target.get("velocity_local_ned_mps")
         yaw = target.get("yaw_rad")
         mask = (
             mavutil.mavlink.POSITION_TARGET_TYPEMASK_AX_IGNORE
@@ -196,6 +196,13 @@ class MavlinkClient:
                 mask |= mavutil.mavlink.POSITION_TARGET_TYPEMASK_Y_IGNORE
             if not axes[2]:
                 mask |= mavutil.mavlink.POSITION_TARGET_TYPEMASK_Z_IGNORE
+        if velocity is None:
+            velocity = ZERO_VEC3
+            mask |= (
+                mavutil.mavlink.POSITION_TARGET_TYPEMASK_VX_IGNORE
+                | mavutil.mavlink.POSITION_TARGET_TYPEMASK_VY_IGNORE
+                | mavutil.mavlink.POSITION_TARGET_TYPEMASK_VZ_IGNORE
+            )
         if yaw is None:
             yaw = 0.0
             mask |= mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_IGNORE
@@ -231,6 +238,15 @@ class MavlinkClient:
             *body_rates,
             target["thrust"],
         )
+
+    def send_control_outputs(self, control_outputs: dict[str, Any]) -> None:
+        if "quaternion" in control_outputs and "thrust" in control_outputs:
+            self.send_attitude_target(control_outputs)
+            return
+        if "velocity_local_ned_mps" in control_outputs:
+            self.send_position_target(control_outputs)
+            return
+        raise ValueError(f"Unsupported control output keys: {sorted(control_outputs)}")
 
     def send_motor_target(self, motor_commands: list[float] | tuple[float, ...]) -> None:
         connection = self._require_connection()
@@ -299,6 +315,8 @@ class MavlinkClient:
             "race_status": asdict(self.race_status) if self.race_status else None,
             "track_gates": [asdict(gate) for gate in self.track_gates],
             "collisions": [asdict(collision) for collision in self.collisions],
+            "latest_position_target": self.latest_position_target,
+            "latest_attitude_target": self.latest_attitude_target,
         }
 
     def populate_gate_map(self, gate_map: Any) -> None:

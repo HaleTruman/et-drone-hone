@@ -3,6 +3,7 @@ from typing import Iterable
 
 import numpy as np
 
+from core.control.command_mapper import CommandMapper
 from core.coordinates import euler_from_quaternion, quaternion_from_rotation_matrix
 
 
@@ -15,6 +16,10 @@ class HoverPIDController:
         mass_kg: float = 1.2,
         thrust_coefficient_n: float = 12.0,
         gravity_mps2: float = 9.81,
+        max_tilt_deg: float = 10.0,
+        max_vertical_acceleration_mps2: float = 2.0,
+        min_thrust: float = 0.35,
+        max_thrust: float = 0.65,
     ):
         self.dt_s = float(dt_s)
         self.position_gain = np.asarray(tuple(position_gain), dtype=float)
@@ -22,6 +27,10 @@ class HoverPIDController:
         self.mass_kg = float(mass_kg)
         self.thrust_coefficient_n = float(thrust_coefficient_n)
         self.gravity_mps2 = float(gravity_mps2)
+        self.max_tilt_rad = math.radians(float(max_tilt_deg))
+        self.max_vertical_acceleration_mps2 = float(max_vertical_acceleration_mps2)
+        self.min_thrust = float(min_thrust)
+        self.max_thrust = float(max_thrust)
 
     def update(
         self,
@@ -40,6 +49,7 @@ class HoverPIDController:
         position_error = target_position - position
         velocity_error = target_velocity - velocity
         desired_acceleration_ned = self.position_gain * position_error + self.velocity_gain * velocity_error
+        desired_acceleration_ned = self._limit_desired_acceleration(desired_acceleration_ned)
 
         gravity_ned = np.array([0.0, 0.0, self.gravity_mps2], dtype=float)
         required_force_ned = self.mass_kg * (desired_acceleration_ned - gravity_ned)
@@ -50,7 +60,65 @@ class HoverPIDController:
         command_yaw = euler_from_quaternion(attitude_quaternion)[2] if yaw_rad is None else float(yaw_rad)
         quaternion = _attitude_for_force(required_force_ned, command_yaw)
         normalized_thrust = math.sqrt(total_thrust_n / (4.0 * self.thrust_coefficient_n))
-        return np.asarray(quaternion, dtype=float), float(normalized_thrust)
+        normalized_thrust = float(np.clip(normalized_thrust, self.min_thrust, self.max_thrust))
+        return np.asarray(quaternion, dtype=float), normalized_thrust
+
+    def _limit_desired_acceleration(self, desired_acceleration_ned: np.ndarray) -> np.ndarray:
+        limited = np.asarray(desired_acceleration_ned, dtype=float).copy()
+        max_horizontal_acceleration = self.gravity_mps2 * math.tan(self.max_tilt_rad)
+        horizontal_norm = float(np.linalg.norm(limited[:2]))
+        if horizontal_norm > max_horizontal_acceleration:
+            limited[:2] *= max_horizontal_acceleration / horizontal_norm
+        limited[2] = float(
+            np.clip(
+                limited[2],
+                -self.max_vertical_acceleration_mps2,
+                self.max_vertical_acceleration_mps2,
+            )
+        )
+        return limited
+
+
+class HoverController:
+    """State-facing hover controller that emits MAVLink-ready attitude targets."""
+
+    def __init__(
+        self,
+        *,
+        dt_s: float = 1.0 / 30.0,
+        target_position_local_ned_m=None,
+        target_velocity_local_ned_mps=(0.0, 0.0, 0.0),
+        yaw_rad: float | None = None,
+        pid_controller: HoverPIDController | None = None,
+        command_mapper: CommandMapper | None = None,
+    ):
+        self.pid_controller = pid_controller or HoverPIDController(dt_s=dt_s)
+        self.command_mapper = command_mapper or CommandMapper()
+        self.target_position_local_ned_m = (
+            None
+            if target_position_local_ned_m is None
+            else tuple(_vec3(target_position_local_ned_m, "target_position_local_ned_m"))
+        )
+        self.target_velocity_local_ned_mps = tuple(
+            _vec3(target_velocity_local_ned_mps, "target_velocity_local_ned_mps")
+        )
+        self.yaw_rad = yaw_rad
+
+    def compute_control(self, state):
+        if self.target_position_local_ned_m is None:
+            self.target_position_local_ned_m = tuple(
+                _vec3(state.position_local_ned_m, "state.position_local_ned_m")
+            )
+
+        quaternion, thrust = self.pid_controller.update(
+            position_local_ned_m=state.position_local_ned_m,
+            velocity_local_ned_mps=state.velocity_local_ned_mps,
+            attitude_quaternion=state.attitude_quaternion,
+            target_position_local_ned_m=self.target_position_local_ned_m,
+            target_velocity_local_ned_mps=self.target_velocity_local_ned_mps,
+            yaw_rad=self.yaw_rad,
+        )
+        return self.command_mapper.to_attitude_target(quaternion, thrust)
 
 
 def _attitude_for_force(required_force_ned: np.ndarray, yaw_rad: float) -> tuple[float, float, float, float]:

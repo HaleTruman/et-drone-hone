@@ -3,6 +3,7 @@
 from pathlib import Path
 import time
 
+from core.control.hover import HoverController
 from core.logging import Logger
 from sensing.telemetry import MavlinkClient
 from sensing.vision import VisionStreamReceiver
@@ -12,7 +13,7 @@ from sensing.odometry import VehicleState
 MAVLINK_ENDPOINT = "udpin:127.0.0.1:14550"
 VISION_HOST = "0.0.0.0"
 VISION_PORT = 5600
-LOOP_HZ = 30.0
+LOOP_HZ = 50.0
 HEARTBEAT_TIMEOUT_S = 120.0
 RUN_S: float | None = None
 
@@ -32,12 +33,15 @@ def main() -> int:
     )
 
     vehicle_state = VehicleState()
+    vehicle_state_initialized = False
+    hover_controller = HoverController(dt_s=period_s)
     mavlink_client = MavlinkClient(MAVLINK_ENDPOINT)
     vision = VisionStreamReceiver(host=VISION_HOST, port=VISION_PORT, output_dir=run_dir / "vision_frames")
 
     cycle = 0
     started_s = time.perf_counter()
     next_cycle_s = started_s
+    hover_target_logged = False
 
     try:
         vision.start_listener()
@@ -48,12 +52,33 @@ def main() -> int:
         mavlink_client.subscribe_telemetry()
         logger.log_event("mavlink_connected", bridge=mavlink_client.snapshot())
 
+        ## MAIN LOOP
         while RUN_S is None or time.perf_counter() - started_s < RUN_S:
             loop_started_s = time.perf_counter()
             scheduled_s = next_cycle_s
             telemetry = mavlink_client.get_latest_telemetry()
             frame = vision.get_next_frame()
 
+            if (
+                not vehicle_state_initialized
+                and telemetry is not None
+                and mavlink_client.latest_odometry is not None
+                and mavlink_client.latest_odometry.position_local_ned_m is not None
+            ):
+                vehicle_state.reset(telemetry.odometry)
+                vehicle_state_initialized = True
+                logger.log_event("vehicle_state_initialized", odometry=vehicle_state.odometry)
+
+            if vehicle_state_initialized and mavlink_client.latest_imu is not None:
+                vehicle_state.update_from_imu(latest_imu=mavlink_client.latest_imu)
+            
+            if cycle % int(LOOP_HZ) == 0:
+                print(
+                    f"Vehicle state position - {vehicle_state.position_local_ned_m}\n"
+                    f"IMU body accelerations - {mavlink_client.latest_imu.acceleration_body_frd_mps2 if mavlink_client.latest_imu else 'NO TELEMETRY YET'}\n"
+                    f"ODO position - {mavlink_client.latest_odometry.position_local_ned_m if mavlink_client.latest_odometry else 'NO ODO YET'}\n",
+                    flush=True
+                )
 
             if telemetry is not None:
                 logger.log_telemetry(telemetry, cycle=cycle)
@@ -67,6 +92,8 @@ def main() -> int:
                     },
                     cycle=cycle,
                 )
+
+            ## ADD CONTROL CODE
 
             next_cycle_s += period_s
             sleep_s = max(0.0, next_cycle_s - time.perf_counter())

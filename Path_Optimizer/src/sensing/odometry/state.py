@@ -11,6 +11,7 @@ from .local_ned import telemetry_from_odometry
 
 ZERO_VEC3 = (0.0, 0.0, 0.0)
 IDENTITY_QUATERNION = (1.0, 0.0, 0.0, 0.0)
+GRAVITY_LOCAL_NED_MPS2 = (0.0, 0.0, 9.80665)
 
 
 class VehicleState:
@@ -152,9 +153,15 @@ class VehicleState:
         self.last_imu_time_boot_us = int(latest_imu.time_boot_us)
         self.acceleration_body_frd_mps2 = vec3(latest_imu.acceleration_body_frd_mps2)
         self.angular_velocity_body_frd_rps = vec3(latest_imu.gyro_body_frd_rps)
-        self.acceleration_local_ned_mps2 = rotate_vector(
-            self.attitude_quaternion,
-            self.acceleration_body_frd_mps2,
+        acceleration_local_ned = np.asarray(
+            rotate_vector(
+                self.attitude_quaternion,
+                self.acceleration_body_frd_mps2,
+            ),
+            dtype=float,
+        ) + np.asarray(GRAVITY_LOCAL_NED_MPS2, dtype=float)
+        self.acceleration_local_ned_mps2 = vec3(
+            acceleration_local_ned,
         )
 
         if previous_time_boot_us is None:

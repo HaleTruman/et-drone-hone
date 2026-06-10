@@ -153,6 +153,26 @@ def test_attitude_cache_stores_raw_message_fields_only() -> None:
     assert client.get_latest_telemetry() is None
 
 
+def test_send_control_outputs_dispatches_attitude_targets_offline() -> None:
+    client = MavlinkClient(endpoint="telemetry-simulator")
+    target = {"quaternion": [1.0, 0.0, 0.0, 0.0], "thrust": 0.5}
+
+    client.send_control_outputs(target)
+
+    assert client.latest_attitude_target == target
+
+
+def test_send_control_outputs_rejects_unknown_output_shape() -> None:
+    client = MavlinkClient(endpoint="telemetry-simulator")
+
+    try:
+        client.send_control_outputs({"motor_commands": [0.1, 0.1, 0.1, 0.1]})
+    except ValueError as exc:
+        assert "Unsupported control output keys" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+
 def test_track_chunks_are_reassembled_and_can_seed_gate_map() -> None:
     client = MavlinkClient(endpoint="telemetry-simulator")
     track_payload = struct.pack(

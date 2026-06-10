@@ -2,8 +2,9 @@ import math
 
 import numpy as np
 
-from core.control.hover import HoverPIDController
+from core.control.hover import HoverController, HoverPIDController
 from core.coordinates import euler_from_quaternion, quaternion_from_roll_pitch_yaw
+from sensing.odometry import VehicleState
 
 
 def test_at_target_zero_velocity_returns_physical_hover_thrust() -> None:
@@ -73,3 +74,28 @@ def test_current_yaw_is_preserved_by_default() -> None:
     _, _, yaw = euler_from_quaternion(quaternion)
 
     assert abs(yaw - 1.2) < 1e-12
+
+
+def test_hover_controller_latches_initial_state_as_hover_target() -> None:
+    state = VehicleState()
+    state.position_local_ned_m = (1.0, 2.0, -3.0)
+    state.velocity_local_ned_mps = (0.0, 0.0, 0.0)
+    controller = HoverController(dt_s=0.1)
+
+    control_outputs = controller.compute_control(state)
+
+    assert controller.target_position_local_ned_m == (1.0, 2.0, -3.0)
+    assert sorted(control_outputs) == ["quaternion", "thrust"]
+    np.testing.assert_allclose(control_outputs["quaternion"], [1.0, 0.0, 0.0, 0.0], atol=1e-12)
+
+
+def test_large_error_is_limited_to_configured_thrust_range() -> None:
+    controller = HoverPIDController(dt_s=0.1, min_thrust=0.35, max_thrust=0.65)
+
+    _, thrust = controller.update(
+        position_local_ned_m=(100.0, 100.0, 100.0),
+        velocity_local_ned_mps=(50.0, 50.0, 50.0),
+        target_position_local_ned_m=(0.0, 0.0, 0.0),
+    )
+
+    assert 0.35 <= thrust <= 0.65
