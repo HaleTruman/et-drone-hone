@@ -13,7 +13,7 @@ This folder contains Unreal Editor Python scripts that **create/modify Unreal co
   - Staging area for **external optimizer artifacts** intended to drive in-editor construction (see below).
 
 ## Integration point: optimizer → UE spline build
-`Path_Optimizer/optimizer/devreadme.md` indicates the optimizer will output an “ideal path spline” JSON, and the intended landing path for UE consumption is:
+`Flight/optimizer/devreadme.md` indicates the optimizer will output an “ideal path spline” JSON, and the intended landing path for UE consumption is:
 - `UE_Drone_Env_1/UE_Project_Scripts/Content_Automation/optimized_path/dev-spline-example.json`
 
 ### Expected optimizer deliverables (in JSON)

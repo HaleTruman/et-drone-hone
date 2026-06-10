@@ -41,7 +41,7 @@ def _parse_args() -> Config:
     args, _ = parser.parse_known_args()
 
     output_dir = str(args.output_dir or "").strip()
-    _require(bool(output_dir), "--output-dir is required (absolute path to Path_Optimizer/course_model)")
+    _require(bool(output_dir), "--output-dir is required (absolute path to an export folder)")
 
     output_path = Path(output_dir).expanduser()
     _require(output_path.is_absolute(), f"--output-dir must be an absolute path: {output_path}")
