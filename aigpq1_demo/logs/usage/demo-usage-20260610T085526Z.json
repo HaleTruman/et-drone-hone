@@ -1,0 +1,464 @@
+{
+  "all_files": [
+    "README.md",
+    "config/known_good_body_rate_guidance.json",
+    "requirements.txt",
+    "scripts/run_known_good.py",
+    "src/core/__init__.py",
+    "src/core/logging/__init__.py",
+    "src/core/logging/logging.py",
+    "src/q1runtime/__init__.py",
+    "src/q1runtime/body_rate_guidance.py",
+    "src/q1runtime/body_rate_position_guidance.py",
+    "src/q1runtime/command_streamer.py",
+    "src/q1runtime/command_transform.py",
+    "src/q1runtime/config.py",
+    "src/q1runtime/route_state.py",
+    "src/q1runtime/runtime.py",
+    "src/q1runtime/safety.py",
+    "src/q1runtime/target_filter.py",
+    "src/q1runtime/target_mapper.py",
+    "src/q1runtime/target_selector.py",
+    "src/q1runtime/target_tracker.py",
+    "src/q1runtime/vision_targeting.py",
+    "src/sensing/__init__.py",
+    "src/sensing/perception/__init__.py",
+    "src/sensing/perception/gate_map.py",
+    "src/sensing/perception/gate_pose.py",
+    "src/sensing/perception/vision_observation.py",
+    "src/sensing/telemetry/__init__.py",
+    "src/sensing/telemetry/mavlink_bridge.py",
+    "src/sensing/vision/__init__.py",
+    "src/sensing/vision/cnn/__init__.py",
+    "src/sensing/vision/cnn/cnn_last.pt",
+    "src/sensing/vision/cnn/lightmask_model.py",
+    "src/sensing/vision/cnn/rgb_inference.py",
+    "src/sensing/vision/cnn/rgb_normalizer.py",
+    "src/sensing/vision/io/__init__.py",
+    "src/sensing/vision/io/udp_protocol.py",
+    "src/sensing/vision/landmarker/__init__.py",
+    "src/sensing/vision/landmarker/landmark_output.py",
+    "src/sensing/vision/regressor/__init__.py",
+    "src/sensing/vision/regressor/cnn_ingress.py",
+    "src/sensing/vision/regressor/logit_inference.py",
+    "src/sensing/vision/regressor/model.py",
+    "src/sensing/vision/regressor/quad_geometry.py",
+    "src/sensing/vision/regressor/regression_output.py",
+    "src/sensing/vision/regressor/regressor_last.pt",
+    "src/sensing/vision/service.py",
+    "src/sensing/vision/vision_stream.py"
+  ],
+  "called_files": {
+    "<_remote_module_non_scriptable>.py": 1,
+    "<frozen _collections_abc>": 22550,
+    "<frozen abc>": 4612,
+    "<frozen codecs>": 446,
+    "<frozen genericpath>": 1985,
+    "<frozen importlib._bootstrap>": 156478,
+    "<frozen importlib._bootstrap_external>": 99611,
+    "<frozen importlib.util>": 18,
+    "<frozen os>": 796,
+    "<frozen posixpath>": 6845,
+    "<frozen runpy>": 10,
+    "<frozen zipimport>": 262,
+    "<string>": 51357,
+    "scripts/run_known_good.py": 9,
+    "src/core/__init__.py": 1,
+    "src/core/logging/__init__.py": 1,
+    "src/core/logging/logging.py": 210,
+    "src/q1runtime/__init__.py": 1,
+    "src/q1runtime/body_rate_guidance.py": 4751,
+    "src/q1runtime/body_rate_position_guidance.py": 547,
+    "src/q1runtime/command_streamer.py": 555,
+    "src/q1runtime/command_transform.py": 782,
+    "src/q1runtime/config.py": 3,
+    "src/q1runtime/route_state.py": 385,
+    "src/q1runtime/runtime.py": 2386,
+    "src/q1runtime/safety.py": 2361,
+    "src/q1runtime/target_filter.py": 8,
+    "src/q1runtime/target_mapper.py": 12,
+    "src/q1runtime/target_selector.py": 24,
+    "src/q1runtime/target_tracker.py": 1647,
+    "src/q1runtime/vision_targeting.py": 8,
+    "src/sensing/__init__.py": 1,
+    "src/sensing/perception/__init__.py": 1,
+    "src/sensing/perception/gate_map.py": 3,
+    "src/sensing/perception/gate_pose.py": 59,
+    "src/sensing/perception/vision_observation.py": 45,
+    "src/sensing/telemetry/__init__.py": 1,
+    "src/sensing/telemetry/mavlink_bridge.py": 18060,
+    "src/sensing/vision/__init__.py": 1,
+    "src/sensing/vision/cnn/__init__.py": 1,
+    "src/sensing/vision/cnn/lightmask_model.py": 14,
+    "src/sensing/vision/cnn/rgb_inference.py": 7,
+    "src/sensing/vision/cnn/rgb_normalizer.py": 3,
+    "src/sensing/vision/io/__init__.py": 1,
+    "src/sensing/vision/io/udp_protocol.py": 44858,
+    "src/sensing/vision/landmarker/__init__.py": 1,
+    "src/sensing/vision/landmarker/landmark_output.py": 32,
+    "src/sensing/vision/regressor/__init__.py": 1,
+    "src/sensing/vision/regressor/cnn_ingress.py": 2,
+    "src/sensing/vision/regressor/logit_inference.py": 129,
+    "src/sensing/vision/regressor/model.py": 19,
+    "src/sensing/vision/regressor/quad_geometry.py": 82,
+    "src/sensing/vision/regressor/regression_output.py": 7,
+    "src/sensing/vision/service.py": 10,
+    "src/sensing/vision/vision_stream.py": 90414
+  },
+  "called_functions_top": {
+    "<frozen _collections_abc>:<genexpr>:525": 6944,
+    "<frozen _collections_abc>:__contains__:815": 26,
+    "<frozen _collections_abc>:__getitem__:498": 32,
+    "<frozen _collections_abc>:__new__:473": 7646,
+    "<frozen _collections_abc>:__repr__:485": 20,
+    "<frozen _collections_abc>:__subclasshook__:292": 201,
+    "<frozen _collections_abc>:__subclasshook__:345": 24,
+    "<frozen _collections_abc>:__subclasshook__:439": 30,
+    "<frozen _collections_abc>:_check_methods:108": 8,
+    "<frozen _collections_abc>:_is_param_expr:515": 7268,
+    "<frozen _collections_abc>:_type_repr:527": 32,
+    "<frozen _collections_abc>:clear:971": 12,
+    "<frozen _collections_abc>:get:808": 305,
+    "<frozen abc>:__instancecheck__:117": 2804,
+    "<frozen abc>:__new__:105": 378,
+    "<frozen abc>:__subclasscheck__:121": 555,
+    "<frozen abc>:abstractmethod:7": 205,
+    "<frozen abc>:register:110": 49,
+    "<frozen abc>:update_abstractmethods:146": 621,
+    "<frozen codecs>:__init__:189": 24,
+    "<frozen codecs>:__init__:263": 56,
+    "<frozen codecs>:__init__:312": 56,
+    "<frozen codecs>:decode:322": 290,
+    "<frozen codecs>:setstate:217": 20,
+    "<frozen genericpath>:_splitext:157": 47,
+    "<frozen genericpath>:exists:16": 1899,
+    "<frozen genericpath>:isdir:48": 37,
+    "<frozen importlib._bootstrap>:__enter__:1222": 8402,
+    "<frozen importlib._bootstrap>:__enter__:162": 6116,
+    "<frozen importlib._bootstrap>:__enter__:416": 2159,
+    "<frozen importlib._bootstrap>:__exit__:1226": 8402,
+    "<frozen importlib._bootstrap>:__exit__:173": 6116,
+    "<frozen importlib._bootstrap>:__exit__:420": 2159,
+    "<frozen importlib._bootstrap>:__init__:158": 6116,
+    "<frozen importlib._bootstrap>:__init__:232": 2099,
+    "<frozen importlib._bootstrap>:__init__:412": 2159,
+    "<frozen importlib._bootstrap>:__init__:599": 2124,
+    "<frozen importlib._bootstrap>:__init__:79": 6116,
+    "<frozen importlib._bootstrap>:__new__:74": 6116,
+    "<frozen importlib._bootstrap>:_call_with_frames_removed:480": 4731,
+    "<frozen importlib._bootstrap>:_find_and_load:1349": 4903,
+    "<frozen importlib._bootstrap>:_find_and_load_unlocked:1304": 2147,
+    "<frozen importlib._bootstrap>:_find_spec:1240": 2104,
+    "<frozen importlib._bootstrap>:_gcd_import:1375": 2803,
+    "<frozen importlib._bootstrap>:_get_module_lock:426": 6116,
+    "<frozen importlib._bootstrap>:_handle_fromlist:1390": 2654,
+    "<frozen importlib._bootstrap>:_init_module_attrs:733": 2063,
+    "<frozen importlib._bootstrap>:_load_unlocked:911": 2062,
+    "<frozen importlib._bootstrap>:_lock_unlock_module:463": 3957,
+    "<frozen importlib._bootstrap>:_new_module:48": 2000,
+    "<frozen importlib._bootstrap>:_resolve_name:1231": 19,
+    "<frozen importlib._bootstrap>:_sanity_check:1285": 2803,
+    "<frozen importlib._bootstrap>:_verbose_message:491": 15697,
+    "<frozen importlib._bootstrap>:acquire:304": 6116,
+    "<frozen importlib._bootstrap>:cached:632": 4020,
+    "<frozen importlib._bootstrap>:cb:445": 2099,
+    "<frozen importlib._bootstrap>:find_spec:1128": 2097,
+    "<frozen importlib._bootstrap>:find_spec:982": 2104,
+    "<frozen importlib._bootstrap>:has_location:653": 2268,
+    "<frozen importlib._bootstrap>:module_from_spec:806": 2063,
+    "<frozen importlib._bootstrap>:parent:645": 5184,
+    "<frozen importlib._bootstrap>:release:372": 6116,
+    "<frozen importlib._bootstrap>:remove:82": 6116,
+    "<frozen importlib._bootstrap>:setdefault:124": 6116,
+    "<frozen importlib._bootstrap>:spec_from_loader:662": 8,
+    "<frozen importlib._bootstrap_external>:<genexpr>:139": 7930,
+    "<frozen importlib._bootstrap_external>:<genexpr>:1604": 2088,
+    "<frozen importlib._bootstrap_external>:__init__:1184": 1984,
+    "<frozen importlib._bootstrap_external>:__init__:1307": 58,
+    "<frozen importlib._bootstrap_external>:__init__:1363": 17,
+    "<frozen importlib._bootstrap_external>:__init__:1598": 262,
+    "<frozen importlib._bootstrap_external>:_check_name_wrapper:674": 1982,
+    "<frozen importlib._bootstrap_external>:_classify_pyc:697": 1941,
+    "<frozen importlib._bootstrap_external>:_compile_bytecode:782": 1941,
+    "<frozen importlib._bootstrap_external>:_fill_cache:1675": 263,
+    "<frozen importlib._bootstrap_external>:_find_parent_path_names:1370": 17,
+    "<frozen importlib._bootstrap_external>:_get_cached:642": 2038,
+    "<frozen importlib._bootstrap_external>:_get_parent_path:1380": 17,
+    "<frozen importlib._bootstrap_external>:_get_spec:1522": 2097,
+    "<frozen importlib._bootstrap_external>:_get_spec:1619": 2042,
+    "<frozen importlib._bootstrap_external>:_path_abspath:190": 2304,
+    "<frozen importlib._bootstrap_external>:_path_hooks:1487": 260,
+    "<frozen importlib._bootstrap_external>:_path_importer_cache:1500": 2765,
+    "<frozen importlib._bootstrap_external>:_path_is_mode_type:155": 3305,
+    "<frozen importlib._bootstrap_external>:_path_isabs:185": 2304,
+    "<frozen importlib._bootstrap_external>:_path_isdir:169": 279,
+    "<frozen importlib._bootstrap_external>:_path_isfile:164": 3026,
+    "<frozen importlib._bootstrap_external>:_path_join:131": 15149,
+    "<frozen importlib._bootstrap_external>:_path_split:137": 3965,
+    "<frozen importlib._bootstrap_external>:_path_stat:145": 8146,
+    "<frozen importlib._bootstrap_external>:_relax_case:67": 2598,
+    "<frozen importlib._bootstrap_external>:_unpack_uint32:89": 5823,
+    "<frozen importlib._bootstrap_external>:_validate_timestamp_pyc:730": 1941,
+    "<frozen importlib._bootstrap_external>:cache_from_source:513": 3964,
+    "<frozen importlib._bootstrap_external>:create_module:1017": 1983,
+    "<frozen importlib._bootstrap_external>:create_module:1318": 56,
+    "<frozen importlib._bootstrap_external>:exec_module:1020": 1982,
+    "<frozen importlib._bootstrap_external>:exec_module:1326": 56,
+    "<frozen importlib._bootstrap_external>:exec_module:1439": 17,
+    "<frozen importlib._bootstrap_external>:find_spec:1551": 2097,
+    "<frozen importlib._bootstrap_external>:find_spec:1624": 2598,
+    "<frozen importlib._bootstrap_external>:get_code:1093": 1982,
+    "<frozen importlib._bootstrap_external>:get_data:1214": 2023,
+    "<frozen importlib._bootstrap_external>:get_filename:1209": 1982,
+    "<frozen importlib._bootstrap_external>:path_hook_for_FileFinder:1716": 261,
+    "<frozen importlib._bootstrap_external>:path_stats:1233": 1982,
+    "<frozen importlib._bootstrap_external>:source_to_code:1085": 41,
+    "<frozen importlib._bootstrap_external>:spec_from_file_location:833": 2042,
+    "<frozen importlib.util>:find_spec:70": 18,
+    "<frozen os>:__getitem__:712": 358,
+    "<frozen os>:decode:798": 20,
+    "<frozen os>:encode:794": 366,
+    "<frozen os>:getenv:811": 39,
+    "<frozen posixpath>:_get_sep:42": 314,
+    "<frozen posixpath>:abspath:376": 2093,
+    "<frozen posixpath>:basename:166": 58,
+    "<frozen posixpath>:dirname:176": 22,
+    "<frozen posixpath>:expanduser:229": 14,
+    "<frozen posixpath>:join:72": 227,
+    "<frozen posixpath>:normcase:53": 2086,
+    "<frozen posixpath>:realpath:391": 1961,
+    "<frozen posixpath>:splitdrive:131": 22,
+    "<frozen posixpath>:splitext:117": 47,
+    "<frozen zipimport>:__init__:68": 261,
+    "<string>:<lambda>:1": 1729,
+    "<string>:<module>:1": 777,
+    "<string>:__create_fn__:1": 621,
+    "<string>:__init__:2": 48229,
+    "src/core/logging/logging.py:log_event:23": 198,
+    "src/q1runtime/body_rate_guidance.py:_compute_thrust:277": 543,
+    "src/q1runtime/body_rate_guidance.py:_hold_target_payload:247": 573,
+    "src/q1runtime/body_rate_guidance.py:_velocity_local_ned:297": 573,
+    "src/q1runtime/body_rate_guidance.py:build_payload:135": 573,
+    "src/q1runtime/body_rate_guidance.py:emit_guidance:60": 543,
+    "src/q1runtime/body_rate_guidance.py:emit_payload:129": 578,
+    "src/q1runtime/body_rate_guidance.py:emit_prelevel:92": 30,
+    "src/q1runtime/body_rate_guidance.py:euler_deg:315": 573,
+    "src/q1runtime/body_rate_guidance.py:snapshot:198": 573,
+    "src/q1runtime/body_rate_guidance.py:snapshot_state:218": 183,
+    "src/q1runtime/body_rate_position_guidance.py:compute:23": 543,
+    "src/q1runtime/command_streamer.py:step:40": 548,
+    "src/q1runtime/command_transform.py:<genexpr>:51": 16,
+    "src/q1runtime/command_transform.py:to_payload:68": 760,
+    "src/q1runtime/route_state.py:snapshot:52": 185,
+    "src/q1runtime/route_state.py:to_log_dict:17": 184,
+    "src/q1runtime/runtime.py:<lambda>:330": 543,
+    "src/q1runtime/runtime.py:_log_command_result:643": 543,
+    "src/q1runtime/runtime.py:_tick_body_rate_command:376": 543,
+    "src/q1runtime/runtime.py:tick_command:348": 543,
+    "src/q1runtime/runtime.py:to_log_dict:254": 182,
+    "src/q1runtime/safety.py:_decision:108": 543,
+    "src/q1runtime/safety.py:evaluate:42": 543,
+    "src/q1runtime/safety.py:should_stop:27": 1086,
+    "src/q1runtime/safety.py:snapshot:87": 184,
+    "src/q1runtime/target_tracker.py:age_s:42": 731,
+    "src/q1runtime/target_tracker.py:latest:35": 725,
+    "src/q1runtime/target_tracker.py:snapshot:47": 186,
+    "src/sensing/perception/gate_pose.py:<genexpr>:161": 20,
+    "src/sensing/perception/gate_pose.py:<genexpr>:51": 16,
+    "src/sensing/perception/vision_observation.py:<genexpr>:25": 16,
+    "src/sensing/perception/vision_observation.py:<genexpr>:29": 16,
+    "src/sensing/telemetry/mavlink_bridge.py:<genexpr>:384": 2680,
+    "src/sensing/telemetry/mavlink_bridge.py:<genexpr>:438": 24,
+    "src/sensing/telemetry/mavlink_bridge.py:<genexpr>:439": 30,
+    "src/sensing/telemetry/mavlink_bridge.py:<genexpr>:449": 3435,
+    "src/sensing/telemetry/mavlink_bridge.py:_on_actuator_output_status:446": 687,
+    "src/sensing/telemetry/mavlink_bridge.py:_on_attitude:365": 853,
+    "src/sensing/telemetry/mavlink_bridge.py:_on_encapsulated_data:400": 42,
+    "src/sensing/telemetry/mavlink_bridge.py:_on_heartbeat:357": 80,
+    "src/sensing/telemetry/mavlink_bridge.py:_on_highres_imu:393": 846,
+    "src/sensing/telemetry/mavlink_bridge.py:_on_local_position_ned:372": 687,
+    "src/sensing/telemetry/mavlink_bridge.py:_on_odometry:379": 536,
+    "src/sensing/telemetry/mavlink_bridge.py:_on_race_status:409": 34,
+    "src/sensing/telemetry/mavlink_bridge.py:_on_timesync:362": 64,
+    "src/sensing/telemetry/mavlink_bridge.py:_on_track_data_packet:415": 8,
+    "src/sensing/telemetry/mavlink_bridge.py:_require_connection:460": 583,
+    "src/sensing/telemetry/mavlink_bridge.py:_require_mavutil:465": 660,
+    "src/sensing/telemetry/mavlink_bridge.py:_time_boot_ms:455": 578,
+    "src/sensing/telemetry/mavlink_bridge.py:get_latest_telemetry:264": 712,
+    "src/sensing/telemetry/mavlink_bridge.py:handle_message:306": 3803,
+    "src/sensing/telemetry/mavlink_bridge.py:is_live:94": 581,
+    "src/sensing/telemetry/mavlink_bridge.py:send_attitude_target:233": 578,
+    "src/sensing/telemetry/mavlink_bridge.py:update_latest_telemetry:268": 536,
+    "src/sensing/vision/io/udp_protocol.py:unpack_packet:84": 44856,
+    "src/sensing/vision/landmarker/landmark_output.py:<genexpr>:12": 16,
+    "src/sensing/vision/regressor/logit_inference.py:<genexpr>:480": 12,
+    "src/sensing/vision/regressor/logit_inference.py:<genexpr>:481": 12,
+    "src/sensing/vision/regressor/logit_inference.py:<genexpr>:489": 16,
+    "src/sensing/vision/regressor/logit_inference.py:<genexpr>:490": 16,
+    "src/sensing/vision/regressor/logit_inference.py:_weighted_percentile:286": 16,
+    "src/sensing/vision/regressor/logit_inference.py:sample:248": 16,
+    "src/sensing/vision/regressor/quad_geometry.py:_is_valid_quad:66": 13,
+    "src/sensing/vision/regressor/quad_geometry.py:_ordered_clockwise:23": 12,
+    "src/sensing/vision/regressor/quad_geometry.py:model_to_source_xy:16": 36,
+    "src/sensing/vision/vision_stream.py:<genexpr>:97": 630,
+    "src/sensing/vision/vision_stream.py:_save_frame:160": 21,
+    "src/sensing/vision/vision_stream.py:_trim_partial_frames:172": 44856,
+    "src/sensing/vision/vision_stream.py:process_packet:70": 44856,
+    "src/sensing/vision/vision_stream.py:queue_frame:120": 21,
+    "src/sensing/vision/vision_stream.py:reassemble_frame:107": 21
+  },
+  "elapsed_s": 91.70702481269836,
+  "error": null,
+  "exit_code": 0,
+  "imported_modules_by_file": {
+    "_classes.py": [
+      "torch.classes"
+    ],
+    "_ops.py": [
+      "torch.ops"
+    ],
+    "scripts/run_known_good.py": [
+      "__mp_main__"
+    ],
+    "src/core/__init__.py": [
+      "core"
+    ],
+    "src/core/logging/__init__.py": [
+      "core.logging"
+    ],
+    "src/core/logging/logging.py": [
+      "core.logging.logging"
+    ],
+    "src/q1runtime/__init__.py": [
+      "q1runtime"
+    ],
+    "src/q1runtime/body_rate_guidance.py": [
+      "q1runtime.body_rate_guidance"
+    ],
+    "src/q1runtime/body_rate_position_guidance.py": [
+      "q1runtime.body_rate_position_guidance"
+    ],
+    "src/q1runtime/command_streamer.py": [
+      "q1runtime.command_streamer"
+    ],
+    "src/q1runtime/command_transform.py": [
+      "q1runtime.command_transform"
+    ],
+    "src/q1runtime/config.py": [
+      "q1runtime.config"
+    ],
+    "src/q1runtime/route_state.py": [
+      "q1runtime.route_state"
+    ],
+    "src/q1runtime/runtime.py": [
+      "q1runtime.runtime"
+    ],
+    "src/q1runtime/safety.py": [
+      "q1runtime.safety"
+    ],
+    "src/q1runtime/target_filter.py": [
+      "q1runtime.target_filter"
+    ],
+    "src/q1runtime/target_mapper.py": [
+      "q1runtime.target_mapper"
+    ],
+    "src/q1runtime/target_selector.py": [
+      "q1runtime.target_selector"
+    ],
+    "src/q1runtime/target_tracker.py": [
+      "q1runtime.target_tracker"
+    ],
+    "src/q1runtime/vision_targeting.py": [
+      "q1runtime.vision_targeting"
+    ],
+    "src/sensing/__init__.py": [
+      "sensing"
+    ],
+    "src/sensing/perception/__init__.py": [
+      "sensing.perception"
+    ],
+    "src/sensing/perception/gate_map.py": [
+      "sensing.perception.gate_map"
+    ],
+    "src/sensing/perception/gate_pose.py": [
+      "sensing.perception.gate_pose"
+    ],
+    "src/sensing/perception/vision_observation.py": [
+      "sensing.perception.vision_observation"
+    ],
+    "src/sensing/telemetry/__init__.py": [
+      "sensing.telemetry"
+    ],
+    "src/sensing/telemetry/mavlink_bridge.py": [
+      "sensing.telemetry.mavlink_bridge"
+    ],
+    "src/sensing/vision/__init__.py": [
+      "sensing.vision"
+    ],
+    "src/sensing/vision/cnn/__init__.py": [
+      "sensing.vision.cnn"
+    ],
+    "src/sensing/vision/cnn/lightmask_model.py": [
+      "sensing.vision.cnn.lightmask_model"
+    ],
+    "src/sensing/vision/cnn/rgb_inference.py": [
+      "sensing.vision.cnn.rgb_inference"
+    ],
+    "src/sensing/vision/cnn/rgb_normalizer.py": [
+      "sensing.vision.cnn.rgb_normalizer"
+    ],
+    "src/sensing/vision/io/__init__.py": [
+      "sensing.vision.io"
+    ],
+    "src/sensing/vision/io/udp_protocol.py": [
+      "sensing.vision.io.udp_protocol"
+    ],
+    "src/sensing/vision/landmarker/__init__.py": [
+      "sensing.vision.landmarker"
+    ],
+    "src/sensing/vision/landmarker/landmark_output.py": [
+      "sensing.vision.landmarker.landmark_output"
+    ],
+    "src/sensing/vision/regressor/__init__.py": [
+      "sensing.vision.regressor"
+    ],
+    "src/sensing/vision/regressor/cnn_ingress.py": [
+      "sensing.vision.regressor.cnn_ingress"
+    ],
+    "src/sensing/vision/regressor/logit_inference.py": [
+      "sensing.vision.regressor.logit_inference"
+    ],
+    "src/sensing/vision/regressor/model.py": [
+      "sensing.vision.regressor.model"
+    ],
+    "src/sensing/vision/regressor/quad_geometry.py": [
+      "sensing.vision.regressor.quad_geometry"
+    ],
+    "src/sensing/vision/regressor/regression_output.py": [
+      "sensing.vision.regressor.regression_output"
+    ],
+    "src/sensing/vision/service.py": [
+      "sensing.vision.service"
+    ],
+    "src/sensing/vision/vision_stream.py": [
+      "sensing.vision.vision_stream"
+    ]
+  },
+  "not_called_files": [
+    "README.md",
+    "config/known_good_body_rate_guidance.json",
+    "requirements.txt",
+    "src/sensing/vision/cnn/cnn_last.pt",
+    "src/sensing/vision/regressor/regressor_last.pt"
+  ],
+  "not_imported_files": [
+    "README.md",
+    "config/known_good_body_rate_guidance.json",
+    "requirements.txt",
+    "src/sensing/vision/cnn/cnn_last.pt",
+    "src/sensing/vision/regressor/regressor_last.pt"
+  ],
+  "root": "/Users/trumanhale/aigp sim v1 download/aigpq1_demo",
+  "started_at_utc": "20260610T085526Z",
+  "usage_schema": "aigpq1_demo_profile_v1"
+}

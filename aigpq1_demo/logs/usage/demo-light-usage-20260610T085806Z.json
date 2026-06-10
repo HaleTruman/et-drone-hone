@@ -1,0 +1,305 @@
+{
+  "all_files": [
+    "README.md",
+    "config/known_good_body_rate_guidance.json",
+    "requirements.txt",
+    "scripts/run_known_good.py",
+    "src/core/__init__.py",
+    "src/core/logging/__init__.py",
+    "src/core/logging/logging.py",
+    "src/q1runtime/__init__.py",
+    "src/q1runtime/body_rate_guidance.py",
+    "src/q1runtime/body_rate_position_guidance.py",
+    "src/q1runtime/command_streamer.py",
+    "src/q1runtime/command_transform.py",
+    "src/q1runtime/config.py",
+    "src/q1runtime/route_state.py",
+    "src/q1runtime/runtime.py",
+    "src/q1runtime/safety.py",
+    "src/q1runtime/target_filter.py",
+    "src/q1runtime/target_mapper.py",
+    "src/q1runtime/target_selector.py",
+    "src/q1runtime/target_tracker.py",
+    "src/q1runtime/vision_targeting.py",
+    "src/sensing/__init__.py",
+    "src/sensing/perception/__init__.py",
+    "src/sensing/perception/gate_map.py",
+    "src/sensing/perception/gate_pose.py",
+    "src/sensing/perception/vision_observation.py",
+    "src/sensing/telemetry/__init__.py",
+    "src/sensing/telemetry/mavlink_bridge.py",
+    "src/sensing/vision/__init__.py",
+    "src/sensing/vision/cnn/__init__.py",
+    "src/sensing/vision/cnn/cnn_last.pt",
+    "src/sensing/vision/cnn/lightmask_model.py",
+    "src/sensing/vision/cnn/rgb_inference.py",
+    "src/sensing/vision/cnn/rgb_normalizer.py",
+    "src/sensing/vision/io/__init__.py",
+    "src/sensing/vision/io/udp_protocol.py",
+    "src/sensing/vision/landmarker/__init__.py",
+    "src/sensing/vision/landmarker/landmark_output.py",
+    "src/sensing/vision/regressor/__init__.py",
+    "src/sensing/vision/regressor/cnn_ingress.py",
+    "src/sensing/vision/regressor/logit_inference.py",
+    "src/sensing/vision/regressor/model.py",
+    "src/sensing/vision/regressor/quad_geometry.py",
+    "src/sensing/vision/regressor/regression_output.py",
+    "src/sensing/vision/regressor/regressor_last.pt",
+    "src/sensing/vision/service.py",
+    "src/sensing/vision/vision_stream.py"
+  ],
+  "counts": {
+    "src/q1runtime/body_rate_guidance.py:BodyRateGuidanceController._clip_delta": 454,
+    "src/q1runtime/body_rate_guidance.py:BodyRateGuidanceController._compute_thrust": 868,
+    "src/q1runtime/body_rate_guidance.py:BodyRateGuidanceController._hold_target_payload": 444,
+    "src/q1runtime/body_rate_guidance.py:BodyRateGuidanceController._target_payload": 454,
+    "src/q1runtime/body_rate_guidance.py:BodyRateGuidanceController._velocity_local_ned": 898,
+    "src/q1runtime/body_rate_guidance.py:BodyRateGuidanceController.build_payload": 898,
+    "src/q1runtime/body_rate_guidance.py:BodyRateGuidanceController.emit_guidance": 868,
+    "src/q1runtime/body_rate_guidance.py:BodyRateGuidanceController.emit_payload": 904,
+    "src/q1runtime/body_rate_guidance.py:BodyRateGuidanceController.emit_prelevel": 30,
+    "src/q1runtime/body_rate_guidance.py:BodyRateGuidanceController.emit_stop": 6,
+    "src/q1runtime/body_rate_guidance.py:BodyRateGuidanceController.snapshot": 898,
+    "src/q1runtime/body_rate_position_guidance.py:BodyRatePositionGuidance.compute": 868,
+    "src/q1runtime/command_streamer.py:CommandStreamer.start": 1,
+    "src/q1runtime/command_streamer.py:CommandStreamer.stop": 1,
+    "src/q1runtime/route_state.py:RouteStateTracker._route_velocity": 1966,
+    "src/q1runtime/route_state.py:RouteStateTracker.snapshot": 336,
+    "src/q1runtime/route_state.py:RouteStateTracker.update": 1966,
+    "src/q1runtime/runtime.py:Q1FrameProcessor._suppressed": 1251,
+    "src/q1runtime/runtime.py:Q1FrameProcessor.process_frame": 1966,
+    "src/q1runtime/runtime.py:Q1FrameProcessor.snapshot": 1968,
+    "src/q1runtime/runtime.py:Q1Runtime._arm_and_wait": 1,
+    "src/q1runtime/runtime.py:Q1Runtime._handle_gate_index_changed": 2,
+    "src/q1runtime/runtime.py:Q1Runtime._log_command_result": 868,
+    "src/q1runtime/runtime.py:Q1Runtime._log_result": 1966,
+    "src/q1runtime/runtime.py:Q1Runtime._reset_simulator": 1,
+    "src/q1runtime/runtime.py:Q1Runtime._run_body_rate_prelevel": 1,
+    "src/q1runtime/runtime.py:Q1Runtime._shutdown_controls": 1,
+    "src/q1runtime/runtime.py:Q1Runtime._tick_body_rate_command": 868,
+    "src/q1runtime/runtime.py:Q1Runtime._wait_for_reset_ready": 1,
+    "src/q1runtime/runtime.py:Q1Runtime.process_next_frame": 1966,
+    "src/q1runtime/runtime.py:Q1Runtime.run": 1,
+    "src/q1runtime/runtime.py:Q1Runtime.tick_command": 868,
+    "src/q1runtime/safety.py:SafetySupervisor.evaluate": 868,
+    "src/q1runtime/safety.py:SafetySupervisor.snapshot": 306,
+    "src/q1runtime/target_filter.py:TargetFilter.reset": 2,
+    "src/q1runtime/target_filter.py:TargetFilter.snapshot": 1968,
+    "src/q1runtime/target_filter.py:TargetFilter.update": 715,
+    "src/q1runtime/target_mapper.py:TargetMapper.map_gate": 1940,
+    "src/q1runtime/target_selector.py:TargetSelector._update_route_direction": 715,
+    "src/q1runtime/target_selector.py:TargetSelector.reset": 2,
+    "src/q1runtime/target_selector.py:TargetSelector.select": 715,
+    "src/q1runtime/target_selector.py:TargetSelector.snapshot": 1968,
+    "src/q1runtime/target_tracker.py:TargetTracker.age_s": 2369,
+    "src/q1runtime/target_tracker.py:TargetTracker.clear": 2,
+    "src/q1runtime/target_tracker.py:TargetTracker.latest": 1172,
+    "src/q1runtime/target_tracker.py:TargetTracker.snapshot": 4238,
+    "src/q1runtime/target_tracker.py:TargetTracker.update": 715,
+    "src/q1runtime/vision_targeting.py:Q1VisionTargeter.candidate_gates": 1966,
+    "src/q1runtime/vision_targeting.py:Q1VisionTargeter.process_frame": 1966,
+    "src/q1runtime/vision_targeting.py:Q1VisionTargeter.snapshot": 1968,
+    "src/sensing/telemetry/mavlink_bridge.py:MavlinkBridge._on_attitude": 4273,
+    "src/sensing/telemetry/mavlink_bridge.py:MavlinkBridge._on_odometry": 2668,
+    "src/sensing/telemetry/mavlink_bridge.py:MavlinkBridge._on_race_status": 158,
+    "src/sensing/telemetry/mavlink_bridge.py:MavlinkBridge._receive_loop": 1,
+    "src/sensing/telemetry/mavlink_bridge.py:MavlinkBridge.arm": 1,
+    "src/sensing/telemetry/mavlink_bridge.py:MavlinkBridge.connect": 1,
+    "src/sensing/telemetry/mavlink_bridge.py:MavlinkBridge.disarm": 1,
+    "src/sensing/telemetry/mavlink_bridge.py:MavlinkBridge.get_latest_telemetry": 2974,
+    "src/sensing/telemetry/mavlink_bridge.py:MavlinkBridge.send_attitude_target": 904,
+    "src/sensing/telemetry/mavlink_bridge.py:MavlinkBridge.send_sim_reset_command": 1,
+    "src/sensing/telemetry/mavlink_bridge.py:MavlinkBridge.shutdown": 1,
+    "src/sensing/telemetry/mavlink_bridge.py:MavlinkBridge.snapshot": 2,
+    "src/sensing/telemetry/mavlink_bridge.py:MavlinkBridge.start_heartbeat": 1,
+    "src/sensing/telemetry/mavlink_bridge.py:MavlinkBridge.subscribe_telemetry": 1,
+    "src/sensing/telemetry/mavlink_bridge.py:MavlinkBridge.update_latest_telemetry": 2668,
+    "src/sensing/vision/cnn/rgb_inference.py:LightmaskInference.run_frame": 1966,
+    "src/sensing/vision/regressor/logit_inference.py:LogitRegressor.run_frame": 1966,
+    "src/sensing/vision/service.py:VisionPerceptionService.process_frame": 1966,
+    "src/sensing/vision/service.py:VisionPerceptionService.snapshot": 1968,
+    "src/sensing/vision/vision_stream.py:VisionStreamReceiver.get_next_frame": 1966,
+    "src/sensing/vision/vision_stream.py:VisionStreamReceiver.shutdown": 1,
+    "src/sensing/vision/vision_stream.py:VisionStreamReceiver.snapshot": 1,
+    "src/sensing/vision/vision_stream.py:VisionStreamReceiver.start_listener": 1
+  },
+  "elapsed_s": 39.12116003036499,
+  "error": null,
+  "exit_code": 0,
+  "imported_modules_by_file": {
+    "_classes.py": [
+      "torch.classes"
+    ],
+    "_ops.py": [
+      "torch.ops"
+    ],
+    "scripts/run_known_good.py": [
+      "run_known_good"
+    ],
+    "src/core/__init__.py": [
+      "core"
+    ],
+    "src/core/logging/__init__.py": [
+      "core.logging"
+    ],
+    "src/core/logging/logging.py": [
+      "core.logging.logging"
+    ],
+    "src/q1runtime/__init__.py": [
+      "q1runtime"
+    ],
+    "src/q1runtime/body_rate_guidance.py": [
+      "q1runtime.body_rate_guidance"
+    ],
+    "src/q1runtime/body_rate_position_guidance.py": [
+      "q1runtime.body_rate_position_guidance"
+    ],
+    "src/q1runtime/command_streamer.py": [
+      "q1runtime.command_streamer"
+    ],
+    "src/q1runtime/command_transform.py": [
+      "q1runtime.command_transform"
+    ],
+    "src/q1runtime/config.py": [
+      "q1runtime.config"
+    ],
+    "src/q1runtime/route_state.py": [
+      "q1runtime.route_state"
+    ],
+    "src/q1runtime/runtime.py": [
+      "q1runtime.runtime"
+    ],
+    "src/q1runtime/safety.py": [
+      "q1runtime.safety"
+    ],
+    "src/q1runtime/target_filter.py": [
+      "q1runtime.target_filter"
+    ],
+    "src/q1runtime/target_mapper.py": [
+      "q1runtime.target_mapper"
+    ],
+    "src/q1runtime/target_selector.py": [
+      "q1runtime.target_selector"
+    ],
+    "src/q1runtime/target_tracker.py": [
+      "q1runtime.target_tracker"
+    ],
+    "src/q1runtime/vision_targeting.py": [
+      "q1runtime.vision_targeting"
+    ],
+    "src/sensing/__init__.py": [
+      "sensing"
+    ],
+    "src/sensing/perception/__init__.py": [
+      "sensing.perception"
+    ],
+    "src/sensing/perception/gate_map.py": [
+      "sensing.perception.gate_map"
+    ],
+    "src/sensing/perception/gate_pose.py": [
+      "sensing.perception.gate_pose"
+    ],
+    "src/sensing/perception/vision_observation.py": [
+      "sensing.perception.vision_observation"
+    ],
+    "src/sensing/telemetry/__init__.py": [
+      "sensing.telemetry"
+    ],
+    "src/sensing/telemetry/mavlink_bridge.py": [
+      "sensing.telemetry.mavlink_bridge"
+    ],
+    "src/sensing/vision/__init__.py": [
+      "sensing.vision"
+    ],
+    "src/sensing/vision/cnn/__init__.py": [
+      "sensing.vision.cnn"
+    ],
+    "src/sensing/vision/cnn/lightmask_model.py": [
+      "sensing.vision.cnn.lightmask_model"
+    ],
+    "src/sensing/vision/cnn/rgb_inference.py": [
+      "sensing.vision.cnn.rgb_inference"
+    ],
+    "src/sensing/vision/cnn/rgb_normalizer.py": [
+      "sensing.vision.cnn.rgb_normalizer"
+    ],
+    "src/sensing/vision/io/__init__.py": [
+      "sensing.vision.io"
+    ],
+    "src/sensing/vision/io/udp_protocol.py": [
+      "sensing.vision.io.udp_protocol"
+    ],
+    "src/sensing/vision/landmarker/__init__.py": [
+      "sensing.vision.landmarker"
+    ],
+    "src/sensing/vision/landmarker/landmark_output.py": [
+      "sensing.vision.landmarker.landmark_output"
+    ],
+    "src/sensing/vision/regressor/__init__.py": [
+      "sensing.vision.regressor"
+    ],
+    "src/sensing/vision/regressor/cnn_ingress.py": [
+      "sensing.vision.regressor.cnn_ingress"
+    ],
+    "src/sensing/vision/regressor/logit_inference.py": [
+      "sensing.vision.regressor.logit_inference"
+    ],
+    "src/sensing/vision/regressor/model.py": [
+      "sensing.vision.regressor.model"
+    ],
+    "src/sensing/vision/regressor/quad_geometry.py": [
+      "sensing.vision.regressor.quad_geometry"
+    ],
+    "src/sensing/vision/regressor/regression_output.py": [
+      "sensing.vision.regressor.regression_output"
+    ],
+    "src/sensing/vision/service.py": [
+      "sensing.vision.service"
+    ],
+    "src/sensing/vision/vision_stream.py": [
+      "sensing.vision.vision_stream"
+    ]
+  },
+  "started_at_utc": "20260610T085806Z",
+  "uncounted_or_unwrapped_files": [
+    "README.md",
+    "config/known_good_body_rate_guidance.json",
+    "requirements.txt",
+    "scripts/run_known_good.py",
+    "src/core/__init__.py",
+    "src/core/logging/__init__.py",
+    "src/core/logging/logging.py",
+    "src/q1runtime/__init__.py",
+    "src/q1runtime/command_transform.py",
+    "src/q1runtime/config.py",
+    "src/sensing/__init__.py",
+    "src/sensing/perception/__init__.py",
+    "src/sensing/perception/gate_map.py",
+    "src/sensing/perception/gate_pose.py",
+    "src/sensing/perception/vision_observation.py",
+    "src/sensing/telemetry/__init__.py",
+    "src/sensing/vision/__init__.py",
+    "src/sensing/vision/cnn/__init__.py",
+    "src/sensing/vision/cnn/cnn_last.pt",
+    "src/sensing/vision/cnn/lightmask_model.py",
+    "src/sensing/vision/cnn/rgb_normalizer.py",
+    "src/sensing/vision/io/__init__.py",
+    "src/sensing/vision/io/udp_protocol.py",
+    "src/sensing/vision/landmarker/__init__.py",
+    "src/sensing/vision/landmarker/landmark_output.py",
+    "src/sensing/vision/regressor/__init__.py",
+    "src/sensing/vision/regressor/cnn_ingress.py",
+    "src/sensing/vision/regressor/model.py",
+    "src/sensing/vision/regressor/quad_geometry.py",
+    "src/sensing/vision/regressor/regression_output.py",
+    "src/sensing/vision/regressor/regressor_last.pt"
+  ],
+  "unimported_files": [
+    "README.md",
+    "config/known_good_body_rate_guidance.json",
+    "requirements.txt",
+    "src/sensing/vision/cnn/cnn_last.pt",
+    "src/sensing/vision/regressor/regressor_last.pt"
+  ],
+  "usage_schema": "aigpq1_demo_light_usage_v1"
+}
