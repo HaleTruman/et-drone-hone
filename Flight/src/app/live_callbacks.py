@@ -123,6 +123,7 @@ def register_live_callbacks(app: Dash, *, root_dir: str) -> None:
                     "index": index,
                     "count": len(run.frames),
                     "frame_id": frame.frame_id,
+                    "cycle": frame.cycle,
                     "sim_time_ns": frame.sim_time_ns,
                     "jpeg_size": frame.jpeg_size,
                     "path": frame.path,
@@ -135,7 +136,7 @@ def register_live_callbacks(app: Dash, *, root_dir: str) -> None:
                 },
             }
             caption = (
-                f"Frame {index + 1}/{len(run.frames)} | id={frame.frame_id} | "
+                f"Frame {index + 1}/{len(run.frames)} | id={frame.frame_id} | cycle={frame.cycle if frame.cycle is not None else 'n/a'} | "
                 f"timestamp={frame.sim_time_ns} ns | {frame.jpeg_size:,} bytes"
             )
             return frame_data_uri(run, frame), caption, json.dumps(details, indent=2), gate_map_figure
@@ -168,7 +169,7 @@ def register_live_callbacks(app: Dash, *, root_dir: str) -> None:
 
 
 @lru_cache(maxsize=8)
-def _render_live_run_payload(run_path: str, _signature: tuple[int, int, int]):
+def _render_live_run_payload(run_path: str, _signature: tuple[int, int, int, int]):
     run = load_live_run_cached(run_path)
     event_rows = _rows(_recent_records(run.events, MAX_TABLE_ROWS))
     cycle_rows = _rows(_recent_records(run.cycles, MAX_TABLE_ROWS))
@@ -261,7 +262,12 @@ def _trajectory_figure(run: LiveRun) -> go.Figure:
 
 def _gate_map_figure(run: LiveRun, frame: Any, cycle: dict[str, Any] | None, frame_index: int) -> go.Figure:
     fig = go.Figure()
-    gates = _mapped_gates_for_frame(run, frame.frame_id)
+    cycle_number = frame.cycle
+    if cycle_number is None and isinstance(cycle, dict) and isinstance(cycle.get("cycle"), int):
+        cycle_number = cycle["cycle"]
+    gates = _gate_map_records_for_cycle(run, cycle_number)
+    if not gates:
+        gates = _mapped_gates_for_frame(run, frame.frame_id)
     if not gates:
         gates = _cycle_gates(cycle)
 
@@ -382,6 +388,14 @@ def _mapped_gates_for_frame(run: LiveRun, frame_id: int) -> list[dict[str, Any]]
 
 
 def _stored_gate_map_records(run: LiveRun) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for cycle in run.gate_map_cycles:
+        gates = cycle.get("gate_map")
+        if isinstance(gates, list):
+            records.extend(gate for gate in gates if isinstance(gate, dict) and _point3(_gate_position(gate)))
+    if records:
+        return records
+
     for event in reversed(run.events):
         gate_map = event.get("gate_map") if isinstance(event, dict) else None
         if isinstance(gate_map, list):
@@ -397,6 +411,21 @@ def _stored_gate_map_records(run: LiveRun) -> list[dict[str, Any]]:
     return []
 
 
+def _gate_map_records_for_cycle(run: LiveRun, cycle_number: int | None) -> list[dict[str, Any]]:
+    if cycle_number is None:
+        return []
+    selected: dict[str, Any] | None = None
+    for cycle in run.gate_map_cycles:
+        if cycle.get("cycle") == cycle_number:
+            selected = cycle
+    if selected is None:
+        return []
+    gate_map = selected.get("gate_map")
+    if not isinstance(gate_map, list):
+        return []
+    return [gate for gate in gate_map if isinstance(gate, dict)]
+
+
 def _representative_gates(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     grouped: dict[int, list[dict[str, Any]]] = {}
     for index, gate in enumerate(records):
@@ -408,6 +437,8 @@ def _representative_gates(records: list[dict[str, Any]]) -> list[dict[str, Any]]
     representatives: list[dict[str, Any]] = []
     for sequence, gates in sorted(grouped.items()):
         positions = np.asarray([_gate_position(gate) for gate in gates], dtype=float)
+        relative_positions = [_gate_relative_position(gate) for gate in gates]
+        relative_positions = [position for position in relative_positions if _point3(position)]
         quaternions = np.asarray(
             [_gate_quaternion(gate) or [1.0, 0.0, 0.0, 0.0] for gate in gates],
             dtype=float,
@@ -420,6 +451,9 @@ def _representative_gates(records: list[dict[str, Any]]) -> list[dict[str, Any]]
                 "id": f"sequence-{sequence}",
                 "sequence": sequence,
                 "position_local_ned_m": np.median(positions, axis=0).tolist(),
+                "position_relative_ned_m": np.median(np.asarray(relative_positions, dtype=float), axis=0).tolist()
+                if relative_positions
+                else None,
                 "quaternion": quaternion.tolist(),
                 "confidence": float(np.median(confidences)) if confidences else 0.0,
                 "observation_count": len(gates),
@@ -496,6 +530,7 @@ def _representative_gate_rows(gates: list[dict[str, Any]]) -> list[dict[str, Any
     rows: list[dict[str, Any]] = []
     for gate in gates:
         position = _gate_position(gate) or [None, None, None]
+        relative_position = _gate_relative_position(gate) or [None, None, None]
         quaternion = _gate_quaternion(gate) or [None, None, None, None]
         rows.append(
             {
@@ -505,6 +540,9 @@ def _representative_gate_rows(gates: list[dict[str, Any]]) -> list[dict[str, Any
                 "north_m": _round(position[0]),
                 "east_m": _round(position[1]),
                 "down_m": _round(position[2]),
+                "relative_north_m": _round(relative_position[0]),
+                "relative_east_m": _round(relative_position[1]),
+                "relative_down_m": _round(relative_position[2]),
                 "qw": _round(quaternion[0]),
                 "qx": _round(quaternion[1]),
                 "qy": _round(quaternion[2]),
@@ -545,6 +583,7 @@ def _raw_preview(run: LiveRun) -> str:
             "events": len(run.events),
             "cycles": len(run.cycles),
             "frames": len(run.frames),
+            "gate_map_cycles": len(run.gate_map_cycles),
             "vision_frames": len(raw.get("vision_frames", [])) if isinstance(raw.get("vision_frames"), list) else 0,
             "planned_paths": len(raw.get("planned_paths", [])) if isinstance(raw.get("planned_paths"), list) else 0,
         },
@@ -627,6 +666,11 @@ def _quat4(value: Any) -> bool:
 
 def _gate_position(gate: dict[str, Any]) -> list[float] | None:
     position = gate.get("position_local_ned_m") or gate.get("pos")
+    return position if _point3(position) else None
+
+
+def _gate_relative_position(gate: dict[str, Any]) -> list[float] | None:
+    position = gate.get("position_relative_ned_m")
     return position if _point3(position) else None
 
 

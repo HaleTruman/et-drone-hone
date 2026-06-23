@@ -20,6 +20,7 @@ def gate(gate_id: str, position, confidence=0.9, crossed=False, sequence=None) -
     return GateRecord(
         gate_id=gate_id,
         position_local_ned_m=tuple(float(value) for value in position),
+        position_relative_ned_m=tuple(float(value) for value in position),
         quaternion=(1.0, 0.0, 0.0, 0.0),
         confidence=float(confidence),
         crossed=crossed,
@@ -85,6 +86,7 @@ def test_body_rate_guidance_builds_attitude_target_toward_gate() -> None:
     assert payload["gate_id"] == "gate-1"
     assert payload["vision_frame_id"] == 12
     np.testing.assert_allclose(payload["target_control"]["target_position_local_ned_m"], [1.0, 0.0, -0.4])
+    np.testing.assert_allclose(tracker.latest(now_s=0.0).position_relative_ned_m, [1.0, 0.0, -0.4])
 
 
 def test_stream_body_rate_command_continues_after_missing_frame_then_holds_after_expiry() -> None:

@@ -43,6 +43,7 @@ class VisionStreamReceiver:
         self._socket: socket.socket | None = None
         self._running = threading.Event()
         self._lock = threading.Lock()
+        self._manifest_lock = threading.Lock()
         self._saved_frame_paths: dict[int, str] = {}
         self.saved_frame_count = 0
         self.invalid_packet_count = 0
@@ -126,6 +127,27 @@ class VisionStreamReceiver:
             "dropped_partial_frame_count": self.dropped_partial_frame_count,
         }
 
+    def record_frame_cycle(self, frame_id: int, cycle: int) -> None:
+        if self.output_dir is None:
+            return
+        manifest_path = self._manifest_path()
+        if not manifest_path.is_file():
+            return
+        with self._manifest_lock:
+            lines = manifest_path.read_text(encoding="utf-8").splitlines()
+            updated_lines: list[str] = []
+            changed = False
+            for line in lines:
+                if not line.strip():
+                    continue
+                record = json.loads(line)
+                if int(record.get("frame_id", -1)) == int(frame_id):
+                    record["cycle"] = int(cycle)
+                    changed = True
+                updated_lines.append(json.dumps(record, separators=(",", ":")))
+            if changed:
+                manifest_path.write_text("\n".join(updated_lines) + "\n", encoding="utf-8")
+
     def shutdown(self) -> None:
         self._running.clear()
         if self._socket is not None:
@@ -160,8 +182,9 @@ class VisionStreamReceiver:
             "jpeg_size": len(jpeg_bytes),
             "path": manifest_record_path,
         }
-        with manifest_path.open("a", encoding="utf-8") as manifest:
-            manifest.write(json.dumps(metadata, separators=(",", ":")) + "\n")
+        with self._manifest_lock:
+            with manifest_path.open("a", encoding="utf-8") as manifest:
+                manifest.write(json.dumps(metadata, separators=(",", ":")) + "\n")
         self._saved_frame_paths[frame_id] = str(path)
         self.saved_frame_count += 1
         return str(path)

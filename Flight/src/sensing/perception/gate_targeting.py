@@ -13,6 +13,7 @@ class TrackedGateTarget:
     confidence: float
     updated_s: float
     frame_id: int | None = None
+    position_relative_ned_m: tuple[float, float, float] | None = None
 
 
 class GateTargetTracker:
@@ -29,6 +30,9 @@ class GateTargetTracker:
             confidence=float(gate.confidence),
             updated_s=float(now_s),
             frame_id=frame_id,
+            position_relative_ned_m=None
+            if gate.position_relative_ned_m is None
+            else tuple(float(value) for value in gate.position_relative_ned_m),
         )
         return self._target
 

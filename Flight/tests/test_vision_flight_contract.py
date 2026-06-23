@@ -1,6 +1,6 @@
 import numpy as np
 
-from sensing.perception import GateMap, GatePoseEstimator, VisionObservation
+from sensing.perception import GateMap, GatePoseEstimator, GateRecord, VisionObservation
 from sensing.telemetry import DataSynchronizer, TelemetrySample
 
 
@@ -63,6 +63,7 @@ def test_gate_pose_estimator_maps_camera_observation_to_gate_record() -> None:
 
     assert record.gate_id == "gate-001w"
     assert record.position_local_ned_m == (11.0, 2.0, -3.0)
+    assert record.position_relative_ned_m == (10.0, 0.0, 0.0)
     assert record.confidence == 0.5
     assert record.sequence == 3
     assert np.isclose(np.linalg.norm(record.quaternion), 1.0)
@@ -90,7 +91,102 @@ def test_gate_pose_estimator_updates_gate_map_from_observation_and_telemetry() -
     )
 
     assert records[0] == gate_map.get_gate("gate-001w")
+    assert records[0].last_observed_cycle == 1
+    assert records[0].position_relative_ned_m == (10.0, 0.0, 0.0)
     assert gate_map.get_reference_path().tolist() == [[11.0, 2.0, -3.0]]
+
+
+def test_gate_map_associates_nearby_observations_with_existing_gate() -> None:
+    gate_map = GateMap(association_distance_m=2.0)
+
+    first = gate_map.add_or_update_gate(
+        GateRecord(
+            gate_id="frame-1-gate-a",
+            position_local_ned_m=(10.0, 0.0, 0.0),
+            quaternion=(1.0, 0.0, 0.0, 0.0),
+            confidence=0.75,
+            sequence=0,
+        )
+    )
+    second = gate_map.add_or_update_gate(
+        GateRecord(
+            gate_id="frame-2-gate-b",
+            position_local_ned_m=(11.0, 0.0, 0.0),
+            quaternion=(1.0, 0.0, 0.0, 0.0),
+            confidence=0.75,
+            sequence=1,
+        )
+    )
+
+    gates = gate_map.get_next_gates(10)
+    assert len(gates) == 1
+    assert second.gate_id == first.gate_id
+    assert gates[0].gate_id == "frame-1-gate-a"
+    assert gates[0].position_local_ned_m == (10.5, 0.0, 0.0)
+    assert gates[0].sequence == 0
+
+
+def test_gate_map_keeps_far_observations_as_unique_gates() -> None:
+    gate_map = GateMap(association_distance_m=2.0)
+
+    gate_map.add_or_update_gate(
+        GateRecord(
+            gate_id="gate-a",
+            position_local_ned_m=(10.0, 0.0, 0.0),
+            quaternion=(1.0, 0.0, 0.0, 0.0),
+            confidence=0.75,
+        )
+    )
+    gate_map.add_or_update_gate(
+        GateRecord(
+            gate_id="gate-b",
+            position_local_ned_m=(13.0, 0.0, 0.0),
+            quaternion=(1.0, 0.0, 0.0, 0.0),
+            confidence=0.75,
+        )
+    )
+
+    assert [gate.gate_id for gate in gate_map.get_next_gates(10)] == ["gate-a", "gate-b"]
+
+
+def test_gate_map_requires_distinct_cycle_observations_for_confirmed_gates() -> None:
+    gate_map = GateMap(association_distance_m=2.0, min_observations=2)
+
+    gate_map.add_or_update_gate(
+        GateRecord(
+            gate_id="same-cycle-a",
+            position_local_ned_m=(10.0, 0.0, 0.0),
+            quaternion=(1.0, 0.0, 0.0, 0.0),
+            confidence=0.75,
+            last_observed_cycle=1,
+        )
+    )
+    gate_map.add_or_update_gate(
+        GateRecord(
+            gate_id="same-cycle-b",
+            position_local_ned_m=(10.5, 0.0, 0.0),
+            quaternion=(1.0, 0.0, 0.0, 0.0),
+            confidence=0.75,
+            last_observed_cycle=1,
+        )
+    )
+
+    assert gate_map.get_next_gates(10) == []
+
+    gate_map.add_or_update_gate(
+        GateRecord(
+            gate_id="next-cycle",
+            position_local_ned_m=(10.25, 0.0, 0.0),
+            quaternion=(1.0, 0.0, 0.0, 0.0),
+            confidence=0.75,
+            last_observed_cycle=2,
+        )
+    )
+
+    gates = gate_map.get_next_gates(10)
+    assert len(gates) == 1
+    assert gates[0].observation_count == 2
+    assert gates[0].last_observed_cycle == 2
 
 
 def test_gate_pose_estimator_applies_upward_camera_tilt() -> None:

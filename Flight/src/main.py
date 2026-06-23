@@ -30,6 +30,8 @@ PRELEVEL_THRUST = 0.20
 TARGET_HOLD_S = 0.75
 MIN_GATE_CONFIDENCE = 0.10
 CONTROL_METHOD = "body_rate_guidance"
+GATE_ASSOCIATION_DISTANCE_M = 6.0
+GATE_MIN_OBSERVATIONS = 2
 
 
 def main() -> int:
@@ -55,7 +57,10 @@ def main() -> int:
     vision = VisionStreamReceiver(host=VISION_HOST, port=VISION_PORT, output_dir=run_dir / "vision_frames")
     vision_perception = VisionPerceptionService(VisionPerceptionConfig(run_landmarker=False))
     gate_pose_estimator = GatePoseEstimator()
-    gate_map = GateMap()
+    gate_map = GateMap(
+        association_distance_m=GATE_ASSOCIATION_DISTANCE_M,
+        min_observations=GATE_MIN_OBSERVATIONS,
+    )
     gate_target_tracker = GateTargetTracker(hold_s=TARGET_HOLD_S)
     body_rate_guidance = BodyRateGuidanceController()
 
@@ -122,8 +127,10 @@ def main() -> int:
             if telemetry is not None:
                 logger.log_telemetry(telemetry, cycle=cycle)
             if frame is not None:
+                vision.record_frame_cycle(frame.frame_id, cycle)
                 frame_log = {
                     "frame_id": frame.frame_id,
+                    "cycle": cycle,
                     "sim_time_ns": frame.sim_time_ns,
                     "saved_path": frame.saved_path,
                     "jpeg_size": len(frame.jpeg_bytes),
@@ -148,6 +155,9 @@ def main() -> int:
                             frame_log["selected_guidance_gate"] = {
                                 "id": selected_gate.gate_id,
                                 "position_local_ned_m": [float(value) for value in selected_gate.position_local_ned_m],
+                                "position_relative_ned_m": None
+                                if selected_gate.position_relative_ned_m is None
+                                else [float(value) for value in selected_gate.position_relative_ned_m],
                                 "confidence": float(selected_gate.confidence),
                                 "sequence": selected_gate.sequence,
                             }
@@ -155,9 +165,14 @@ def main() -> int:
                             {
                                 "id": gate.gate_id,
                                 "position_local_ned_m": [float(value) for value in gate.position_local_ned_m],
+                                "position_relative_ned_m": None
+                                if gate.position_relative_ned_m is None
+                                else [float(value) for value in gate.position_relative_ned_m],
                                 "quaternion": [float(value) for value in gate.quaternion],
                                 "confidence": float(gate.confidence),
                                 "sequence": gate.sequence,
+                                "observation_count": gate.observation_count,
+                                "last_observed_cycle": gate.last_observed_cycle,
                             }
                             for gate in mapped_gates
                         ]
@@ -197,6 +212,11 @@ def main() -> int:
                     "gate_count": len(gate_map.get_next_gates(10_000)),
                 },
             )
+            logger.log_gate_map(
+                gate_map.get_next_gates(10_000),
+                cycle=cycle,
+                sim_time_ns=telemetry.sim_time_ns if telemetry else None,
+            )
             if cycle % int(LOOP_HZ) == 0:
                 print(
                     f"cycle={cycle} Odometry.position_local_ned={mavlink_client.latest_odometry.position_local_ned_m if mavlink_client.latest_odometry else 'no ODOMETRY'} "
@@ -228,7 +248,6 @@ def main() -> int:
             bridge=mavlink_client.snapshot(),
             vision=vision.snapshot(),
             perception=vision_perception.snapshot(),
-            gate_map=gate_map.get_next_gates(10_000),
         )
         logger.save_run(log_path)
         print(f"Log saved to {log_path}", flush=True)
