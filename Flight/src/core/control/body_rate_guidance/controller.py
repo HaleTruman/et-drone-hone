@@ -175,13 +175,19 @@ class BodyRateGuidanceController:
     def _target_payload(self, sample: dict[str, Any], target: Any) -> dict[str, Any]:
         current = np.asarray(sample["position_local_ned_m"], dtype=float)
         raw_target = np.asarray(getattr(target, "position_local_ned_m"), dtype=float)
-        raw_delta = raw_target - current
+        relative_position = getattr(target, "position_relative_ned_m", None)
+        raw_delta = (
+            np.asarray(relative_position, dtype=float)
+            if relative_position is not None
+            else raw_target - current
+        )
         clipped_delta = self._clip_delta(raw_delta)
         command_target = current + clipped_delta
         return {
             "mode": "vision_gate_clipped",
             "target_position_local_ned_m": command_target.astype(float).tolist(),
             "raw_target_position_local_ned_m": raw_target.astype(float).tolist(),
+            "raw_target_position_relative_ned_m": raw_delta.astype(float).tolist(),
             "raw_delta_local_ned_m": raw_delta.astype(float).tolist(),
             "clipped_delta_local_ned_m": clipped_delta.astype(float).tolist(),
             "limits": {

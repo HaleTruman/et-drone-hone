@@ -64,6 +64,7 @@ class GatePoseEstimator:
         *,
         telemetry: Any,
         gate_map: GateMap,
+        allow_new_gates: bool = True,
     ) -> list[GateRecord]:
         vehicle_position = getattr(telemetry, "position_local_ned_m", None)
         if vehicle_position is None:
@@ -77,7 +78,9 @@ class GatePoseEstimator:
                 sequence=sequence,
                 observed_cycle=observation.frame_id,
             )
-            records.append(gate_map.add_or_update_gate(record))
+            mapped = gate_map.add_or_update_gate(record, allow_new=allow_new_gates)
+            if mapped is not None:
+                records.append(mapped)
         return records
 
     def camera_to_body_transform(self) -> np.ndarray:

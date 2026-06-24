@@ -235,7 +235,12 @@ class MavlinkClient:
     ) -> dict[str, Any]:
         current = np.asarray(getattr(telemetry, "position_local_ned_m"), dtype=float)
         target_position = np.asarray(getattr(target, "position_local_ned_m"), dtype=float)
-        delta = target_position - current
+        relative_position = getattr(target, "position_relative_ned_m", None)
+        delta = (
+            np.asarray(relative_position, dtype=float)
+            if relative_position is not None
+            else target_position - current
+        )
         delta[2] = 0.0
         distance = float(np.linalg.norm(delta))
         if distance <= max(float(arrival_radius_m), 1e-9):
@@ -249,6 +254,7 @@ class MavlinkClient:
             "source": source,
             "gate_id": getattr(target, "gate_id", None),
             "target_position_local_ned_m": [float(value) for value in target_position],
+            "target_position_relative_ned_m": [float(value) for value in delta],
             "position_confidence": float(getattr(target, "confidence", 0.0)),
             "vision_frame_id": getattr(target, "frame_id", None),
         }
@@ -402,6 +408,14 @@ class MavlinkClient:
                 return telemetry
             time.sleep(idle_sleep_s)
         raise TimeoutError("No local-NED telemetry received before timeout.")
+
+    def wait_for_track_gates(self, *, timeout_s: float, idle_sleep_s: float = 0.02) -> list[TrackGate]:
+        deadline_s = time.perf_counter() + float(timeout_s)
+        while time.perf_counter() < deadline_s:
+            if self.track_gates:
+                return list(self.track_gates)
+            time.sleep(idle_sleep_s)
+        return []
 
     def reset_simulator_and_wait_ready(
         self,
@@ -569,6 +583,9 @@ class MavlinkClient:
                     quaternion=gate.quaternion,
                     confidence=1.0,
                     sequence=sequence,
+                    source="track",
+                    width_m=gate.width_m,
+                    height_m=gate.height_m,
                 )
             )
 

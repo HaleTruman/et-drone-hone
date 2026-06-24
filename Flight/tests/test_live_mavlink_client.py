@@ -203,6 +203,7 @@ def test_track_chunks_are_reassembled_and_can_seed_gate_map() -> None:
     gate_map = GateMap()
     client.populate_gate_map(gate_map)
     np.testing.assert_allclose(gate_map.get_gate("9").position_local_ned_m, [1.0, 2.0, -3.0])
+    assert gate_map.get_gate("9").source == "track"
 
 
 def test_race_status_and_collision_are_retained() -> None:

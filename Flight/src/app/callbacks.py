@@ -146,21 +146,24 @@ def _trajectory_figure(run: RunLog) -> go.Figure:
     ):
         points = [value_at(cycle, key, "position_local_ned_m") for cycle in run.cycles]
         points = [point for point in points if isinstance(point, list) and len(point) >= 3]
-        if points:
-            all_points.extend(points)
-            fig.add_trace(go.Scatter3d(x=[p[0] for p in points], y=[p[1] for p in points], z=[p[2] for p in points], mode="lines", name=label, line={"color": color, "width": 5}))
+        plot_points = [_ned_point_to_plot(point) for point in points]
+        if plot_points:
+            all_points.extend(plot_points)
+            fig.add_trace(go.Scatter3d(x=[p[0] for p in plot_points], y=[p[1] for p in plot_points], z=[p[2] for p in plot_points], mode="lines", name=label, line={"color": color, "width": 5}))
     target = run.metadata.get("target_position_local_ned_m")
     if isinstance(target, list) and len(target) >= 3:
-        all_points.append(target)
-        fig.add_trace(go.Scatter3d(x=[target[0]], y=[target[1]], z=[target[2]], mode="markers", name="Target", marker={"color": "#16a34a", "size": 7, "symbol": "diamond"}))
+        plot_target = _ned_point_to_plot(target)
+        all_points.append(plot_target)
+        fig.add_trace(go.Scatter3d(x=[plot_target[0]], y=[plot_target[1]], z=[plot_target[2]], mode="markers", name="Target", marker={"color": "#16a34a", "size": 7, "symbol": "diamond"}))
     planned_path = _latest_planned_path_points(run)
     if planned_path:
-        all_points.extend(planned_path)
+        plot_planned_path = [_ned_point_to_plot(point) for point in planned_path]
+        all_points.extend(plot_planned_path)
         fig.add_trace(
             go.Scatter3d(
-                x=[point[0] for point in planned_path],
-                y=[point[1] for point in planned_path],
-                z=[point[2] for point in planned_path],
+                x=[point[0] for point in plot_planned_path],
+                y=[point[1] for point in plot_planned_path],
+                z=[point[2] for point in plot_planned_path],
                 mode="lines+markers",
                 name="Planned path",
                 line={"color": "#7c3aed", "width": 6},
@@ -191,8 +194,8 @@ def _trajectory_figure(run: RunLog) -> go.Figure:
         uirevision=ui_revision,
         scene={
             "xaxis": {"title": "North (m)", "range": axis_ranges[0]},
-            "yaxis": {"title": "East (m)", "range": axis_ranges[1]},
-            "zaxis": {"title": "Down (m)", "range": axis_ranges[2]},
+            "yaxis": {"title": "West (-East) (m)", "range": axis_ranges[1]},
+            "zaxis": {"title": "Up (-Down) (m)", "range": axis_ranges[2]},
             "aspectmode": "cube",
             "camera": {"eye": {"x": 1.55, "y": 1.55, "z": 1.1}},
             "dragmode": "orbit",
@@ -228,7 +231,8 @@ def _quadrotor_traces(position: list[float], quaternion: list[float]) -> list[go
         [2 * (qx * qy + qw * qz), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qw * qx)],
         [2 * (qx * qz - qw * qy), 2 * (qy * qz + qw * qx), 1 - 2 * (qx * qx + qy * qy)],
     ])
-    center = np.asarray(position, dtype=float)
+    center = _ned_array_to_plot(np.asarray(position, dtype=float))
+    rotation = _ned_rotation_to_plot(rotation)
     traces = []
     for axis, color in (([0.3, 0.3, 0.0], "#111827"), ([-0.3, 0.3, 0.0], "#64748b")):
         arm = rotation @ np.asarray(axis)
@@ -237,6 +241,18 @@ def _quadrotor_traces(position: list[float], quaternion: list[float]) -> list[go
     nose = center + rotation @ np.array([0.5, 0.0, 0.0])
     traces.append(go.Scatter3d(x=[center[0], nose[0]], y=[center[1], nose[1]], z=[center[2], nose[2]], mode="lines", line={"color": "#dc2626", "width": 7}, showlegend=False))
     return traces
+
+
+def _ned_point_to_plot(point: list[float]) -> list[float]:
+    return [float(point[0]), -float(point[1]), -float(point[2])]
+
+
+def _ned_array_to_plot(point: np.ndarray) -> np.ndarray:
+    return np.asarray([float(point[0]), -float(point[1]), -float(point[2])], dtype=float)
+
+
+def _ned_rotation_to_plot(rotation: np.ndarray) -> np.ndarray:
+    return np.diag([1.0, -1.0, -1.0]) @ np.asarray(rotation, dtype=float)
 
 
 def _trajectory_axis_ranges(points: list[list[float]]) -> list[list[float]]:

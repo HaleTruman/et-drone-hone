@@ -67,7 +67,7 @@ def select_guidance_gate(
     telemetry: Any,
     min_confidence: float = 0.10,
 ) -> GateRecord | None:
-    """Pick the nearest not-yet-crossed mapped gate in local NED."""
+    """Pick the nearest not-yet-crossed gate, preferring drone-relative NED vectors."""
 
     position = getattr(telemetry, "position_local_ned_m", None)
     if position is None:
@@ -83,9 +83,15 @@ def select_guidance_gate(
     return min(
         candidates,
         key=lambda gate: (
-            float(np.linalg.norm(np.asarray(gate.position_local_ned_m, dtype=float) - current)),
+            _guidance_distance_m(gate, current),
             gate.sequence is None,
             -1 if gate.sequence is None else gate.sequence,
             gate.gate_id,
         ),
     )
+
+
+def _guidance_distance_m(gate: GateRecord, current_position_local_ned_m: np.ndarray) -> float:
+    if gate.position_relative_ned_m is not None:
+        return float(np.linalg.norm(np.asarray(gate.position_relative_ned_m, dtype=float)))
+    return float(np.linalg.norm(np.asarray(gate.position_local_ned_m, dtype=float) - current_position_local_ned_m))

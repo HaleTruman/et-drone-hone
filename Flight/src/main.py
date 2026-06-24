@@ -3,6 +3,7 @@
 from pathlib import Path
 import time
 
+from autonomy.planning import HotStartPlanner
 from core.control.body_rate_guidance import BodyRateGuidanceController
 from core.logging import Logger
 from sensing.perception import GateMap, GatePoseEstimator, GateTargetTracker, select_guidance_gate
@@ -16,6 +17,7 @@ VISION_HOST = "0.0.0.0"
 VISION_PORT = 5600
 LOOP_HZ = 30.0
 HEARTBEAT_TIMEOUT_S = 120.0
+TRACK_GATE_WAIT_S = 3.0
 RUN_S: float | None = None
 RESET_ON_START = True
 RESET_WAIT_S = 2.0
@@ -63,10 +65,52 @@ def main() -> int:
     )
     gate_target_tracker = GateTargetTracker(hold_s=TARGET_HOLD_S)
     body_rate_guidance = BodyRateGuidanceController()
+    hot_start_planner = HotStartPlanner()
 
     cycle = 0
     started_s = time.perf_counter()
     next_cycle_s = started_s
+    track_gate_signature: tuple | None = None
+
+    def seed_track_gate_map_if_available(reason: str) -> bool:
+        nonlocal track_gate_signature
+        if not mavlink_client.track_gates:
+            return False
+        latest_track_signature = tuple(
+            (
+                gate.gate_id,
+                tuple(round(float(value), 4) for value in gate.position_local_ned_m),
+                tuple(round(float(value), 4) for value in gate.quaternion),
+            )
+            for gate in mavlink_client.track_gates
+        )
+        if latest_track_signature == track_gate_signature:
+            return False
+        gate_map.clear()
+        mavlink_client.populate_gate_map(gate_map)
+        gate_target_tracker.clear()
+        track_gate_signature = latest_track_signature
+        logger.log_event(
+            "track_gate_map_seeded",
+            reason=reason,
+            gate_count=len(mavlink_client.track_gates),
+            gate_ids=[gate.gate_id for gate in mavlink_client.track_gates],
+        )
+        return True
+
+    def active_track_gate_record():
+        race_status = mavlink_client.race_status
+        if race_status is None or not gate_map.has_authoritative_gates():
+            return None
+        active_gate_index = int(race_status.active_gate_index)
+        for track_gate in mavlink_client.track_gates:
+            if int(track_gate.gate_id) == active_gate_index:
+                gate = gate_map.get_gate(str(track_gate.gate_id))
+                return gate if gate is not None and gate.position_relative_ned_m is not None else None
+        if 0 <= active_gate_index < len(mavlink_client.track_gates):
+            gate = gate_map.get_gate(str(mavlink_client.track_gates[active_gate_index].gate_id))
+            return gate if gate is not None and gate.position_relative_ned_m is not None else None
+        return None
 
     try:
         vision.start_listener()
@@ -86,8 +130,14 @@ def main() -> int:
                 log_event=logger.log_event,
             )
             gate_target_tracker.clear()
+            gate_map.clear()
+            track_gate_signature = None
+            mavlink_client.wait_for_track_gates(timeout_s=TRACK_GATE_WAIT_S)
+            seed_track_gate_map_if_available("post_reset")
         else:
             mavlink_client.wait_for_local_ned_telemetry(timeout_s=HEARTBEAT_TIMEOUT_S)
+            mavlink_client.wait_for_track_gates(timeout_s=TRACK_GATE_WAIT_S)
+            seed_track_gate_map_if_available("startup")
         if ARM_ON_START:
             mavlink_client.arm_and_wait(timeout_s=ARM_TIMEOUT_S)
             logger.log_event("armed", bridge=mavlink_client.snapshot())
@@ -104,6 +154,7 @@ def main() -> int:
             scheduled_s = next_cycle_s
             telemetry = mavlink_client.get_latest_telemetry()
             frame = vision.get_next_frame()
+            seed_track_gate_map_if_available("runtime_update")
 
             if (
                 not vehicle_state_initialized
@@ -144,12 +195,27 @@ def main() -> int:
                             observation,
                             telemetry=telemetry,
                             gate_map=gate_map,
+                            allow_new_gates=not gate_map.has_authoritative_gates(),
+                        )
+                        hot_start_path = hot_start_planner.plan_from_gate_map(gate_map)
+                        hot_start_log = hot_start_path.to_log_dict(
+                            origin_local_ned_m=telemetry.position_local_ned_m,
+                        )
+                        frame_log["hot_start_path"] = hot_start_log
+                        logger.log_planned_path(
+                            hot_start_log,
+                            cycle=cycle,
+                            frame_id=frame.frame_id,
+                            sim_time_ns=telemetry.sim_time_ns,
+                            planner="hot_start",
                         )
                         selected_gate = select_guidance_gate(
                             mapped_gates,
                             telemetry=telemetry,
                             min_confidence=MIN_GATE_CONFIDENCE,
                         )
+                        if selected_gate is None:
+                            selected_gate = active_track_gate_record()
                         if selected_gate is not None:
                             gate_target_tracker.update(selected_gate, now_s=loop_started_s, frame_id=frame.frame_id)
                             frame_log["selected_guidance_gate"] = {

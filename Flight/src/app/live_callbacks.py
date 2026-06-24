@@ -239,9 +239,10 @@ def _trajectory_figure(run: LiveRun) -> go.Figure:
     cycles = _plot_cycles(run.cycles)
     points = [value_at(cycle, "telemetry", "position_local_ned_m") for cycle in cycles]
     points = [point for point in points if isinstance(point, list) and len(point) >= 3]
-    if points:
-        fig.add_trace(go.Scatter3d(x=[p[0] for p in points], y=[p[1] for p in points], z=[p[2] for p in points], mode="lines+markers", name="Local-NED odometry", line={"color": "#2563eb", "width": 5}, marker={"size": 2}))
-    axis_ranges = _trajectory_axis_ranges(points)
+    plot_points = [_ned_point_to_plot(point) for point in points]
+    if plot_points:
+        fig.add_trace(go.Scatter3d(x=[p[0] for p in plot_points], y=[p[1] for p in plot_points], z=[p[2] for p in plot_points], mode="lines+markers", name="Local-NED odometry", line={"color": "#2563eb", "width": 5}, marker={"size": 2}))
+    axis_ranges = _trajectory_axis_ranges(plot_points)
     ui_revision = f"live-trajectory:{run.path}"
     fig.update_layout(
         **_layout("Live Trajectory (LOCAL_NED)"),
@@ -249,8 +250,8 @@ def _trajectory_figure(run: LiveRun) -> go.Figure:
         uirevision=ui_revision,
         scene={
             "xaxis": {"title": "North (m)", "range": axis_ranges[0]},
-            "yaxis": {"title": "East (m)", "range": axis_ranges[1]},
-            "zaxis": {"title": "Down (m)", "range": axis_ranges[2]},
+            "yaxis": {"title": "West (-East) (m)", "range": axis_ranges[1]},
+            "zaxis": {"title": "Up (-Down) (m)", "range": axis_ranges[2]},
             "aspectmode": "cube",
             "camera": {"eye": {"x": 1.55, "y": 1.55, "z": 1.1}},
             "dragmode": "orbit",
@@ -272,17 +273,33 @@ def _gate_map_figure(run: LiveRun, frame: Any, cycle: dict[str, Any] | None, fra
         gates = _cycle_gates(cycle)
 
     points: list[list[float]] = []
+    planned_path = _planned_path_for_cycle(run, cycle_number)
+    planned_plot_points = _planned_path_plot_points(planned_path)
+    if planned_plot_points:
+        points.extend(planned_plot_points)
+        fig.add_trace(
+            go.Scatter3d(
+                x=[point[0] for point in planned_plot_points],
+                y=[point[1] for point in planned_plot_points],
+                z=[point[2] for point in planned_plot_points],
+                mode="lines",
+                name="Hot-start path",
+                line={"color": "#0f766e", "width": 7},
+                showlegend=True,
+            )
+        )
     for gate in gates:
         position = _gate_position(gate)
         quaternion = _gate_quaternion(gate)
         if not _point3(position):
             continue
-        points.append(position)
+        plot_position = _ned_point_to_plot(position)
+        points.append(plot_position)
         fig.add_trace(
             go.Scatter3d(
-                x=[position[0]],
-                y=[position[1]],
-                z=[position[2]],
+                x=[plot_position[0]],
+                y=[plot_position[1]],
+                z=[plot_position[2]],
                 mode="markers+text",
                 name=str(gate.get("id", "gate")),
                 text=[str(gate.get("id", "gate"))],
@@ -300,7 +317,7 @@ def _gate_map_figure(run: LiveRun, frame: Any, cycle: dict[str, Any] | None, fra
         drone_position = telemetry.get("position_local_ned_m")
         drone_quaternion = telemetry.get("attitude_quaternion") or telemetry.get("attitude")
         if _point3(drone_position):
-            points.append(drone_position)
+            points.append(_ned_point_to_plot(drone_position))
             for trace in _drone_traces(drone_position, drone_quaternion):
                 fig.add_trace(trace)
 
@@ -313,8 +330,8 @@ def _gate_map_figure(run: LiveRun, frame: Any, cycle: dict[str, Any] | None, fra
         uirevision=ui_revision,
         scene={
             "xaxis": {"title": "North (m)", "range": axis_ranges[0]},
-            "yaxis": {"title": "East (m)", "range": axis_ranges[1]},
-            "zaxis": {"title": "Down (m)", "range": axis_ranges[2]},
+            "yaxis": {"title": "West (-East) (m)", "range": axis_ranges[1]},
+            "zaxis": {"title": "Up (-Down) (m)", "range": axis_ranges[2]},
             "aspectmode": "cube",
             "camera": {"eye": {"x": 1.55, "y": 1.55, "z": 1.1}},
             "dragmode": "orbit",
@@ -426,6 +443,41 @@ def _gate_map_records_for_cycle(run: LiveRun, cycle_number: int | None) -> list[
     return [gate for gate in gate_map if isinstance(gate, dict)]
 
 
+def _planned_path_for_cycle(run: LiveRun, cycle_number: int | None) -> dict[str, Any] | None:
+    if cycle_number is None:
+        return None
+    planned_paths = run.raw.get("planned_paths")
+    if not isinstance(planned_paths, list):
+        return None
+    selected: dict[str, Any] | None = None
+    for record in planned_paths:
+        if not isinstance(record, dict):
+            continue
+        record_cycle = record.get("cycle")
+        if not isinstance(record_cycle, int) or record_cycle > cycle_number:
+            continue
+        planned_path = record.get("planned_path")
+        if isinstance(planned_path, dict):
+            selected = planned_path
+    return selected
+
+
+def _planned_path_plot_points(planned_path: dict[str, Any] | None) -> list[list[float]]:
+    if not isinstance(planned_path, dict):
+        return []
+    relative_points = planned_path.get("points_relative_ned_m")
+    origin = planned_path.get("origin_local_ned_m")
+    if not isinstance(relative_points, list) or not _point3(origin):
+        return []
+    origin_array = np.asarray(origin, dtype=float)
+    plot_points: list[list[float]] = []
+    for point in relative_points:
+        if _point3(point):
+            local_point = origin_array + np.asarray(point, dtype=float)
+            plot_points.append(_ned_point_to_plot(local_point.tolist()))
+    return plot_points
+
+
 def _representative_gates(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     grouped: dict[int, list[dict[str, Any]]] = {}
     for index, gate in enumerate(records):
@@ -469,13 +521,14 @@ def _representative_gate_map_figure(
 ) -> go.Figure:
     fig = go.Figure()
     raw_points = [_gate_position(gate) for gate in records if _point3(_gate_position(gate))]
-    points: list[list[float]] = list(raw_points)
-    if raw_points:
+    plot_raw_points = [_ned_point_to_plot(point) for point in raw_points]
+    points: list[list[float]] = list(plot_raw_points)
+    if plot_raw_points:
         fig.add_trace(
             go.Scatter3d(
-                x=[point[0] for point in raw_points],
-                y=[point[1] for point in raw_points],
-                z=[point[2] for point in raw_points],
+                x=[point[0] for point in plot_raw_points],
+                y=[point[1] for point in plot_raw_points],
+                z=[point[2] for point in plot_raw_points],
                 mode="markers",
                 name="Stored records",
                 marker={"size": 2, "color": "#94a3b8", "opacity": 0.28},
@@ -489,14 +542,15 @@ def _representative_gate_map_figure(
         quaternion = _gate_quaternion(gate)
         if not _point3(position):
             continue
-        points.append(position)
+        plot_position = _ned_point_to_plot(position)
+        points.append(plot_position)
         gate_id = str(gate.get("id", f"gate-{index}"))
         color = colors[index % len(colors)]
         fig.add_trace(
             go.Scatter3d(
-                x=[position[0]],
-                y=[position[1]],
-                z=[position[2]],
+                x=[plot_position[0]],
+                y=[plot_position[1]],
+                z=[plot_position[2]],
                 mode="markers+text",
                 name=gate_id,
                 text=[gate_id],
@@ -516,8 +570,8 @@ def _representative_gate_map_figure(
         uirevision=f"representative-gates:{run.path}",
         scene={
             "xaxis": {"title": "North (m)", "range": axis_ranges[0]},
-            "yaxis": {"title": "East (m)", "range": axis_ranges[1]},
-            "zaxis": {"title": "Down (m)", "range": axis_ranges[2]},
+            "yaxis": {"title": "West (-East) (m)", "range": axis_ranges[1]},
+            "zaxis": {"title": "Up (-Down) (m)", "range": axis_ranges[2]},
             "aspectmode": "cube",
             "camera": {"eye": {"x": 1.55, "y": 1.55, "z": 1.1}},
             "dragmode": "orbit",
@@ -602,11 +656,11 @@ def _run_json_size(run: LiveRun) -> int:
 
 
 def _gate_traces(position: list[float], quaternion: list[float], gate_id: str, *, color: str = "#7c3aed") -> list[go.Scatter3d]:
-    center = np.asarray(position, dtype=float)
-    rotation = _rotation_matrix(quaternion)
-    outer = _square_points(center, rotation, size=2.7)
-    inner = _square_points(center, rotation, size=1.5)
-    normal = center + rotation[:, 0] * 1.6
+    center = _ned_array_to_plot(np.asarray(position, dtype=float))
+    rotation = _ned_rotation_to_plot(_rotation_matrix(quaternion))
+    outer = _gate_square_points(center, rotation, size=2.7)
+    inner = _gate_square_points(center, rotation, size=1.5)
+    normal = center + rotation[:, 1] * 1.6
     traces = [
         go.Scatter3d(x=outer[:, 0], y=outer[:, 1], z=outer[:, 2], mode="lines", name=f"{gate_id} outer", line={"color": color, "width": 5}, showlegend=False),
         go.Scatter3d(x=inner[:, 0], y=inner[:, 1], z=inner[:, 2], mode="lines", name=f"{gate_id} inner", line={"color": color, "width": 3}, showlegend=False, opacity=0.65),
@@ -616,8 +670,8 @@ def _gate_traces(position: list[float], quaternion: list[float], gate_id: str, *
 
 
 def _drone_traces(position: list[float], quaternion: list[float] | None) -> list[go.Scatter3d]:
-    center = np.asarray(position, dtype=float)
-    rotation = _rotation_matrix(quaternion if _quat4(quaternion) else [1.0, 0.0, 0.0, 0.0])
+    center = _ned_array_to_plot(np.asarray(position, dtype=float))
+    rotation = _ned_rotation_to_plot(_rotation_matrix(quaternion if _quat4(quaternion) else [1.0, 0.0, 0.0, 0.0]))
     nose = center + rotation[:, 0] * 1.2
     right = center + rotation[:, 1] * 0.55
     left = center - rotation[:, 1] * 0.55
@@ -628,19 +682,31 @@ def _drone_traces(position: list[float], quaternion: list[float] | None) -> list
     ]
 
 
-def _square_points(center: np.ndarray, rotation: np.ndarray, *, size: float) -> np.ndarray:
+def _gate_square_points(center: np.ndarray, rotation: np.ndarray, *, size: float) -> np.ndarray:
     half = float(size) / 2.0
     local = np.array(
         [
-            [0.0, -half, -half],
-            [0.0, half, -half],
-            [0.0, half, half],
-            [0.0, -half, half],
-            [0.0, -half, -half],
+            [-half, 0.0, -half],
+            [half, 0.0, -half],
+            [half, 0.0, half],
+            [-half, 0.0, half],
+            [-half, 0.0, -half],
         ],
         dtype=float,
     )
     return center + local @ rotation.T
+
+
+def _ned_point_to_plot(point: list[float]) -> list[float]:
+    return [float(point[0]), -float(point[1]), -float(point[2])]
+
+
+def _ned_array_to_plot(point: np.ndarray) -> np.ndarray:
+    return np.asarray([float(point[0]), -float(point[1]), -float(point[2])], dtype=float)
+
+
+def _ned_rotation_to_plot(rotation: np.ndarray) -> np.ndarray:
+    return np.diag([1.0, -1.0, -1.0]) @ np.asarray(rotation, dtype=float)
 
 
 def _rotation_matrix(quaternion: list[float]) -> np.ndarray:

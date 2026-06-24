@@ -1,5 +1,8 @@
 import json
 
+import numpy as np
+
+from app.live_callbacks import _gate_traces, _ned_point_to_plot, _planned_path_for_cycle, _planned_path_plot_points
 from app.live_data import discover_live_run_dirs, load_live_run, nearest_cycle_for_frame
 
 
@@ -95,3 +98,51 @@ def test_live_frame_sync_uses_timesync_offset(tmp_path) -> None:
     assert sync.cycle_index == 1
     assert sync.cycle == run.cycles[1]
     assert sync.error_ms == 1.0
+
+
+def test_live_gate_map_plot_converts_ned_down_to_screen_up() -> None:
+    assert _ned_point_to_plot([1.0, 2.0, 3.0]) == [1.0, -2.0, -3.0]
+
+
+def test_live_gate_map_uses_gate_through_axis() -> None:
+    traces = _gate_traces(
+        [10.0, 0.0, 5.0],
+        [0.70710678, 0.0, 0.0, 0.70710678],
+        "gate",
+    )
+
+    normal = traces[2]
+    np.testing.assert_allclose(normal.x, [10.0, 8.4], atol=1e-6)
+    np.testing.assert_allclose(normal.y, [0.0, 0.0], atol=1e-6)
+    np.testing.assert_allclose(normal.z, [-5.0, -5.0], atol=1e-6)
+
+
+def test_live_gate_map_uses_latest_planned_path_for_cycle(tmp_path) -> None:
+    run = load_live_run(str(_write_run(tmp_path)))
+
+    newer = {"points_relative_ned_m": [[1.0, 2.0, 3.0]], "origin_local_ned_m": [10.0, 20.0, 30.0]}
+    older = {"points_relative_ned_m": [[0.0, 0.0, 0.0]], "origin_local_ned_m": [1.0, 2.0, 3.0]}
+    run = run.__class__(
+        path=run.path,
+        name=run.name,
+        timestamp=run.timestamp,
+        schema_version=run.schema_version,
+        metadata=run.metadata,
+        events=run.events,
+        cycles=run.cycles,
+        frames=run.frames,
+        gate_map_cycles=run.gate_map_cycles,
+        raw={"planned_paths": [{"cycle": 1, "planned_path": older}, {"cycle": 3, "planned_path": newer}]},
+    )
+
+    assert _planned_path_for_cycle(run, 2) == older
+    assert _planned_path_for_cycle(run, 3) == newer
+
+
+def test_planned_path_plot_points_place_relative_path_at_local_origin() -> None:
+    planned_path = {
+        "points_relative_ned_m": [[1.0, 2.0, 3.0]],
+        "origin_local_ned_m": [10.0, 20.0, 30.0],
+    }
+
+    assert _planned_path_plot_points(planned_path) == [[11.0, -22.0, -33.0]]
