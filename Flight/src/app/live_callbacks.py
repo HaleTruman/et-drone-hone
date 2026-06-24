@@ -288,8 +288,10 @@ def _gate_map_figure(run: LiveRun, frame: Any, cycle: dict[str, Any] | None, fra
                 showlegend=True,
             )
         )
+    telemetry = cycle.get("telemetry") if isinstance(cycle, dict) else None
+    drone_position = telemetry.get("position_local_ned_m") if isinstance(telemetry, dict) else None
     for gate in gates:
-        position = _gate_position(gate)
+        position = _gate_frame_position(gate, origin_local_ned_m=drone_position)
         quaternion = _gate_quaternion(gate)
         if not _point3(position):
             continue
@@ -312,16 +314,15 @@ def _gate_map_figure(run: LiveRun, frame: Any, cycle: dict[str, Any] | None, fra
             for trace in _gate_traces(position, quaternion, str(gate.get("id", "gate"))):
                 fig.add_trace(trace)
 
-    telemetry = cycle.get("telemetry") if isinstance(cycle, dict) else None
     if isinstance(telemetry, dict):
-        drone_position = telemetry.get("position_local_ned_m")
         drone_quaternion = telemetry.get("attitude_quaternion") or telemetry.get("attitude")
         if _point3(drone_position):
-            points.append(_ned_point_to_plot(drone_position))
-            for trace in _drone_traces(drone_position, drone_quaternion):
+            drone_relative_position = [0.0, 0.0, 0.0]
+            points.append(_ned_point_to_plot(drone_relative_position))
+            for trace in _drone_traces(drone_relative_position, drone_quaternion):
                 fig.add_trace(trace)
 
-    title = f"Stored Gate Map At Frame {frame_index + 1} (id={frame.frame_id})"
+    title = f"Drone-Relative Gate Map At Frame {frame_index + 1} (id={frame.frame_id})"
     axis_ranges = _trajectory_axis_ranges(points)
     ui_revision = f"live-gate-map:{run.path}:{frame_index}"
     fig.update_layout(
@@ -329,9 +330,9 @@ def _gate_map_figure(run: LiveRun, frame: Any, cycle: dict[str, Any] | None, fra
         dragmode="orbit",
         uirevision=ui_revision,
         scene={
-            "xaxis": {"title": "North (m)", "range": axis_ranges[0]},
-            "yaxis": {"title": "West (-East) (m)", "range": axis_ranges[1]},
-            "zaxis": {"title": "Up (-Down) (m)", "range": axis_ranges[2]},
+            "xaxis": {"title": "Relative North (m)", "range": axis_ranges[0]},
+            "yaxis": {"title": "Relative West (-East) (m)", "range": axis_ranges[1]},
+            "zaxis": {"title": "Relative Up (-Down) (m)", "range": axis_ranges[2]},
             "aspectmode": "cube",
             "camera": {"eye": {"x": 1.55, "y": 1.55, "z": 1.1}},
             "dragmode": "orbit",
@@ -466,15 +467,12 @@ def _planned_path_plot_points(planned_path: dict[str, Any] | None) -> list[list[
     if not isinstance(planned_path, dict):
         return []
     relative_points = planned_path.get("points_relative_ned_m")
-    origin = planned_path.get("origin_local_ned_m")
-    if not isinstance(relative_points, list) or not _point3(origin):
+    if not isinstance(relative_points, list):
         return []
-    origin_array = np.asarray(origin, dtype=float)
     plot_points: list[list[float]] = []
     for point in relative_points:
         if _point3(point):
-            local_point = origin_array + np.asarray(point, dtype=float)
-            plot_points.append(_ned_point_to_plot(local_point.tolist()))
+            plot_points.append(_ned_point_to_plot(point))
     return plot_points
 
 
@@ -733,6 +731,17 @@ def _quat4(value: Any) -> bool:
 def _gate_position(gate: dict[str, Any]) -> list[float] | None:
     position = gate.get("position_local_ned_m") or gate.get("pos")
     return position if _point3(position) else None
+
+
+def _gate_frame_position(gate: dict[str, Any], *, origin_local_ned_m: list[float] | None = None) -> list[float] | None:
+    relative_position = gate.get("position_relative_ned_m")
+    if _point3(relative_position):
+        return relative_position
+    local_position = gate.get("position_local_ned_m") or gate.get("pos")
+    if _point3(local_position) and _point3(origin_local_ned_m):
+        relative = np.asarray(local_position, dtype=float) - np.asarray(origin_local_ned_m, dtype=float)
+        return [float(value) for value in relative]
+    return local_position if _point3(local_position) else None
 
 
 def _gate_relative_position(gate: dict[str, Any]) -> list[float] | None:

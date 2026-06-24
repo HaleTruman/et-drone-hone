@@ -2,7 +2,7 @@ import json
 
 import numpy as np
 
-from app.live_callbacks import _gate_traces, _ned_point_to_plot, _planned_path_for_cycle, _planned_path_plot_points
+from app.live_callbacks import _gate_frame_position, _gate_position, _gate_traces, _ned_point_to_plot, _planned_path_for_cycle, _planned_path_plot_points
 from app.live_data import discover_live_run_dirs, load_live_run, nearest_cycle_for_frame
 
 
@@ -139,10 +139,26 @@ def test_live_gate_map_uses_latest_planned_path_for_cycle(tmp_path) -> None:
     assert _planned_path_for_cycle(run, 3) == newer
 
 
-def test_planned_path_plot_points_place_relative_path_at_local_origin() -> None:
+def test_planned_path_plot_points_remain_drone_relative() -> None:
     planned_path = {
         "points_relative_ned_m": [[1.0, 2.0, 3.0]],
         "origin_local_ned_m": [10.0, 20.0, 30.0],
     }
 
-    assert _planned_path_plot_points(planned_path) == [[11.0, -22.0, -33.0]]
+    assert _planned_path_plot_points(planned_path) == [[1.0, -2.0, -3.0]]
+
+
+def test_live_frame_gate_position_prefers_relative_coordinates() -> None:
+    gate = {
+        "position_local_ned_m": [10.0, 20.0, 30.0],
+        "position_relative_ned_m": [1.0, 2.0, 3.0],
+    }
+
+    assert _gate_frame_position(gate, origin_local_ned_m=[7.0, 18.0, 35.0]) == [1.0, 2.0, 3.0]
+    assert _gate_position(gate) == [10.0, 20.0, 30.0]
+
+
+def test_live_frame_gate_position_can_project_local_coordinates_to_relative() -> None:
+    gate = {"position_local_ned_m": [10.0, 20.0, 30.0]}
+
+    assert _gate_frame_position(gate, origin_local_ned_m=[7.0, 18.0, 35.0]) == [3.0, 2.0, -5.0]

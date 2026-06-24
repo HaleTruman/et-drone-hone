@@ -10,6 +10,7 @@ import numpy as np
 
 from core.coordinates import quat_wxyz, quaternion_from_roll_pitch_yaw, vec3
 from core.schemas import (
+    AttitudeSample,
     CollisionEvent,
     MavlinkActuatorOutputStatus,
     MavlinkAttitude,
@@ -532,10 +533,35 @@ class MavlinkClient:
         return TelemetrySample(
             sim_time_ns=sim_time_ns,
             odometry=state,
+            imu=self._latest_imu_sample(),
+            attitude_sample=self._latest_attitude_sample(),
             system_status=self._latest_system_status(),
             reset_count=None if self.latest_odometry is None else self.latest_odometry.reset_count,
             diagnostic_odometry=None if self.latest_odometry is None else asdict(self.latest_odometry),
             raw={"source": "mavlink_client"},
+        )
+
+    def _latest_imu_sample(self) -> MavlinkHighresImu | None:
+        return self.latest_imu
+
+    def _latest_attitude_sample(self) -> AttitudeSample | None:
+        if self.latest_attitude is None:
+            return None
+        attitude_quaternion = quaternion_from_roll_pitch_yaw(
+            self.latest_attitude.roll_rad,
+            self.latest_attitude.pitch_rad,
+            self.latest_attitude.yaw_rad,
+        )
+        return AttitudeSample(
+            sim_time_ns=int(self.latest_attitude.time_boot_ms) * 1_000_000,
+            attitude_quaternion=attitude_quaternion,
+            body_rates_frd_rps=self.latest_attitude.angular_velocity_body_frd_rps,
+            euler_rad=(
+                self.latest_attitude.roll_rad,
+                self.latest_attitude.pitch_rad,
+                self.latest_attitude.yaw_rad,
+            ),
+            raw=asdict(self.latest_attitude),
         )
 
     def status(self) -> RuntimeStatus:

@@ -93,6 +93,15 @@ def test_raw_messages_do_not_inject_cross_message_fields() -> None:
     assert telemetry is not None
     assert telemetry.sim_time_ns == 1_234_000
     assert telemetry.position_local_ned_m == (1.0, 2.0, -3.0)
+    assert telemetry.imu is not None
+    assert telemetry.imu.time_boot_us == 1234
+    assert telemetry.imu.acceleration_body_frd_mps2 == (0.0, 0.0, 9.8)
+    assert telemetry.imu.gyro_body_frd_rps == (0.1, 0.2, 0.3)
+    assert not hasattr(telemetry.imu, "velocity_local_ned_mps")
+    assert not hasattr(telemetry.imu, "acceleration_local_ned_mps2")
+    assert telemetry.attitude_sample is not None
+    assert telemetry.attitude_sample.sim_time_ns == 1_000_000
+    assert telemetry.attitude_sample.body_rates_frd_rps == (0.1, 0.2, 0.3)
     assert telemetry.diagnostic_odometry["position_local_ned_m"] == client.latest_odometry.position_local_ned_m
 
 
