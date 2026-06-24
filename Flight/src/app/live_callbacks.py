@@ -123,6 +123,7 @@ def register_live_callbacks(app: Dash, *, root_dir: str) -> None:
                     "index": index,
                     "count": len(run.frames),
                     "frame_id": frame.frame_id,
+                    "cycle": frame.cycle,
                     "sim_time_ns": frame.sim_time_ns,
                     "jpeg_size": frame.jpeg_size,
                     "path": frame.path,
@@ -135,7 +136,7 @@ def register_live_callbacks(app: Dash, *, root_dir: str) -> None:
                 },
             }
             caption = (
-                f"Frame {index + 1}/{len(run.frames)} | id={frame.frame_id} | "
+                f"Frame {index + 1}/{len(run.frames)} | id={frame.frame_id} | cycle={frame.cycle if frame.cycle is not None else 'n/a'} | "
                 f"timestamp={frame.sim_time_ns} ns | {frame.jpeg_size:,} bytes"
             )
             return frame_data_uri(run, frame), caption, json.dumps(details, indent=2), gate_map_figure
@@ -168,7 +169,7 @@ def register_live_callbacks(app: Dash, *, root_dir: str) -> None:
 
 
 @lru_cache(maxsize=8)
-def _render_live_run_payload(run_path: str, _signature: tuple[int, int, int]):
+def _render_live_run_payload(run_path: str, _signature: tuple[int, int, int, int]):
     run = load_live_run_cached(run_path)
     event_rows = _rows(_recent_records(run.events, MAX_TABLE_ROWS))
     cycle_rows = _rows(_recent_records(run.cycles, MAX_TABLE_ROWS))
@@ -238,9 +239,10 @@ def _trajectory_figure(run: LiveRun) -> go.Figure:
     cycles = _plot_cycles(run.cycles)
     points = [value_at(cycle, "telemetry", "position_local_ned_m") for cycle in cycles]
     points = [point for point in points if isinstance(point, list) and len(point) >= 3]
-    if points:
-        fig.add_trace(go.Scatter3d(x=[p[0] for p in points], y=[p[1] for p in points], z=[p[2] for p in points], mode="lines+markers", name="Local-NED odometry", line={"color": "#2563eb", "width": 5}, marker={"size": 2}))
-    axis_ranges = _trajectory_axis_ranges(points)
+    plot_points = [_ned_point_to_plot(point) for point in points]
+    if plot_points:
+        fig.add_trace(go.Scatter3d(x=[p[0] for p in plot_points], y=[p[1] for p in plot_points], z=[p[2] for p in plot_points], mode="lines+markers", name="Local-NED odometry", line={"color": "#2563eb", "width": 5}, marker={"size": 2}))
+    axis_ranges = _trajectory_axis_ranges(plot_points)
     ui_revision = f"live-trajectory:{run.path}"
     fig.update_layout(
         **_layout("Live Trajectory (LOCAL_NED)"),
@@ -248,8 +250,8 @@ def _trajectory_figure(run: LiveRun) -> go.Figure:
         uirevision=ui_revision,
         scene={
             "xaxis": {"title": "North (m)", "range": axis_ranges[0]},
-            "yaxis": {"title": "East (m)", "range": axis_ranges[1]},
-            "zaxis": {"title": "Down (m)", "range": axis_ranges[2]},
+            "yaxis": {"title": "West (-East) (m)", "range": axis_ranges[1]},
+            "zaxis": {"title": "Up (-Down) (m)", "range": axis_ranges[2]},
             "aspectmode": "cube",
             "camera": {"eye": {"x": 1.55, "y": 1.55, "z": 1.1}},
             "dragmode": "orbit",
@@ -261,22 +263,45 @@ def _trajectory_figure(run: LiveRun) -> go.Figure:
 
 def _gate_map_figure(run: LiveRun, frame: Any, cycle: dict[str, Any] | None, frame_index: int) -> go.Figure:
     fig = go.Figure()
-    gates = _mapped_gates_for_frame(run, frame.frame_id)
+    cycle_number = frame.cycle
+    if cycle_number is None and isinstance(cycle, dict) and isinstance(cycle.get("cycle"), int):
+        cycle_number = cycle["cycle"]
+    gates = _gate_map_records_for_cycle(run, cycle_number)
+    if not gates:
+        gates = _mapped_gates_for_frame(run, frame.frame_id)
     if not gates:
         gates = _cycle_gates(cycle)
 
     points: list[list[float]] = []
+    planned_path = _planned_path_for_cycle(run, cycle_number)
+    planned_plot_points = _planned_path_plot_points(planned_path)
+    if planned_plot_points:
+        points.extend(planned_plot_points)
+        fig.add_trace(
+            go.Scatter3d(
+                x=[point[0] for point in planned_plot_points],
+                y=[point[1] for point in planned_plot_points],
+                z=[point[2] for point in planned_plot_points],
+                mode="lines",
+                name="Hot-start path",
+                line={"color": "#0f766e", "width": 7},
+                showlegend=True,
+            )
+        )
+    telemetry = cycle.get("telemetry") if isinstance(cycle, dict) else None
+    drone_position = telemetry.get("position_local_ned_m") if isinstance(telemetry, dict) else None
     for gate in gates:
-        position = _gate_position(gate)
+        position = _gate_frame_position(gate, origin_local_ned_m=drone_position)
         quaternion = _gate_quaternion(gate)
         if not _point3(position):
             continue
-        points.append(position)
+        plot_position = _ned_point_to_plot(position)
+        points.append(plot_position)
         fig.add_trace(
             go.Scatter3d(
-                x=[position[0]],
-                y=[position[1]],
-                z=[position[2]],
+                x=[plot_position[0]],
+                y=[plot_position[1]],
+                z=[plot_position[2]],
                 mode="markers+text",
                 name=str(gate.get("id", "gate")),
                 text=[str(gate.get("id", "gate"))],
@@ -289,16 +314,15 @@ def _gate_map_figure(run: LiveRun, frame: Any, cycle: dict[str, Any] | None, fra
             for trace in _gate_traces(position, quaternion, str(gate.get("id", "gate"))):
                 fig.add_trace(trace)
 
-    telemetry = cycle.get("telemetry") if isinstance(cycle, dict) else None
     if isinstance(telemetry, dict):
-        drone_position = telemetry.get("position_local_ned_m")
         drone_quaternion = telemetry.get("attitude_quaternion") or telemetry.get("attitude")
         if _point3(drone_position):
-            points.append(drone_position)
-            for trace in _drone_traces(drone_position, drone_quaternion):
+            drone_relative_position = [0.0, 0.0, 0.0]
+            points.append(_ned_point_to_plot(drone_relative_position))
+            for trace in _drone_traces(drone_relative_position, drone_quaternion):
                 fig.add_trace(trace)
 
-    title = f"Stored Gate Map At Frame {frame_index + 1} (id={frame.frame_id})"
+    title = f"Drone-Relative Gate Map At Frame {frame_index + 1} (id={frame.frame_id})"
     axis_ranges = _trajectory_axis_ranges(points)
     ui_revision = f"live-gate-map:{run.path}:{frame_index}"
     fig.update_layout(
@@ -306,9 +330,9 @@ def _gate_map_figure(run: LiveRun, frame: Any, cycle: dict[str, Any] | None, fra
         dragmode="orbit",
         uirevision=ui_revision,
         scene={
-            "xaxis": {"title": "North (m)", "range": axis_ranges[0]},
-            "yaxis": {"title": "East (m)", "range": axis_ranges[1]},
-            "zaxis": {"title": "Down (m)", "range": axis_ranges[2]},
+            "xaxis": {"title": "Relative North (m)", "range": axis_ranges[0]},
+            "yaxis": {"title": "Relative West (-East) (m)", "range": axis_ranges[1]},
+            "zaxis": {"title": "Relative Up (-Down) (m)", "range": axis_ranges[2]},
             "aspectmode": "cube",
             "camera": {"eye": {"x": 1.55, "y": 1.55, "z": 1.1}},
             "dragmode": "orbit",
@@ -382,6 +406,14 @@ def _mapped_gates_for_frame(run: LiveRun, frame_id: int) -> list[dict[str, Any]]
 
 
 def _stored_gate_map_records(run: LiveRun) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for cycle in run.gate_map_cycles:
+        gates = cycle.get("gate_map")
+        if isinstance(gates, list):
+            records.extend(gate for gate in gates if isinstance(gate, dict) and _point3(_gate_position(gate)))
+    if records:
+        return records
+
     for event in reversed(run.events):
         gate_map = event.get("gate_map") if isinstance(event, dict) else None
         if isinstance(gate_map, list):
@@ -397,6 +429,53 @@ def _stored_gate_map_records(run: LiveRun) -> list[dict[str, Any]]:
     return []
 
 
+def _gate_map_records_for_cycle(run: LiveRun, cycle_number: int | None) -> list[dict[str, Any]]:
+    if cycle_number is None:
+        return []
+    selected: dict[str, Any] | None = None
+    for cycle in run.gate_map_cycles:
+        if cycle.get("cycle") == cycle_number:
+            selected = cycle
+    if selected is None:
+        return []
+    gate_map = selected.get("gate_map")
+    if not isinstance(gate_map, list):
+        return []
+    return [gate for gate in gate_map if isinstance(gate, dict)]
+
+
+def _planned_path_for_cycle(run: LiveRun, cycle_number: int | None) -> dict[str, Any] | None:
+    if cycle_number is None:
+        return None
+    planned_paths = run.raw.get("planned_paths")
+    if not isinstance(planned_paths, list):
+        return None
+    selected: dict[str, Any] | None = None
+    for record in planned_paths:
+        if not isinstance(record, dict):
+            continue
+        record_cycle = record.get("cycle")
+        if not isinstance(record_cycle, int) or record_cycle > cycle_number:
+            continue
+        planned_path = record.get("planned_path")
+        if isinstance(planned_path, dict):
+            selected = planned_path
+    return selected
+
+
+def _planned_path_plot_points(planned_path: dict[str, Any] | None) -> list[list[float]]:
+    if not isinstance(planned_path, dict):
+        return []
+    relative_points = planned_path.get("points_relative_ned_m")
+    if not isinstance(relative_points, list):
+        return []
+    plot_points: list[list[float]] = []
+    for point in relative_points:
+        if _point3(point):
+            plot_points.append(_ned_point_to_plot(point))
+    return plot_points
+
+
 def _representative_gates(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     grouped: dict[int, list[dict[str, Any]]] = {}
     for index, gate in enumerate(records):
@@ -408,6 +487,8 @@ def _representative_gates(records: list[dict[str, Any]]) -> list[dict[str, Any]]
     representatives: list[dict[str, Any]] = []
     for sequence, gates in sorted(grouped.items()):
         positions = np.asarray([_gate_position(gate) for gate in gates], dtype=float)
+        relative_positions = [_gate_relative_position(gate) for gate in gates]
+        relative_positions = [position for position in relative_positions if _point3(position)]
         quaternions = np.asarray(
             [_gate_quaternion(gate) or [1.0, 0.0, 0.0, 0.0] for gate in gates],
             dtype=float,
@@ -420,6 +501,9 @@ def _representative_gates(records: list[dict[str, Any]]) -> list[dict[str, Any]]
                 "id": f"sequence-{sequence}",
                 "sequence": sequence,
                 "position_local_ned_m": np.median(positions, axis=0).tolist(),
+                "position_relative_ned_m": np.median(np.asarray(relative_positions, dtype=float), axis=0).tolist()
+                if relative_positions
+                else None,
                 "quaternion": quaternion.tolist(),
                 "confidence": float(np.median(confidences)) if confidences else 0.0,
                 "observation_count": len(gates),
@@ -435,13 +519,14 @@ def _representative_gate_map_figure(
 ) -> go.Figure:
     fig = go.Figure()
     raw_points = [_gate_position(gate) for gate in records if _point3(_gate_position(gate))]
-    points: list[list[float]] = list(raw_points)
-    if raw_points:
+    plot_raw_points = [_ned_point_to_plot(point) for point in raw_points]
+    points: list[list[float]] = list(plot_raw_points)
+    if plot_raw_points:
         fig.add_trace(
             go.Scatter3d(
-                x=[point[0] for point in raw_points],
-                y=[point[1] for point in raw_points],
-                z=[point[2] for point in raw_points],
+                x=[point[0] for point in plot_raw_points],
+                y=[point[1] for point in plot_raw_points],
+                z=[point[2] for point in plot_raw_points],
                 mode="markers",
                 name="Stored records",
                 marker={"size": 2, "color": "#94a3b8", "opacity": 0.28},
@@ -455,14 +540,15 @@ def _representative_gate_map_figure(
         quaternion = _gate_quaternion(gate)
         if not _point3(position):
             continue
-        points.append(position)
+        plot_position = _ned_point_to_plot(position)
+        points.append(plot_position)
         gate_id = str(gate.get("id", f"gate-{index}"))
         color = colors[index % len(colors)]
         fig.add_trace(
             go.Scatter3d(
-                x=[position[0]],
-                y=[position[1]],
-                z=[position[2]],
+                x=[plot_position[0]],
+                y=[plot_position[1]],
+                z=[plot_position[2]],
                 mode="markers+text",
                 name=gate_id,
                 text=[gate_id],
@@ -482,8 +568,8 @@ def _representative_gate_map_figure(
         uirevision=f"representative-gates:{run.path}",
         scene={
             "xaxis": {"title": "North (m)", "range": axis_ranges[0]},
-            "yaxis": {"title": "East (m)", "range": axis_ranges[1]},
-            "zaxis": {"title": "Down (m)", "range": axis_ranges[2]},
+            "yaxis": {"title": "West (-East) (m)", "range": axis_ranges[1]},
+            "zaxis": {"title": "Up (-Down) (m)", "range": axis_ranges[2]},
             "aspectmode": "cube",
             "camera": {"eye": {"x": 1.55, "y": 1.55, "z": 1.1}},
             "dragmode": "orbit",
@@ -496,6 +582,7 @@ def _representative_gate_rows(gates: list[dict[str, Any]]) -> list[dict[str, Any
     rows: list[dict[str, Any]] = []
     for gate in gates:
         position = _gate_position(gate) or [None, None, None]
+        relative_position = _gate_relative_position(gate) or [None, None, None]
         quaternion = _gate_quaternion(gate) or [None, None, None, None]
         rows.append(
             {
@@ -505,6 +592,9 @@ def _representative_gate_rows(gates: list[dict[str, Any]]) -> list[dict[str, Any
                 "north_m": _round(position[0]),
                 "east_m": _round(position[1]),
                 "down_m": _round(position[2]),
+                "relative_north_m": _round(relative_position[0]),
+                "relative_east_m": _round(relative_position[1]),
+                "relative_down_m": _round(relative_position[2]),
                 "qw": _round(quaternion[0]),
                 "qx": _round(quaternion[1]),
                 "qy": _round(quaternion[2]),
@@ -545,6 +635,7 @@ def _raw_preview(run: LiveRun) -> str:
             "events": len(run.events),
             "cycles": len(run.cycles),
             "frames": len(run.frames),
+            "gate_map_cycles": len(run.gate_map_cycles),
             "vision_frames": len(raw.get("vision_frames", [])) if isinstance(raw.get("vision_frames"), list) else 0,
             "planned_paths": len(raw.get("planned_paths", [])) if isinstance(raw.get("planned_paths"), list) else 0,
         },
@@ -563,11 +654,11 @@ def _run_json_size(run: LiveRun) -> int:
 
 
 def _gate_traces(position: list[float], quaternion: list[float], gate_id: str, *, color: str = "#7c3aed") -> list[go.Scatter3d]:
-    center = np.asarray(position, dtype=float)
-    rotation = _rotation_matrix(quaternion)
-    outer = _square_points(center, rotation, size=2.7)
-    inner = _square_points(center, rotation, size=1.5)
-    normal = center + rotation[:, 0] * 1.6
+    center = _ned_array_to_plot(np.asarray(position, dtype=float))
+    rotation = _ned_rotation_to_plot(_rotation_matrix(quaternion))
+    outer = _gate_square_points(center, rotation, size=2.7)
+    inner = _gate_square_points(center, rotation, size=1.5)
+    normal = center + rotation[:, 1] * 1.6
     traces = [
         go.Scatter3d(x=outer[:, 0], y=outer[:, 1], z=outer[:, 2], mode="lines", name=f"{gate_id} outer", line={"color": color, "width": 5}, showlegend=False),
         go.Scatter3d(x=inner[:, 0], y=inner[:, 1], z=inner[:, 2], mode="lines", name=f"{gate_id} inner", line={"color": color, "width": 3}, showlegend=False, opacity=0.65),
@@ -577,8 +668,8 @@ def _gate_traces(position: list[float], quaternion: list[float], gate_id: str, *
 
 
 def _drone_traces(position: list[float], quaternion: list[float] | None) -> list[go.Scatter3d]:
-    center = np.asarray(position, dtype=float)
-    rotation = _rotation_matrix(quaternion if _quat4(quaternion) else [1.0, 0.0, 0.0, 0.0])
+    center = _ned_array_to_plot(np.asarray(position, dtype=float))
+    rotation = _ned_rotation_to_plot(_rotation_matrix(quaternion if _quat4(quaternion) else [1.0, 0.0, 0.0, 0.0]))
     nose = center + rotation[:, 0] * 1.2
     right = center + rotation[:, 1] * 0.55
     left = center - rotation[:, 1] * 0.55
@@ -589,19 +680,31 @@ def _drone_traces(position: list[float], quaternion: list[float] | None) -> list
     ]
 
 
-def _square_points(center: np.ndarray, rotation: np.ndarray, *, size: float) -> np.ndarray:
+def _gate_square_points(center: np.ndarray, rotation: np.ndarray, *, size: float) -> np.ndarray:
     half = float(size) / 2.0
     local = np.array(
         [
-            [0.0, -half, -half],
-            [0.0, half, -half],
-            [0.0, half, half],
-            [0.0, -half, half],
-            [0.0, -half, -half],
+            [-half, 0.0, -half],
+            [half, 0.0, -half],
+            [half, 0.0, half],
+            [-half, 0.0, half],
+            [-half, 0.0, -half],
         ],
         dtype=float,
     )
     return center + local @ rotation.T
+
+
+def _ned_point_to_plot(point: list[float]) -> list[float]:
+    return [float(point[0]), -float(point[1]), -float(point[2])]
+
+
+def _ned_array_to_plot(point: np.ndarray) -> np.ndarray:
+    return np.asarray([float(point[0]), -float(point[1]), -float(point[2])], dtype=float)
+
+
+def _ned_rotation_to_plot(rotation: np.ndarray) -> np.ndarray:
+    return np.diag([1.0, -1.0, -1.0]) @ np.asarray(rotation, dtype=float)
 
 
 def _rotation_matrix(quaternion: list[float]) -> np.ndarray:
@@ -627,6 +730,22 @@ def _quat4(value: Any) -> bool:
 
 def _gate_position(gate: dict[str, Any]) -> list[float] | None:
     position = gate.get("position_local_ned_m") or gate.get("pos")
+    return position if _point3(position) else None
+
+
+def _gate_frame_position(gate: dict[str, Any], *, origin_local_ned_m: list[float] | None = None) -> list[float] | None:
+    relative_position = gate.get("position_relative_ned_m")
+    if _point3(relative_position):
+        return relative_position
+    local_position = gate.get("position_local_ned_m") or gate.get("pos")
+    if _point3(local_position) and _point3(origin_local_ned_m):
+        relative = np.asarray(local_position, dtype=float) - np.asarray(origin_local_ned_m, dtype=float)
+        return [float(value) for value in relative]
+    return local_position if _point3(local_position) else None
+
+
+def _gate_relative_position(gate: dict[str, Any]) -> list[float] | None:
+    position = gate.get("position_relative_ned_m")
     return position if _point3(position) else None
 
 

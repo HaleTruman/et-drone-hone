@@ -10,6 +10,7 @@ import numpy as np
 
 from core.coordinates import quat_wxyz, quaternion_from_roll_pitch_yaw, vec3
 from core.schemas import (
+    AttitudeSample,
     CollisionEvent,
     MavlinkActuatorOutputStatus,
     MavlinkAttitude,
@@ -235,7 +236,12 @@ class MavlinkClient:
     ) -> dict[str, Any]:
         current = np.asarray(getattr(telemetry, "position_local_ned_m"), dtype=float)
         target_position = np.asarray(getattr(target, "position_local_ned_m"), dtype=float)
-        delta = target_position - current
+        relative_position = getattr(target, "position_relative_ned_m", None)
+        delta = (
+            np.asarray(relative_position, dtype=float)
+            if relative_position is not None
+            else target_position - current
+        )
         delta[2] = 0.0
         distance = float(np.linalg.norm(delta))
         if distance <= max(float(arrival_radius_m), 1e-9):
@@ -249,6 +255,7 @@ class MavlinkClient:
             "source": source,
             "gate_id": getattr(target, "gate_id", None),
             "target_position_local_ned_m": [float(value) for value in target_position],
+            "target_position_relative_ned_m": [float(value) for value in delta],
             "position_confidence": float(getattr(target, "confidence", 0.0)),
             "vision_frame_id": getattr(target, "frame_id", None),
         }
@@ -403,6 +410,14 @@ class MavlinkClient:
             time.sleep(idle_sleep_s)
         raise TimeoutError("No local-NED telemetry received before timeout.")
 
+    def wait_for_track_gates(self, *, timeout_s: float, idle_sleep_s: float = 0.02) -> list[TrackGate]:
+        deadline_s = time.perf_counter() + float(timeout_s)
+        while time.perf_counter() < deadline_s:
+            if self.track_gates:
+                return list(self.track_gates)
+            time.sleep(idle_sleep_s)
+        return []
+
     def reset_simulator_and_wait_ready(
         self,
         *,
@@ -518,10 +533,35 @@ class MavlinkClient:
         return TelemetrySample(
             sim_time_ns=sim_time_ns,
             odometry=state,
+            imu=self._latest_imu_sample(),
+            attitude_sample=self._latest_attitude_sample(),
             system_status=self._latest_system_status(),
             reset_count=None if self.latest_odometry is None else self.latest_odometry.reset_count,
             diagnostic_odometry=None if self.latest_odometry is None else asdict(self.latest_odometry),
             raw={"source": "mavlink_client"},
+        )
+
+    def _latest_imu_sample(self) -> MavlinkHighresImu | None:
+        return self.latest_imu
+
+    def _latest_attitude_sample(self) -> AttitudeSample | None:
+        if self.latest_attitude is None:
+            return None
+        attitude_quaternion = quaternion_from_roll_pitch_yaw(
+            self.latest_attitude.roll_rad,
+            self.latest_attitude.pitch_rad,
+            self.latest_attitude.yaw_rad,
+        )
+        return AttitudeSample(
+            sim_time_ns=int(self.latest_attitude.time_boot_ms) * 1_000_000,
+            attitude_quaternion=attitude_quaternion,
+            body_rates_frd_rps=self.latest_attitude.angular_velocity_body_frd_rps,
+            euler_rad=(
+                self.latest_attitude.roll_rad,
+                self.latest_attitude.pitch_rad,
+                self.latest_attitude.yaw_rad,
+            ),
+            raw=asdict(self.latest_attitude),
         )
 
     def status(self) -> RuntimeStatus:
@@ -569,6 +609,9 @@ class MavlinkClient:
                     quaternion=gate.quaternion,
                     confidence=1.0,
                     sequence=sequence,
+                    source="track",
+                    width_m=gate.width_m,
+                    height_m=gate.height_m,
                 )
             )
 

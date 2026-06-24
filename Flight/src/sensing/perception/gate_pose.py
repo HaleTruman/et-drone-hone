@@ -26,6 +26,7 @@ class GatePoseEstimator:
         attitude_quaternion: np.ndarray | tuple[float, float, float, float] | None = None,
         rotation_body_to_ned: np.ndarray | None = None,
         sequence: int | None = None,
+        observed_cycle: int | None = None,
     ) -> GateRecord:
         gate = (
             observation
@@ -39,7 +40,8 @@ class GatePoseEstimator:
         )
         camera_to_body = self.camera_optical_to_body_transform()
         position_body = camera_to_body @ np.asarray(gate.position_camera_m, dtype=float)
-        position_local = np.asarray(vehicle_position_local_ned_m, dtype=float) + body_to_ned @ position_body
+        position_relative_ned = body_to_ned @ position_body
+        position_local = np.asarray(vehicle_position_local_ned_m, dtype=float) + position_relative_ned
 
         normal_local = None
         if gate.orientation_camera is not None:
@@ -49,9 +51,11 @@ class GatePoseEstimator:
         return GateRecord(
             gate_id=gate.gate_id,
             position_local_ned_m=tuple(float(value) for value in position_local),
+            position_relative_ned_m=tuple(float(value) for value in position_relative_ned),
             quaternion=self.normal_to_quaternion(normal_local),
             confidence=float(gate.position_confidence),
             sequence=sequence,
+            last_observed_cycle=observed_cycle,
         )
 
     def update_gate_map_from_observation(
@@ -60,6 +64,7 @@ class GatePoseEstimator:
         *,
         telemetry: Any,
         gate_map: GateMap,
+        allow_new_gates: bool = True,
     ) -> list[GateRecord]:
         vehicle_position = getattr(telemetry, "position_local_ned_m", None)
         if vehicle_position is None:
@@ -71,8 +76,11 @@ class GatePoseEstimator:
                 vehicle_position_local_ned_m=vehicle_position,
                 attitude_quaternion=getattr(telemetry, "attitude", None),
                 sequence=sequence,
+                observed_cycle=observation.frame_id,
             )
-            records.append(gate_map.add_or_update_gate(record))
+            mapped = gate_map.add_or_update_gate(record, allow_new=allow_new_gates)
+            if mapped is not None:
+                records.append(mapped)
         return records
 
     def camera_to_body_transform(self) -> np.ndarray:

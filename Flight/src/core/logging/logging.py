@@ -19,6 +19,11 @@ class Logger:
             "metadata": self.records["metadata"],
             "samples": [],
         }
+        self.gate_map_records: dict[str, Any] = {
+            "schema_version": 1,
+            "metadata": self.records["metadata"],
+            "cycles": [],
+        }
 
     def log_event(self, event: str, **data: Any) -> None:
         self.records["events"].append({"event": event, **data})
@@ -31,8 +36,8 @@ class Logger:
         self._append_telemetry_sample(telemetry, context)
         self.log_event("telemetry", telemetry=telemetry)
 
-    def log_gate_map(self, gate_map: Any) -> None:
-        self.log_event("gate_map", gate_map=gate_map)
+    def log_gate_map(self, gate_map: Any, **context: Any) -> None:
+        self.gate_map_records["cycles"].append({**context, "gate_map": gate_map})
 
     def log_mpcc_solution(self, solution: Any) -> None:
         self.log_event("mpcc_solution", solution=solution)
@@ -49,6 +54,10 @@ class Logger:
         output_path.write_text(json.dumps(self.records, indent=2, default=self._json_default), encoding="utf-8")
         self.telemetry_path_for_run(output_path).write_text(
             json.dumps(self.telemetry_records, indent=2, default=self._json_default),
+            encoding="utf-8",
+        )
+        self.gate_map_path_for_run(output_path).write_text(
+            json.dumps(self.gate_map_records, indent=2, default=self._json_default),
             encoding="utf-8",
         )
 
@@ -78,6 +87,13 @@ class Logger:
         if path.name == "run.json":
             return path.parent / "telemetry.json"
         return path.with_name(f"{path.stem}-telemetry.json")
+
+    @staticmethod
+    def gate_map_path_for_run(run_path: str | Path) -> Path:
+        path = Path(run_path)
+        if path.name == "run.json":
+            return path.parent / "gate_map.json"
+        return path.with_name(f"{path.stem}-gate_map.json")
 
     @staticmethod
     def rounded_timestamp() -> str:

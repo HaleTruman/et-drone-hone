@@ -75,7 +75,7 @@ def _live_runs_page(live_run_options: list[dict[str, str]]) -> html.Div:
                             ),
                         ]
                     ),
-                    html.Div("Source: run.json, telemetry.json, and frames.jsonl in logs/runs/", style={"color": COLORS["muted"], "fontSize": "13px", "paddingBottom": "9px"}),
+                    html.Div("Source: run.json, telemetry.json, gate_map.json, and frames.jsonl in logs/runs/", style={"color": COLORS["muted"], "fontSize": "13px", "paddingBottom": "9px"}),
                 ],
             ),
             html.Div(id="live-load-error", style={"color": "#b91c1c", "marginTop": "16px"}),

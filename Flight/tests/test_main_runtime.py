@@ -1,6 +1,7 @@
 import numpy as np
 
 from core.control.body_rate_guidance import BodyRateGuidanceController
+from autonomy.planning.path_manager import PathManager
 from sensing.perception import GateRecord, GateTargetTracker, select_guidance_gate
 from sensing.telemetry import MavlinkClient, TelemetrySample
 
@@ -16,10 +17,11 @@ def telemetry(position=(0.0, 0.0, 0.0), velocity=(0.0, 0.0, 0.0)) -> TelemetrySa
     )
 
 
-def gate(gate_id: str, position, confidence=0.9, crossed=False, sequence=None) -> GateRecord:
+def gate(gate_id: str, position, confidence=0.9, crossed=False, sequence=None, relative=None) -> GateRecord:
     return GateRecord(
         gate_id=gate_id,
         position_local_ned_m=tuple(float(value) for value in position),
+        position_relative_ned_m=tuple(float(value) for value in (relative if relative is not None else position)),
         quaternion=(1.0, 0.0, 0.0, 0.0),
         confidence=float(confidence),
         crossed=crossed,
@@ -70,6 +72,20 @@ def test_select_guidance_gate_uses_nearest_confident_uncrossed_gate() -> None:
     assert selected.gate_id == "near"
 
 
+def test_select_guidance_gate_prefers_relative_ned_distance_over_local_map_distance() -> None:
+    selected = select_guidance_gate(
+        [
+            gate("local-near-relative-far", (1.0, 0.0, 0.0), relative=(20.0, 0.0, 0.0)),
+            gate("local-far-relative-near", (100.0, 0.0, 0.0), relative=(2.0, 0.0, 0.0)),
+        ],
+        telemetry=telemetry(),
+        min_confidence=0.1,
+    )
+
+    assert selected is not None
+    assert selected.gate_id == "local-far-relative-near"
+
+
 def test_body_rate_guidance_builds_attitude_target_toward_gate() -> None:
     controller = BodyRateGuidanceController()
     tracker = GateTargetTracker()
@@ -85,6 +101,46 @@ def test_body_rate_guidance_builds_attitude_target_toward_gate() -> None:
     assert payload["gate_id"] == "gate-1"
     assert payload["vision_frame_id"] == 12
     np.testing.assert_allclose(payload["target_control"]["target_position_local_ned_m"], [1.0, 0.0, -0.4])
+    np.testing.assert_allclose(tracker.latest(now_s=0.0).position_relative_ned_m, [1.0, 0.0, -0.4])
+
+
+def test_body_rate_guidance_uses_relative_ned_target_not_local_map_delta() -> None:
+    controller = BodyRateGuidanceController()
+    tracker = GateTargetTracker()
+    target = tracker.update(
+        gate("gate-1", (100.0, 50.0, -10.0), relative=(1.0, 0.0, -0.4)),
+        now_s=0.0,
+        frame_id=12,
+    )
+
+    payload = controller.build_guidance_command(telemetry=telemetry(position=(10.0, 0.0, 0.0)), target=target)
+
+    np.testing.assert_allclose(payload["target_control"]["raw_delta_local_ned_m"], [1.0, 0.0, -0.4])
+    np.testing.assert_allclose(payload["target_control"]["target_position_local_ned_m"], [11.0, 0.0, -0.4])
+    np.testing.assert_allclose(payload["raw_target_position_local_ned_m"], [100.0, 50.0, -10.0])
+
+
+def test_velocity_guidance_uses_relative_ned_target_not_local_map_delta() -> None:
+    client = FakeMavlinkClient(telemetry(position=(10.0, 0.0, 0.0)))
+
+    payload = client.build_gate_velocity_target(
+        gate("gate-1", (100.0, 50.0, 0.0), relative=(1.0, 0.0, 0.0)),
+        client.sample,
+        max_speed_mps=0.5,
+        arrival_radius_m=0.0,
+    )
+
+    np.testing.assert_allclose(payload["velocity_local_ned_mps"], [0.5, 0.0, 0.0])
+    np.testing.assert_allclose(payload["target_position_relative_ned_m"], [1.0, 0.0, 0.0])
+
+
+def test_path_manager_uses_relative_ned_waypoints_when_available() -> None:
+    from sensing.perception import GateMap
+
+    gate_map = GateMap()
+    gate_map.add_or_update_gate(gate("gate-1", (100.0, 50.0, -10.0), relative=(1.0, 0.0, -0.4)))
+
+    np.testing.assert_allclose(PathManager().update_from_gate_map(gate_map), [[1.0, 0.0, -0.4]])
 
 
 def test_stream_body_rate_command_continues_after_missing_frame_then_holds_after_expiry() -> None:

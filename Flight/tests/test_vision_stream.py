@@ -43,6 +43,21 @@ def test_persists_one_manifest_entry_per_frame_id(tmp_path) -> None:
     assert receiver.snapshot()["saved_frame_count"] == 1
 
 
+def test_records_cycle_in_frame_manifest(tmp_path) -> None:
+    receiver = VisionStreamReceiver(output_dir=tmp_path / "vision_frames")
+    receiver.output_dir.mkdir()
+    jpeg = b"\xff\xd8mock-jpeg\xff\xd9"
+
+    frame = receiver.process_packet(packet(7, 0, 1, len(jpeg), 99, jpeg))
+    assert frame is not None
+
+    receiver.record_frame_cycle(frame.frame_id, 42)
+
+    manifest = json.loads((tmp_path / "frames.jsonl").read_text(encoding="utf-8"))
+    assert manifest["frame_id"] == 7
+    assert manifest["cycle"] == 42
+
+
 def test_rejects_invalid_packet_payload_size() -> None:
     receiver = VisionStreamReceiver()
     bad_packet = struct.pack(VISION_HEADER_FORMAT, 1, 0, 1, 3, 10, 100) + b"abc"

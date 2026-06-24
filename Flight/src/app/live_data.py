@@ -14,6 +14,7 @@ class LiveFrame:
     sim_time_ns: int
     jpeg_size: int
     path: str
+    cycle: int | None = None
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,7 @@ class LiveRun:
     events: list[dict[str, Any]]
     cycles: list[dict[str, Any]]
     frames: list[LiveFrame]
+    gate_map_cycles: list[dict[str, Any]]
     raw: dict[str, Any]
 
     @property
@@ -71,7 +73,7 @@ def load_live_run_cached(path: str) -> LiveRun:
     return _load_live_run_cached(str(run_dir), *live_run_signature(str(run_dir)))
 
 
-def live_run_signature(path: str) -> tuple[int, int, int]:
+def live_run_signature(path: str) -> tuple[int, int, int, int]:
     return _run_signature(Path(path).resolve())
 
 
@@ -93,6 +95,7 @@ def load_live_run(path: str) -> LiveRun:
     from app.data import _load_telemetry_sidecar, _normalized_cycles
 
     cycles = _normalized_cycles(cycles, _load_telemetry_sidecar(run_dir / "run.json"))
+    gate_map_cycles = _load_gate_map_sidecar(run_dir / "run.json")
 
     return LiveRun(
         path=str(run_dir),
@@ -103,6 +106,7 @@ def load_live_run(path: str) -> LiveRun:
         events=events,
         cycles=cycles,
         frames=_load_frames(_frames_manifest_path(run_dir)),
+        gate_map_cycles=gate_map_cycles,
         raw=raw,
     )
 
@@ -121,15 +125,27 @@ def frame_data_uri(run: LiveRun, frame: LiveFrame) -> str:
 
 
 def nearest_cycle_for_frame(run: LiveRun, frame: LiveFrame) -> FrameSync:
+    if frame.cycle is not None:
+        offset_ns = _timesync_offset_ns(run.events)
+        target_sim_time_ns = frame.sim_time_ns - offset_ns if offset_ns is not None else None
+        for index, cycle in enumerate(run.cycles):
+            if cycle.get("cycle") == frame.cycle:
+                cycle_sim_time_ns = _telemetry_sim_time_ns(cycle)
+                return FrameSync(
+                    cycle=cycle,
+                    cycle_index=index,
+                    target_sim_time_ns=target_sim_time_ns,
+                    error_ms=abs(cycle_sim_time_ns - target_sim_time_ns) / 1_000_000
+                    if cycle_sim_time_ns is not None and target_sim_time_ns is not None
+                    else None,
+                )
+
     offset_ns = _timesync_offset_ns(run.events)
     if offset_ns is None:
         return FrameSync(cycle=None, cycle_index=None, target_sim_time_ns=None, error_ms=None)
 
     target_sim_time_ns = frame.sim_time_ns - offset_ns
-    candidates = [
-        (index, cycle, _telemetry_sim_time_ns(cycle))
-        for index, cycle in enumerate(run.cycles)
-    ]
+    candidates = [(index, cycle, _telemetry_sim_time_ns(cycle)) for index, cycle in enumerate(run.cycles)]
     candidates = [(index, cycle, sim_time_ns) for index, cycle, sim_time_ns in candidates if sim_time_ns is not None]
     if not candidates:
         return FrameSync(cycle=None, cycle_index=None, target_sim_time_ns=target_sim_time_ns, error_ms=None)
@@ -172,6 +188,7 @@ def _load_frames(manifest_path: Path) -> list[LiveFrame]:
                 sim_time_ns=int(record["sim_time_ns"]),
                 jpeg_size=int(record["jpeg_size"]),
                 path=path,
+                cycle=int(record["cycle"]) if record.get("cycle") is not None else None,
             )
         )
     return frames
@@ -183,19 +200,37 @@ def _load_live_run_cached(
     run_mtime_ns: int,
     telemetry_mtime_ns: int,
     frames_mtime_ns: int,
+    gate_map_mtime_ns: int,
 ) -> LiveRun:
     return load_live_run(resolved_path)
 
 
-def _run_signature(run_dir: Path) -> tuple[int, int, int]:
+def _run_signature(run_dir: Path) -> tuple[int, int, int, int]:
     run_path = run_dir / "run.json"
     telemetry_path = run_dir / "telemetry.json"
     frames_path = _frames_manifest_path(run_dir)
+    gate_map_path = run_dir / "gate_map.json"
     return (
         _mtime_ns(run_path),
         _mtime_ns(telemetry_path),
         _mtime_ns(frames_path),
+        _mtime_ns(gate_map_path),
     )
+
+
+def _load_gate_map_sidecar(run_path: Path) -> list[dict[str, Any]]:
+    candidates = [
+        run_path.parent / "gate_map.json",
+        run_path.with_name(f"{run_path.stem}-gate_map.json"),
+    ]
+    for path in candidates:
+        if not path.is_file():
+            continue
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        cycles = raw.get("cycles", []) if isinstance(raw, dict) else []
+        if isinstance(cycles, list):
+            return [cycle for cycle in cycles if isinstance(cycle, dict)]
+    return []
 
 
 def _mtime_ns(path: Path) -> int:
