@@ -1,5 +1,4 @@
 import json
-import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -31,15 +30,6 @@ def discover_run_files(root_dir: str) -> list[str]:
     paths.extend(path for path in logs_dir.glob("run-*/run.json") if path.is_file())
     paths.extend(path for path in (logs_dir / "runs").glob("run-*/run.json") if path.is_file())
     return [str(path.resolve()) for path in sorted(paths, key=_run_sort_key, reverse=True)]
-
-
-def discover_simulation_run_files(root_dir: str) -> list[str]:
-    logs_dir = Path(root_dir) / "logs" / "sim"
-    return [
-        str(path.resolve())
-        for path in sorted(logs_dir.glob("run-*/run.json"), key=_run_sort_key, reverse=True)
-        if path.is_file()
-    ]
 
 
 def load_run(path: str) -> RunLog:

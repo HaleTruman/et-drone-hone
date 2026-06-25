@@ -86,23 +86,14 @@ def test_raw_messages_do_not_inject_cross_message_fields() -> None:
     assert not hasattr(client.latest_odometry, "acceleration_local_ned_mps2")
     assert not hasattr(client.latest_odometry, "acceleration_body_frd_mps2")
 
-    assert client.latest_attitude is not None
-    assert not hasattr(client.latest_attitude, "attitude_quaternion")
-
     telemetry = client.get_latest_telemetry()
     assert telemetry is not None
     assert telemetry.sim_time_ns == 1_234_000
-    assert telemetry.position_local_ned_m == (1.0, 2.0, -3.0)
-    assert telemetry.imu is not None
-    assert telemetry.imu.time_boot_us == 1234
-    assert telemetry.imu.acceleration_body_frd_mps2 == (0.0, 0.0, 9.8)
-    assert telemetry.imu.gyro_body_frd_rps == (0.1, 0.2, 0.3)
-    assert not hasattr(telemetry.imu, "velocity_local_ned_mps")
-    assert not hasattr(telemetry.imu, "acceleration_local_ned_mps2")
-    assert telemetry.attitude_sample is not None
-    assert telemetry.attitude_sample.sim_time_ns == 1_000_000
-    assert telemetry.attitude_sample.body_rates_frd_rps == (0.1, 0.2, 0.3)
-    assert telemetry.diagnostic_odometry["position_local_ned_m"] == client.latest_odometry.position_local_ned_m
+    assert telemetry.odometry is client.latest_odometry
+    assert telemetry.imu is client.latest_imu
+    assert telemetry.odometry.position_local_ned_m == (1.0, 2.0, -3.0)
+    assert telemetry.acceleration_body_frd_mps2 == (0.0, 0.0, 9.8)
+    assert telemetry.gyro_body_frd_rps == (0.1, 0.2, 0.3)
 
 
 def test_highres_imu_optional_fields_are_cached_when_present() -> None:
@@ -136,30 +127,6 @@ def test_highres_imu_optional_fields_are_cached_when_present() -> None:
     assert client.latest_imu.temperature_c == 7.0
     assert client.latest_imu.fields_updated == 8
     assert client.latest_imu.id == 9
-
-
-def test_attitude_cache_stores_raw_message_fields_only() -> None:
-    client = MavlinkClient(endpoint="telemetry-simulator")
-
-    client.handle_message(
-        Message(
-            message_type="ATTITUDE",
-            time_boot_ms=1,
-            roll=0.2,
-            pitch=-0.3,
-            yaw=0.4,
-            rollspeed=0.0,
-            pitchspeed=0.0,
-            yawspeed=0.0,
-        )
-    )
-
-    assert client.latest_attitude.time_boot_ms == 1
-    assert client.latest_attitude.roll_rad == 0.2
-    assert client.latest_attitude.pitch_rad == -0.3
-    assert client.latest_attitude.yaw_rad == 0.4
-    assert client.latest_attitude.angular_velocity_body_frd_rps == (0.0, 0.0, 0.0)
-    assert client.get_latest_telemetry() is None
 
 
 def test_send_control_outputs_dispatches_attitude_targets_offline() -> None:

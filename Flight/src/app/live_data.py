@@ -1,4 +1,3 @@
-import base64
 import json
 from dataclasses import dataclass
 from datetime import datetime
@@ -6,6 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 from statistics import median
 from typing import Any
+from urllib.parse import urlencode
 
 
 @dataclass(frozen=True)
@@ -111,7 +111,14 @@ def load_live_run(path: str) -> LiveRun:
     )
 
 
-def frame_data_uri(run: LiveRun, frame: LiveFrame) -> str:
+def frame_image_url(run: LiveRun, frame_index: int) -> str:
+    frame = run.frames[int(frame_index)]
+    image_path = frame_image_path(run, frame)
+    cache_key = f"{frame.frame_id}-{frame.jpeg_size}-{_mtime_ns(image_path)}"
+    return "/live-frame?" + urlencode({"run": run.path, "index": int(frame_index), "v": cache_key})
+
+
+def frame_image_path(run: LiveRun, frame: LiveFrame) -> Path:
     run_dir = Path(run.path).resolve()
     frame_path = Path(frame.path)
     if frame_path.parent == Path("."):
@@ -120,8 +127,7 @@ def frame_data_uri(run: LiveRun, frame: LiveFrame) -> str:
         image_path = (run_dir / frame_path).resolve()
     if not _is_relative_to(image_path, run_dir):
         raise ValueError("Frame path must stay within the run directory.")
-    encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
-    return f"data:image/jpeg;base64,{encoded}"
+    return image_path
 
 
 def nearest_cycle_for_frame(run: LiveRun, frame: LiveFrame) -> FrameSync:

@@ -162,7 +162,8 @@ def main() -> int:
                 and mavlink_client.latest_odometry is not None
                 and mavlink_client.latest_odometry.position_local_ned_m is not None
             ):
-                vehicle_state.reset(telemetry.odometry)
+                vehicle_state.reset()
+                vehicle_state.ingest_mavlink_odometry(telemetry.odometry)
                 vehicle_state_initialized = True
                 logger.log_event("vehicle_state_initialized", odometry=vehicle_state.odometry)
 
@@ -190,7 +191,7 @@ def main() -> int:
                     observation = vision_perception.process_vision_frame(frame)
                     frame_log["gate_count"] = len(observation.gates)
                     frame_log["observation"] = observation.to_controller_payload(output_dir="memory")
-                    if telemetry is not None and telemetry.position_local_ned_m is not None:
+                    if telemetry is not None and telemetry.odometry is not None and telemetry.odometry.position_local_ned_m is not None:
                         mapped_gates = gate_pose_estimator.update_gate_map_from_observation(
                             observation,
                             telemetry=telemetry,
@@ -199,7 +200,7 @@ def main() -> int:
                         )
                         hot_start_path = hot_start_planner.plan_from_gate_map(gate_map)
                         hot_start_log = hot_start_path.to_log_dict(
-                            origin_local_ned_m=telemetry.position_local_ned_m,
+                            origin_local_ned_m=telemetry.odometry.position_local_ned_m,
                         )
                         frame_log["hot_start_path"] = hot_start_log
                         logger.log_planned_path(

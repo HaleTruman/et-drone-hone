@@ -97,8 +97,9 @@ class BodyRateGuidanceController:
 
     def build_stop_command(self, telemetry: Any | None = None, *, source: str = "main_body_rate_stop") -> dict[str, Any]:
         attitude = [1.0, 0.0, 0.0, 0.0]
-        if telemetry is not None and getattr(telemetry, "attitude", None) is not None:
-            attitude = [float(value) for value in telemetry.attitude]
+        odometry = None if telemetry is None else getattr(telemetry, "odometry", None)
+        if odometry is not None:
+            attitude = [float(value) for value in odometry.attitude_quaternion]
         payload = {
             "quaternion": attitude,
             "thrust": 0.0,
@@ -282,17 +283,21 @@ class BodyRateGuidanceController:
 
     @staticmethod
     def _sample(telemetry: Any) -> dict[str, Any]:
-        position = getattr(telemetry, "position_local_ned_m", None)
-        attitude = getattr(telemetry, "attitude", None)
+        odometry = getattr(telemetry, "odometry", None)
+        position = None if odometry is None else odometry.position_local_ned_m
+        velocity = None if odometry is None else odometry.velocity_local_ned_mps
+        attitude = None if odometry is None else odometry.attitude_quaternion
         if position is None:
             raise ValueError("Telemetry must include position_local_ned_m for body-rate guidance.")
+        if velocity is None:
+            raise ValueError("Telemetry must include velocity_local_ned_mps for body-rate guidance.")
         if attitude is None:
             raise ValueError("Telemetry must include attitude for body-rate guidance.")
         attitude_list = [float(value) for value in attitude]
         return {
             "sim_time_ns": int(getattr(telemetry, "sim_time_ns", 0)),
             "position_local_ned_m": [float(value) for value in position],
-            "velocity_local_ned_mps": [float(value) for value in getattr(telemetry, "velocity_local_ned_mps")],
+            "velocity_local_ned_mps": [float(value) for value in velocity],
             "attitude": attitude_list,
             "euler_deg": BodyRateGuidanceController.euler_deg(attitude_list),
             "reset_count": getattr(telemetry, "reset_count", None),

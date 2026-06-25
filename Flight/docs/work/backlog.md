@@ -1,15 +1,15 @@
 # Flight Production Readiness Backlog
 
-Treat the domain packages under `src/` as the future live product, `src/autonomy/planning/mpcc/` as the planning core, and preserve `src/simulator/` as first-class test infrastructure.
+Treat the domain packages under `src/` as the future live product, `src/autonomy/planning/mpcc/` as the planning core, and route simulator work through the external MAVLink simulator.
 
 ## P0: Establish The Production Shape
 
 - [ ] Define the canonical live runtime in `src/main.py`.
-- [ ] Define one canonical offline entrypoint for deterministic simulation and replay.
-- [x] Consolidate deterministic telemetry and the richer hover/track simulator under `src/simulator/`.
+- [ ] Define one canonical replay entrypoint for recorded MAVLink runs.
+- [x] Retire the stale local simulator package.
 - [ ] Define explicit schemas for state, telemetry, gate observations, reference paths, planner results, controller outputs, and logs.
 - [ ] Centralize LOCAL_NED, Unreal coordinates, units, quaternion order, and gate through-axis conventions.
-- [ ] Decide which simulator interface is authoritative: Unreal WebSocket, MAVLink UDP, or an adapter supporting both.
+- [x] Treat MAVLink UDP as the authoritative simulator interface.
 
 ## P0: Make MPCC Release-Capable
 
@@ -44,14 +44,14 @@ Treat the domain packages under `src/` as the future live product, `src/autonomy
 - [ ] Add SE(3) control only after the baseline controller is reliable.
 - [ ] Expand the system mode manager with arming checks, stale telemetry, heartbeat loss, vision loss, low-speed timeout, collision, geofence, saturation, solver failure, maximum run time, and emergency shutdown.
 
-## P1: Strengthen Simulation And Replay
+## P1: Strengthen MAVLink Replay
 
-- [ ] Preserve deterministic seeded simulation and add recorded-log replay.
-- [ ] Run the same planner, controller, estimator, and safety interfaces in offline, Unreal, and live modes.
-- [ ] Add wind, latency, jitter, packet loss, sensor noise, dropped frames, bad detections, actuator saturation, and restart scenarios.
-- [ ] Add multi-gate racing scenarios, not only hover and single-gate traversal.
+- [ ] Add recorded-log replay.
+- [ ] Run the same planner, controller, estimator, and safety interfaces against MAVLink telemetry and live runs.
+- [ ] Add latency, jitter, packet loss, dropped frames, bad detections, actuator saturation, and restart replay fixtures.
+- [ ] Add multi-gate racing replay fixtures, not only hover and single-gate traversal.
 - [ ] Capture planner references, controls, gate estimates, safety flags, timing, and optional downsampled frames in logs.
-- [ ] Consolidate the saved-run viewer in `src/app/` and the simulator visualization into a clear operator workflow.
+- [ ] Keep the saved-run viewer in `src/app/` focused on MAVLink run logs and frame captures.
 
 ## P1: Testing And Release Infrastructure
 
@@ -60,7 +60,7 @@ Treat the domain packages under `src/` as the future live product, `src/autonomy
 - [ ] Add unit tests for every live-stack module and every safety transition.
 - [ ] Add MPCC regression tests for multi-gate paths, infeasibility, timeout, and warm starts.
 - [ ] Add full replay integration tests from telemetry and detections through emitted MAVLink commands.
-- [ ] Add simulator-in-the-loop and Unreal-in-the-loop smoke tests.
+- [ ] Add MAVLink simulator-in-the-loop smoke tests.
 - [ ] Add staged real-world testing: props-off bench, restrained hover, low-speed gate pass, multi-gate run, and fault injection.
 - [ ] Add `pyproject.toml`, pinned runtime/dev dependencies, supported Python version, linting, type checks, and CI.
 

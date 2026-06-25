@@ -4,9 +4,7 @@ import numpy as np
 
 from core.coordinates import quat_wxyz, vec3
 from core.coordinates import normalize_quaternion, rotate_vector
-from core.schemas import MavlinkHighresImu, OdometryState, QuatWxyz, TelemetrySample, Vec3
-
-from .local_ned import telemetry_from_odometry
+from core.schemas import MavlinkHighresImu, MavlinkOdometry, OdometryState, QuatWxyz, Vec3
 
 
 ZERO_VEC3 = (0.0, 0.0, 0.0)
@@ -144,6 +142,9 @@ class VehicleState:
         self.acceleration_local_ned_mps2 = vec3(odometry.acceleration_local_ned_mps2)
         return self.odometry
 
+    def ingest_mavlink_odometry(self, odometry: MavlinkOdometry) -> OdometryState:
+        return self.update_odometry(_odometry_state_from_mavlink(odometry))
+
     def update_from_imu(self, latest_imu: MavlinkHighresImu) -> OdometryState:
         previous_time_boot_us = self.last_imu_time_boot_us
         previous_velocity = self.velocity_local_ned_mps
@@ -187,10 +188,6 @@ class VehicleState:
         )
         return self.odometry
 
-    def as_telemetry(self) -> TelemetrySample:
-        return telemetry_from_odometry(self.odometry)
-
-
 def _integrate_attitude_quaternion(
     attitude_quaternion: QuatWxyz,
     angular_velocity_body_frd_rps: Vec3,
@@ -200,6 +197,17 @@ def _integrate_attitude_quaternion(
     omega = np.asarray((0.0, *angular_velocity_body_frd_rps), dtype=float)
     q_dot = 0.5 * _quaternion_multiply(q, omega)
     return quat_wxyz(normalize_quaternion(q + q_dot * float(dt_s)))
+
+
+def _odometry_state_from_mavlink(odometry: MavlinkOdometry) -> OdometryState:
+    return OdometryState(
+        sim_time_ns=int(odometry.time_usec) * 1_000,
+        position_local_ned_m=vec3(odometry.position_local_ned_m or ZERO_VEC3),
+        velocity_local_ned_mps=vec3(odometry.velocity_local_ned_mps or ZERO_VEC3),
+        attitude_quaternion=quat_wxyz(odometry.attitude_quaternion),
+        body_rates_frd_rps=vec3(odometry.angular_velocity_body_frd_rps or ZERO_VEC3),
+        acceleration_local_ned_mps2=ZERO_VEC3,
+    )
 
 
 def _quaternion_multiply(left: np.ndarray, right: np.ndarray) -> np.ndarray:

@@ -63,12 +63,6 @@ def test_passthrough_controller_payload_uses_nearest_regressor_targets() -> None
     assert payload["obstacles"] == []
 
 
-def test_passthrough_controller_payload_allows_zero_targets() -> None:
-    payload = build_passthrough_controller_payload(regressor_frame([gate("near", [0.0, 0.0, 2.0])]), output_dir="memory", top_k=0)
-
-    assert payload["gates"] == []
-
-
 def test_landmarker_pipeline_passthrough_skips_state_update(tmp_path) -> None:
     input_jsonl = tmp_path / "regressor_frames.jsonl"
     input_jsonl.write_text(

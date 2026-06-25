@@ -12,7 +12,7 @@ from app.data import flatten_record, value_at
 from app.live_data import (
     LiveRun,
     discover_live_run_dirs,
-    frame_data_uri,
+    frame_image_url,
     live_run_option,
     live_run_signature,
     load_live_run_cached,
@@ -139,7 +139,7 @@ def register_live_callbacks(app: Dash, *, root_dir: str) -> None:
                 f"Frame {index + 1}/{len(run.frames)} | id={frame.frame_id} | cycle={frame.cycle if frame.cycle is not None else 'n/a'} | "
                 f"timestamp={frame.sim_time_ns} ns | {frame.jpeg_size:,} bytes"
             )
-            return frame_data_uri(run, frame), caption, json.dumps(details, indent=2), gate_map_figure
+            return frame_image_url(run, index), caption, json.dumps(details, indent=2), gate_map_figure
         except Exception as exc:  # noqa: BLE001
             return "", f"Unable to render frame: {exc}", "", _empty_figure()
 

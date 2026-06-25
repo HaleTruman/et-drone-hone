@@ -8,23 +8,18 @@ from typing import Any, Callable
 
 import numpy as np
 
-from core.coordinates import quat_wxyz, quaternion_from_roll_pitch_yaw, vec3
+from core.coordinates import quat_wxyz, vec3
 from core.schemas import (
-    AttitudeSample,
     CollisionEvent,
     MavlinkActuatorOutputStatus,
-    MavlinkAttitude,
     MavlinkHeartbeat,
     MavlinkHighresImu,
-    MavlinkLocalPositionNed,
     MavlinkOdometry,
+    MavlinkTelemetry,
     MavlinkTimesync,
-    OdometryState,
     RaceStatus,
     RuntimeStatus,
-    TelemetrySample,
     TrackGate,
-    Vec3,
 )
 
 ENCAPSULATED_RACE_STATUS_MSG_ID = 1
@@ -66,8 +61,6 @@ class MavlinkClient:
         self.last_heartbeat_monotonic_s: float | None = None
         self.latest_timesync: MavlinkTimesync | None = None
         self.latest_heartbeat: MavlinkHeartbeat | None = None
-        self.latest_attitude: MavlinkAttitude | None = None
-        self.latest_local_position: MavlinkLocalPositionNed | None = None
         self.latest_imu: MavlinkHighresImu | None = None
         self.latest_odometry: MavlinkOdometry | None = None
         self.latest_actuator_output: MavlinkActuatorOutputStatus | None = None
@@ -234,7 +227,7 @@ class MavlinkClient:
         arrival_radius_m: float = 0.35,
         source: str = "main_guided_gate_velocity",
     ) -> dict[str, Any]:
-        current = np.asarray(getattr(telemetry, "position_local_ned_m"), dtype=float)
+        current = np.asarray(telemetry.odometry.position_local_ned_m, dtype=float)
         target_position = np.asarray(getattr(target, "position_local_ned_m"), dtype=float)
         relative_position = getattr(target, "position_relative_ned_m", None)
         delta = (
@@ -302,7 +295,7 @@ class MavlinkClient:
         approach_gain_hz: float = 0.80,
         arrival_radius_m: float = 0.35,
     ) -> dict[str, Any]:
-        if telemetry is None or getattr(telemetry, "position_local_ned_m", None) is None:
+        if telemetry is None or telemetry.odometry is None or telemetry.odometry.position_local_ned_m is None:
             return {"emitted": False, "reason": "missing_telemetry_for_command"}
         target = tracker.latest(now_s=now_s)
         if target is None:
@@ -333,7 +326,7 @@ class MavlinkClient:
         *,
         now_s: float,
     ) -> dict[str, Any]:
-        if telemetry is None or getattr(telemetry, "position_local_ned_m", None) is None:
+        if telemetry is None or telemetry.odometry is None or telemetry.odometry.position_local_ned_m is None:
             return {"emitted": False, "reason": "missing_telemetry_for_body_rate_command"}
         target = tracker.latest(now_s=now_s)
         payload = guidance_controller.build_guidance_command(
@@ -401,11 +394,11 @@ class MavlinkClient:
             commands + [0.0, 0.0, 0.0, 0.0],
         )
 
-    def wait_for_local_ned_telemetry(self, *, timeout_s: float, idle_sleep_s: float = 0.02) -> TelemetrySample:
+    def wait_for_local_ned_telemetry(self, *, timeout_s: float, idle_sleep_s: float = 0.02) -> MavlinkTelemetry:
         deadline_s = time.perf_counter() + float(timeout_s)
         while time.perf_counter() < deadline_s:
             telemetry = self.get_latest_telemetry()
-            if telemetry is not None and getattr(telemetry, "position_local_ned_m", None) is not None:
+            if telemetry is not None and telemetry.odometry is not None and telemetry.odometry.position_local_ned_m is not None:
                 return telemetry
             time.sleep(idle_sleep_s)
         raise TimeoutError("No local-NED telemetry received before timeout.")
@@ -439,7 +432,7 @@ class MavlinkClient:
         stable_start_s: float | None = None
         while time.perf_counter() < deadline_s:
             telemetry = self.get_latest_telemetry()
-            if telemetry is None or getattr(telemetry, "position_local_ned_m", None) is None:
+            if telemetry is None or telemetry.odometry is None or telemetry.odometry.position_local_ned_m is None:
                 stable_start_s = None
                 time.sleep(0.05)
                 continue
@@ -448,7 +441,7 @@ class MavlinkClient:
                 stable_start_s = None
                 time.sleep(0.05)
                 continue
-            speed = float(np.linalg.norm(np.asarray(getattr(telemetry, "velocity_local_ned_mps", ZERO_VEC3))))
+            speed = float(np.linalg.norm(np.asarray(telemetry.odometry.velocity_local_ned_mps or ZERO_VEC3)))
             if speed <= float(stable_max_speed_mps):
                 if stable_start_s is None:
                     stable_start_s = time.perf_counter()
@@ -501,7 +494,11 @@ class MavlinkClient:
                     if guidance_controller is not None
                     else {
                         "quaternion": [
-                            float(value) for value in getattr(telemetry, "attitude", IDENTITY_QUATERNION)
+                            float(value) for value in (
+                                telemetry.odometry.attitude_quaternion
+                                if telemetry.odometry is not None
+                                else IDENTITY_QUATERNION
+                            )
                         ],
                         "thrust": float(thrust),
                         "attitude_type_mask": 128,
@@ -515,53 +512,20 @@ class MavlinkClient:
         if log_event is not None:
             log_event("prelevel_finished", cycles=cycles)
 
-    def get_latest_telemetry(self) -> TelemetrySample | None:
+    def get_latest_telemetry(self) -> MavlinkTelemetry | None:
         """Build controller-facing telemetry from cached raw MAVLink messages."""
 
-        if self.latest_odometry is None and self.latest_local_position is None:
+        if self.latest_odometry is None:
             return None
 
         sim_time_ns = self._latest_sample_time_ns()
-        state = OdometryState(
+        return MavlinkTelemetry(
             sim_time_ns=sim_time_ns,
-            position_local_ned_m=self._latest_position_local_ned_m(),
-            velocity_local_ned_mps=self._latest_velocity_local_ned_mps(),
-            attitude_quaternion=self._latest_attitude_quaternion(),
-            body_rates_frd_rps=self._latest_body_rates_frd_rps(),
-            acceleration_local_ned_mps2=ZERO_VEC3,
-        )
-        return TelemetrySample(
-            sim_time_ns=sim_time_ns,
-            odometry=state,
-            imu=self._latest_imu_sample(),
-            attitude_sample=self._latest_attitude_sample(),
+            odometry=self.latest_odometry,
+            imu=self.latest_imu,
             system_status=self._latest_system_status(),
             reset_count=None if self.latest_odometry is None else self.latest_odometry.reset_count,
-            diagnostic_odometry=None if self.latest_odometry is None else asdict(self.latest_odometry),
             raw={"source": "mavlink_client"},
-        )
-
-    def _latest_imu_sample(self) -> MavlinkHighresImu | None:
-        return self.latest_imu
-
-    def _latest_attitude_sample(self) -> AttitudeSample | None:
-        if self.latest_attitude is None:
-            return None
-        attitude_quaternion = quaternion_from_roll_pitch_yaw(
-            self.latest_attitude.roll_rad,
-            self.latest_attitude.pitch_rad,
-            self.latest_attitude.yaw_rad,
-        )
-        return AttitudeSample(
-            sim_time_ns=int(self.latest_attitude.time_boot_ms) * 1_000_000,
-            attitude_quaternion=attitude_quaternion,
-            body_rates_frd_rps=self.latest_attitude.angular_velocity_body_frd_rps,
-            euler_rad=(
-                self.latest_attitude.roll_rad,
-                self.latest_attitude.pitch_rad,
-                self.latest_attitude.yaw_rad,
-            ),
-            raw=asdict(self.latest_attitude),
         )
 
     def status(self) -> RuntimeStatus:
@@ -586,8 +550,6 @@ class MavlinkClient:
             "status": asdict(self.status()),
             "latest_heartbeat": self._snapshot_value(self.latest_heartbeat),
             "latest_timesync": self._snapshot_value(self.latest_timesync),
-            "latest_attitude": self._snapshot_value(self.latest_attitude),
-            "latest_local_position": self._snapshot_value(self.latest_local_position),
             "latest_imu": self._snapshot_value(self.latest_imu),
             "latest_odometry": self._snapshot_value(self.latest_odometry),
             "latest_actuator_output": self._snapshot_value(self.latest_actuator_output),
@@ -621,10 +583,6 @@ class MavlinkClient:
             self._on_heartbeat(msg)
         elif msg_type == "TIMESYNC":
             self._on_timesync(msg)
-        elif msg_type == "ATTITUDE":
-            self._on_attitude(msg)
-        elif msg_type == "LOCAL_POSITION_NED":
-            self._on_local_position_ned(msg)
         elif msg_type == "ODOMETRY":
             self._on_odometry(msg)
         elif msg_type == "HIGHRES_IMU":
@@ -681,24 +639,6 @@ class MavlinkClient:
 
     def _on_timesync(self, msg: Any) -> None:
         self.latest_timesync = MavlinkTimesync(ts1=int(msg.ts1), tc1=int(msg.tc1))
-        self._mark_message_received()
-
-    def _on_attitude(self, msg: Any) -> None:
-        self.latest_attitude = MavlinkAttitude(
-            time_boot_ms=int(msg.time_boot_ms),
-            roll_rad=float(msg.roll),
-            pitch_rad=float(msg.pitch),
-            yaw_rad=float(msg.yaw),
-            angular_velocity_body_frd_rps=vec3((float(msg.rollspeed), float(msg.pitchspeed), float(msg.yawspeed))),
-        )
-        self._mark_message_received()
-
-    def _on_local_position_ned(self, msg: Any) -> None:
-        self.latest_local_position = MavlinkLocalPositionNed(
-            time_boot_ms=int(msg.time_boot_ms),
-            position_local_ned_m=(float(msg.x), float(msg.y), float(msg.z)),
-            velocity_local_ned_mps=(float(msg.vx), float(msg.vy), float(msg.vz)),
-        )
         self._mark_message_received()
 
     def _on_odometry(self, msg: Any) -> None:
@@ -823,55 +763,12 @@ class MavlinkClient:
             return self.latest_odometry.time_usec // 1_000
         if self.latest_imu is not None:
             return self.latest_imu.time_boot_us // 1_000
-        if self.latest_local_position is not None:
-            return self.latest_local_position.time_boot_ms
-        if self.latest_attitude is not None:
-            return self.latest_attitude.time_boot_ms
         return 0
 
     def _latest_sample_time_ns(self) -> int:
         if self.latest_odometry is not None:
             return self.latest_odometry.time_usec * 1_000
-        if self.latest_local_position is not None:
-            return self.latest_local_position.time_boot_ms * 1_000_000
-        if self.latest_attitude is not None:
-            return self.latest_attitude.time_boot_ms * 1_000_000
         return 0
-
-    def _latest_position_local_ned_m(self) -> Vec3:
-        if self.latest_odometry is not None and self.latest_odometry.position_local_ned_m is not None:
-            return self.latest_odometry.position_local_ned_m
-        if self.latest_local_position is not None:
-            return self.latest_local_position.position_local_ned_m
-        return ZERO_VEC3
-
-    def _latest_velocity_local_ned_mps(self) -> Vec3:
-        if self.latest_local_position is not None:
-            return self.latest_local_position.velocity_local_ned_mps
-        if self.latest_odometry is not None and self.latest_odometry.velocity_local_ned_mps is not None:
-            return self.latest_odometry.velocity_local_ned_mps
-        return ZERO_VEC3
-
-    def _latest_attitude_quaternion(self) -> tuple[float, float, float, float]:
-        if self.latest_odometry is not None:
-            return self.latest_odometry.attitude_quaternion
-        if self.latest_attitude is None:
-            return IDENTITY_QUATERNION
-        return quaternion_from_roll_pitch_yaw(
-            -self.latest_attitude.roll_rad,
-            -self.latest_attitude.pitch_rad,
-            self.latest_attitude.yaw_rad,
-        )
-
-    def _latest_body_rates_frd_rps(self) -> Vec3:
-        if (
-            self.latest_odometry is not None
-            and self.latest_odometry.angular_velocity_body_frd_rps is not None
-        ):
-            return self.latest_odometry.angular_velocity_body_frd_rps
-        if self.latest_attitude is not None:
-            return self.latest_attitude.angular_velocity_body_frd_rps
-        return ZERO_VEC3
 
     def _latest_system_status(self) -> str | None:
         if self.latest_heartbeat is None or self.latest_heartbeat.system_status is None:

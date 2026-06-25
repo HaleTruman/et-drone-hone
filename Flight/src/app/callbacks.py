@@ -19,7 +19,6 @@ GRAPH_IDS = (
     "rates-plot",
     "timing-plot",
     "modes-plot",
-    "disturbance-plot",
 )
 AXIS_COLORS = ("#2563eb", "#dc2626", "#16a34a", "#9333ea")
 
@@ -84,7 +83,6 @@ def register_callbacks(app: Dash, *, root_dir: str) -> None:
             _vector_figure(run, "Body Rates", "body_rates_rps", "Rate (rad/s)"),
             _timing_figure(run),
             _modes_figure(run),
-            _disturbance_figure(run),
             metadata_rows,
             _columns(metadata_rows),
             event_rows,
@@ -117,7 +115,7 @@ def _summary_cards(run: RunLog) -> list[html.Div]:
         ("Scenario", run.metadata.get("scenario", "n/a")),
         ("Run Timestamp", run.label),
         ("Cycles", len(cycles)),
-        ("Sim Duration", f"{elapsed_s:.3f} s"),
+        ("Run Duration", f"{elapsed_s:.3f} s"),
         ("Events", len(run.events)),
         ("System Modes", ", ".join(modes) or "n/a"),
         ("Max Lateness", f"{max_lateness:.3f} ms" if max_lateness is not None else "n/a"),
@@ -139,7 +137,6 @@ def _trajectory_figure(run: RunLog) -> go.Figure:
     fig = go.Figure()
     all_points: list[list[float]] = []
     for label, key, color in (
-        ("Simulator truth", "simulator_truth", "#2563eb"),
         ("Estimated", "estimated_state", "#dc2626"),
         ("Odometry", "odometry", "#111827"),
         ("Telemetry", "telemetry", "#64748b"),
@@ -212,7 +209,7 @@ def _trajectory_figure(run: RunLog) -> go.Figure:
             ],
         }],
         sliders=[{
-            "currentvalue": {"prefix": "Simulation time: "},
+            "currentvalue": {"prefix": "Run time: "},
             "pad": {"t": 36},
             "steps": [
                 {"label": f"{_cycle_time_s(run.cycles[index]):.2f}s", "method": "animate", "args": [[str(index)], {"mode": "immediate", "frame": {"duration": 0, "redraw": True}, "transition": {"duration": 0}}]}
@@ -290,7 +287,6 @@ def _vector_figure(run: RunLog, title: str, field: str, y_title: str, *, axes: t
     fig = go.Figure()
     times = cycle_times_s(run.cycles)
     for source_label, source_key, dash in (
-        ("Truth", "simulator_truth", "solid"),
         ("Odometry", "odometry", "dash"),
         ("Telemetry", "telemetry", "dot"),
         ("Estimate", "estimated_state", "dashdot"),
@@ -299,21 +295,17 @@ def _vector_figure(run: RunLog, title: str, field: str, y_title: str, *, axes: t
             values = [value_at(cycle, source_key, field, index) for cycle in run.cycles]
             if any(value is not None for value in values):
                 fig.add_trace(go.Scatter(x=times, y=values, mode="lines", name=f"{source_label} {axis}", line={"color": AXIS_COLORS[index], "dash": dash}))
-    fig.update_layout(**_layout(title), xaxis_title="Simulation time (s)", yaxis_title=y_title)
+    fig.update_layout(**_layout(title), xaxis_title="Run time (s)", yaxis_title=y_title)
     return fig
 
 
 def _controls_figure(run: RunLog) -> go.Figure:
     fig = go.Figure()
     times = cycle_times_s(run.cycles)
-    for index in range(4):
-        motors = [value_at(cycle, "simulator_truth", "motor_commands", index) for cycle in run.cycles]
-        if any(value is not None for value in motors):
-            fig.add_trace(go.Scatter(x=times, y=motors, mode="lines", name=f"Motor {index + 1}", line={"color": AXIS_COLORS[index]}))
     thrust = [value_at(cycle, "command", "set_attitude_target", "thrust") for cycle in run.cycles]
     if any(value is not None for value in thrust):
         fig.add_trace(go.Scatter(x=times, y=thrust, mode="lines", name="Command thrust", line={"color": "#111827", "dash": "dot", "width": 3}))
-    fig.update_layout(**_layout("Controls"), xaxis_title="Simulation time (s)", yaxis_title="Normalized command")
+    fig.update_layout(**_layout("Controls"), xaxis_title="Run time (s)", yaxis_title="Normalized command")
     return fig
 
 
@@ -324,7 +316,7 @@ def _timing_figure(run: RunLog) -> go.Figure:
         values = [cycle.get(key) for cycle in run.cycles]
         if any(value is not None for value in values):
             fig.add_trace(go.Scatter(x=times, y=values, mode="lines+markers", name=label, line={"color": color}))
-    fig.update_layout(**_layout("Loop Timing"), xaxis_title="Simulation time (s)", yaxis_title="Milliseconds")
+    fig.update_layout(**_layout("Loop Timing"), xaxis_title="Run time (s)", yaxis_title="Milliseconds")
     return fig
 
 
@@ -335,18 +327,7 @@ def _modes_figure(run: RunLog) -> go.Figure:
         values = [value_at(cycle, "modes", key) for cycle in run.cycles]
         if any(value is not None for value in values):
             fig.add_trace(go.Scatter(x=times, y=values, mode="lines", name=label, line={"shape": "hv"}))
-    fig.update_layout(**_layout("Modes"), xaxis_title="Simulation time (s)")
-    return fig
-
-
-def _disturbance_figure(run: RunLog) -> go.Figure:
-    fig = go.Figure()
-    times = cycle_times_s(run.cycles)
-    for index, axis in enumerate(("x", "y", "z")):
-        values = [value_at(cycle, "disturbance", "force_i_n", index) for cycle in run.cycles]
-        if any(value is not None for value in values):
-            fig.add_trace(go.Scatter(x=times, y=values, mode="lines", name=f"Force {axis}", line={"color": AXIS_COLORS[index]}))
-    fig.update_layout(**_layout("Turbulence Force"), xaxis_title="Simulation time (s)", yaxis_title="Force (N)")
+    fig.update_layout(**_layout("Modes"), xaxis_title="Run time (s)")
     return fig
 
 
@@ -426,13 +407,11 @@ def _playback_frame_indices(run: RunLog) -> list[int]:
 
 def _quadrotor_pose(cycle: dict[str, Any]) -> tuple[list[float], list[float]]:
     return (
-        value_at(cycle, "simulator_truth", "position_local_ned_m")
-        or value_at(cycle, "odometry", "position_local_ned_m")
+        value_at(cycle, "odometry", "position_local_ned_m")
         or value_at(cycle, "estimated_state", "position_local_ned_m")
         or value_at(cycle, "telemetry", "position_local_ned_m")
         or [0.0, 0.0, 0.0],
-        value_at(cycle, "simulator_truth", "attitude_quaternion")
-        or value_at(cycle, "odometry", "attitude_quaternion")
+        value_at(cycle, "odometry", "attitude_quaternion")
         or value_at(cycle, "estimated_state", "attitude_quaternion")
         or value_at(cycle, "telemetry", "attitude_quaternion")
         or value_at(cycle, "telemetry", "attitude")
