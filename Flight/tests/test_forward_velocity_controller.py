@@ -1,7 +1,7 @@
 import numpy as np
 
+from core.coordinates import quaternion_from_roll_pitch_yaw
 from core.control.forward_velocity import ForwardVelocityAltitudeController
-from simulator import TelemetrySimulator
 
 
 def test_forward_velocity_error_commands_forward_pitch_without_fixed_thrust() -> None:
@@ -31,7 +31,7 @@ def test_measured_yaw_is_preserved_in_attitude_target() -> None:
     target = controller.update(
         position_local_ned_m=(0.0, 0.0, 0.0),
         velocity_local_ned_mps=(0.0, 0.0, 0.0),
-        attitude_quaternion=TelemetrySimulator._quaternion_from_roll_pitch_yaw(0.0, 0.0, 1.2),
+        attitude_quaternion=quaternion_from_roll_pitch_yaw(0.0, 0.0, 1.2),
         target_altitude_ned_m=0.0,
         target_velocity_local_ned_mps=(0.0, 2.0, 0.0),
     )
@@ -42,7 +42,7 @@ def test_measured_yaw_is_preserved_in_attitude_target() -> None:
 
 def test_measured_forward_pitch_damps_forward_pitch_command() -> None:
     controller = ForwardVelocityAltitudeController(dt_s=0.1, neutral_thrust=0.5)
-    pitched_forward = TelemetrySimulator._quaternion_from_roll_pitch_yaw(0.0, -0.12, 0.0)
+    pitched_forward = quaternion_from_roll_pitch_yaw(0.0, -0.12, 0.0)
 
     target = controller.update(
         position_local_ned_m=(0.0, 0.0, 0.0),
@@ -116,28 +116,3 @@ def test_small_altitude_noise_does_not_cancel_forward_control() -> None:
 
     assert target["altitude_priority_active"] is False
     assert target["desired_acceleration_local_ned_mps2"][0] > 0.0
-
-
-def test_controller_moves_forward_and_holds_altitude_in_local_simulator() -> None:
-    simulator = TelemetrySimulator(telemetry_hz=30.0, physics_hz=120.0)
-    simulator.arm()
-    controller = ForwardVelocityAltitudeController(dt_s=1.0 / 30.0, neutral_thrust=0.5)
-    sample = simulator.step()
-    target_altitude = sample.position_local_ned_m[2]
-
-    for _ in range(150):
-        sample = simulator.step()
-        target = controller.update(
-            position_local_ned_m=sample.position_local_ned_m,
-            velocity_local_ned_mps=sample.velocity_local_ned_mps,
-            attitude_quaternion=sample.attitude,
-            target_altitude_ned_m=target_altitude,
-            target_velocity_local_ned_mps=(2.0, 0.0, 0.0),
-            yaw_rad=0.0,
-        )
-        simulator.apply_attitude_target(target)
-
-    sample = simulator.step()
-    assert sample.position_local_ned_m[0] > 1.0
-    assert abs(sample.position_local_ned_m[2] - target_altitude) < 2.0
-    assert np.isclose(np.linalg.norm(sample.attitude), 1.0, atol=1e-6)

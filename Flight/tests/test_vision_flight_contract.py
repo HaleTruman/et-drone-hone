@@ -1,16 +1,26 @@
 import numpy as np
 
+from core.schemas import MavlinkOdometry
 from sensing.perception import GateMap, GatePoseEstimator, GateRecord, VisionObservation
-from sensing.telemetry import DataSynchronizer, TelemetrySample
+from sensing.telemetry import DataSynchronizer, MavlinkTelemetry
 
 
-def telemetry_sample(sim_time_ns: int) -> TelemetrySample:
-    return TelemetrySample(
+def telemetry_sample(sim_time_ns: int) -> MavlinkTelemetry:
+    return MavlinkTelemetry(
         sim_time_ns=sim_time_ns,
-        attitude=(1.0, 0.0, 0.0, 0.0),
-        velocity_local_ned_mps=(0.0, 0.0, 0.0),
-        body_rates_rps=(0.0, 0.0, 0.0),
-        position_local_ned_m=(1.0, 2.0, -3.0),
+        odometry=MavlinkOdometry(
+            time_usec=sim_time_ns // 1_000,
+            frame_id=1,
+            child_frame_id=12,
+            attitude_quaternion=(1.0, 0.0, 0.0, 0.0),
+            pose_covariance=(),
+            velocity_covariance=(),
+            reset_count=0,
+            estimator_type=0,
+            position_local_ned_m=(1.0, 2.0, -3.0),
+            velocity_local_ned_mps=(0.0, 0.0, 0.0),
+            angular_velocity_body_frd_rps=(0.0, 0.0, 0.0),
+        ),
     )
 
 

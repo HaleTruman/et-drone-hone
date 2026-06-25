@@ -4,11 +4,11 @@
 # This is the main orchestrator class that runs the entire downstream pipeline
 # at a fixed rate (default 30 Hz). It glues together communication, perception,
 # mapping, state estimation, planning, control, and logging while switching
-# seamlessly between real simulator mode and offline simulator harness mode.
+# against the external MAVLink simulator and live MAVLink telemetry.
 
 initialize AIGPStack:
-    load configuration (drone params, gains, mode: real or offline)
-    create CommunicationInterface (MAVLink+Vision or OfflineHarnessBridge)
+    load configuration (drone params, gains, MAVLink endpoint)
+    create CommunicationInterface (MAVLink+Vision)
     create GateMap (empty persistent map in LOCAL_NED)
     create StateEstimator (starts at position [0,0,0] from arm time)
     create GatePoseEstimator (camera intrinsics + 20° tilt)
@@ -19,7 +19,7 @@ initialize AIGPStack:
     create CommandMapper
     create SystemModeManager (starts in IDLE)
     create Logger
-    reset simulation harness if in offline mode
+    reset external simulator through MAVLink when requested
 
 main control loop (run at target_hz = 30-60):
     while not shutdown requested:
@@ -60,7 +60,7 @@ main control loop (run at target_hz = 30-60):
             control_commands = DifferentialFlatnessController.compute_commands(mpcc_solution, current_drone_state)
             mavlink_cmd = CommandMapper.to_position_target_local_ned(control_commands)
             
-            # 7. Send command to simulator
+            # 7. Send command through MAVLink
             communication.send_command(mavlink_cmd)
         
         # 8. Logging

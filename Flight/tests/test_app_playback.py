@@ -2,7 +2,7 @@ from app.callbacks import _ned_point_to_plot, _playback_frame_indices, _playback
 from app.data import RunLog
 
 
-def test_playback_interval_uses_recorded_simulation_step() -> None:
+def test_playback_interval_uses_recorded_run_step() -> None:
     run = RunLog(
         path="run.json",
         name="run",

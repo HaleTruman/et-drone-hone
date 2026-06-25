@@ -132,7 +132,7 @@ Store as structured logs (CSV + JSON metadata) or a lightweight database. Becaus
 - Compliance: No human intervention during a scored run (§7) — your stack must be fully autonomous once launched.
 - SITL bridge: The low-latency UDP bridge is exactly what you’re using; keep everything in one process or use shared memory if you split perception/planning.
 - Testing: Because the course is identical and deterministic, you can iterate extremely fast. Record a “perfect” run with manual control first to get ground-truth gate positions if you want a seeded map.
-- Edge cases: Vision occlusion, aggressive attitudes (camera tilt matters), high-speed drag (your nonlinear model already includes quadratic drag — use it in simulation-in-the-loop testing).
+- Edge cases: Vision occlusion, aggressive attitudes (camera tilt matters), high-speed drag, and MAVLink simulator-in-the-loop testing.
 
 This pipeline keeps the system modular, leverages the exact interfaces in the spec, and directly uses the 13-state nonlinear model you already have for both planning and control validation. It also gives you a clean separation: perception builds the world map, MPCC plans the race line, and the geometric/diff-flat controller executes it with minimal latency.
 
@@ -156,7 +156,7 @@ This is a table of all of the planned classes and methods downstream of Vision.
 | `command_mapper.py` | `CommandMapper` | `to_position_target()`, `to_attitude_target()`, `scale_thrust()` | Converts controller output into correct MAVLink SET_POSITION_TARGET_LOCAL_NED or SET_ATTITUDE_TARGET messages. |
 | `system_mode.py` | `SystemModeManager` | `update_mode()`, `check_gate_crossing()`, `is_racing()`, `handle_fault()` | System modes: IDLE → ARMED → RACING → FINISHED / FAULT. Includes 8-minute timer, sequential gate-crossing logic, and safety checks (§8.3, §7). |
 | `logging.py` | `Logger` | `log_telemetry()`, `log_gate_map()`, `log_mpcc_solution()`, `save_run()` | Structured logging (CSV + JSON) of sim time, 13-state, gates, reference traj, commands, vision frames, etc. Enables offline replay. |
-| `sim_harness.py` | `QuadrotorSimulatorHarness` | `step(u)`, `reset()`, `run_trajectory()` | Wraps your 13-state nonlinear dynamics model for fast offline testing of planner + controller without the full simulator. |
+| `replay.py` | run replay helpers | `load_run()`, `iter_cycles()`, `replay_commands()` | Replays recorded MAVLink telemetry and command logs for planner + controller regression tests. |
 | `main.py` | production runtime | control loop, shutdown | Main entry point. Ties everything together at 30–60 Hz: vision → perception → state_est → planner → controller → mavlink. |
 
 These files and classes must be independently testable and expose clean Python interfaces, effectively plug and play.

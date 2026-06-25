@@ -3,16 +3,26 @@ import numpy as np
 from core.control.body_rate_guidance import BodyRateGuidanceController
 from autonomy.planning.path_manager import PathManager
 from sensing.perception import GateRecord, GateTargetTracker, select_guidance_gate
-from sensing.telemetry import MavlinkClient, TelemetrySample
+from core.schemas import MavlinkOdometry
+from sensing.telemetry import MavlinkClient, MavlinkTelemetry
 
 
-def telemetry(position=(0.0, 0.0, 0.0), velocity=(0.0, 0.0, 0.0)) -> TelemetrySample:
-    return TelemetrySample(
+def telemetry(position=(0.0, 0.0, 0.0), velocity=(0.0, 0.0, 0.0)) -> MavlinkTelemetry:
+    return MavlinkTelemetry(
         sim_time_ns=1,
-        position_local_ned_m=position,
-        velocity_local_ned_mps=velocity,
-        attitude=(1.0, 0.0, 0.0, 0.0),
-        body_rates_rps=(0.0, 0.0, 0.0),
+        odometry=MavlinkOdometry(
+            time_usec=1,
+            frame_id=1,
+            child_frame_id=12,
+            attitude_quaternion=(1.0, 0.0, 0.0, 0.0),
+            pose_covariance=(),
+            velocity_covariance=(),
+            reset_count=1,
+            estimator_type=0,
+            position_local_ned_m=position,
+            velocity_local_ned_mps=velocity,
+            angular_velocity_body_frd_rps=(0.0, 0.0, 0.0),
+        ),
         reset_count=1,
     )
 
@@ -30,7 +40,7 @@ def gate(gate_id: str, position, confidence=0.9, crossed=False, sequence=None, r
 
 
 class FakeMavlinkClient(MavlinkClient):
-    def __init__(self, sample: TelemetrySample | None = None) -> None:
+    def __init__(self, sample: MavlinkTelemetry | None = None) -> None:
         super().__init__("offline")
         self.sample = sample or telemetry()
         self.position_targets = []

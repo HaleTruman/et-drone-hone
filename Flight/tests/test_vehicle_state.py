@@ -3,7 +3,7 @@ import math
 import numpy as np
 
 from core.coordinates import euler_from_quaternion
-from core.schemas import MavlinkHighresImu
+from core.schemas import MavlinkHighresImu, MavlinkOdometry, OdometryState
 from sensing.odometry import VehicleState
 
 
@@ -21,6 +21,33 @@ def imu_sample(
         acceleration_body_frd_mps2=acceleration_body_frd_mps2,
         gyro_body_frd_rps=gyro_body_frd_rps,
     )
+
+
+def test_mavlink_odometry_ingest_outputs_odometry_state() -> None:
+    state = VehicleState()
+
+    odometry = state.ingest_mavlink_odometry(
+        MavlinkOdometry(
+            time_usec=1234,
+            frame_id=1,
+            child_frame_id=12,
+            attitude_quaternion=(1.0, 0.0, 0.0, 0.0),
+            pose_covariance=(),
+            velocity_covariance=(),
+            reset_count=7,
+            estimator_type=1,
+            position_local_ned_m=(1.0, 2.0, -3.0),
+            velocity_local_ned_mps=(4.0, 5.0, 6.0),
+            angular_velocity_body_frd_rps=(0.1, 0.2, 0.3),
+        )
+    )
+
+    assert isinstance(odometry, OdometryState)
+    assert state.odometry == odometry
+    assert odometry.sim_time_ns == 1_234_000
+    assert odometry.position_local_ned_m == (1.0, 2.0, -3.0)
+    assert odometry.velocity_local_ned_mps == (4.0, 5.0, 6.0)
+    assert odometry.body_rates_frd_rps == (0.1, 0.2, 0.3)
 
 
 def test_first_imu_sample_updates_sensor_fields_without_integrating_state() -> None:

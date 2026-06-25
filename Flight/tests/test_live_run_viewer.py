@@ -2,8 +2,9 @@ import json
 
 import numpy as np
 
+from app import dash_app
 from app.live_callbacks import _gate_frame_position, _gate_position, _gate_traces, _ned_point_to_plot, _planned_path_for_cycle, _planned_path_plot_points
-from app.live_data import discover_live_run_dirs, load_live_run, nearest_cycle_for_frame
+from app.live_data import discover_live_run_dirs, frame_image_url, load_live_run, nearest_cycle_for_frame
 
 
 def _write_run(tmp_path):
@@ -73,6 +74,24 @@ def test_live_run_loads_frame_cycle_from_manifest(tmp_path) -> None:
     run = load_live_run(str(run_dir))
 
     assert run.frames[0].cycle == 1
+
+
+def test_frame_image_url_is_served_from_route(tmp_path, monkeypatch) -> None:
+    run_dir = _write_run(tmp_path)
+    run = load_live_run(str(run_dir))
+
+    src = frame_image_url(run, 0)
+
+    assert src.startswith("/live-frame?")
+    assert not src.startswith("data:image")
+
+    monkeypatch.setattr(dash_app, "ROOT_DIR", str(tmp_path))
+    app = dash_app.create_app()
+    response = app.server.test_client().get(src)
+
+    assert response.status_code == 200
+    assert response.content_type == "image/jpeg"
+    assert response.data == b"jpg"
 
 
 def test_frame_sync_prefers_manifest_cycle(tmp_path) -> None:
