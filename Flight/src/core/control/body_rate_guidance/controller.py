@@ -1,8 +1,11 @@
 import math
+import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
 import numpy as np
+
+from core.schemas import MavlinkTelemetry
 
 
 @dataclass(frozen=True)
@@ -110,6 +113,52 @@ class BodyRateGuidanceController:
         }
         self.last_payload = payload
         return payload
+
+    def run_prelevel(
+        self,
+        *,
+        telemetry_client: Any,
+        vehicle_state: Any,
+        send_attitude_target: Any,
+        duration_s: float,
+        thrust: float,
+        hz: float,
+        log_event: Any | None = None,
+    ) -> int:
+        if duration_s <= 0.0:
+            return 0
+        if log_event is not None:
+            log_event("prelevel_started", duration_s=duration_s, thrust=thrust)
+        interval_s = 1.0 / max(1e-6, float(hz))
+        deadline_s = time.perf_counter() + float(duration_s)
+        next_tick_s = time.perf_counter()
+        cycles = 0
+        while time.perf_counter() < deadline_s:
+            now_s = time.perf_counter()
+            if now_s < next_tick_s:
+                time.sleep(min(0.002, next_tick_s - now_s))
+                continue
+            telemetry = telemetry_client.get_telemetry()
+            odometry = vehicle_state.update(None if telemetry is None else telemetry.imu)
+            if telemetry is not None and odometry is not None:
+                send_attitude_target(
+                    self.build_prelevel_command(
+                        telemetry=MavlinkTelemetry(
+                            sim_time_ns=odometry.sim_time_ns,
+                            odometry=odometry,
+                            imu=telemetry.imu,
+                            system_status=telemetry.system_status,
+                            reset_count=telemetry.reset_count,
+                            raw={**telemetry.raw, "odometry_source": "vehicle_state_highres_imu"},
+                        ),
+                        thrust=thrust,
+                    )
+                )
+                cycles += 1
+            next_tick_s += interval_s
+        if log_event is not None:
+            log_event("prelevel_finished", cycles=cycles)
+        return cycles
 
     def snapshot(self) -> dict[str, Any]:
         return {"config": asdict(self.config), "last_payload": self.last_payload}

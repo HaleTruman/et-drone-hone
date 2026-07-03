@@ -3,7 +3,7 @@ import math
 import numpy as np
 
 from core.coordinates import euler_from_quaternion
-from core.schemas import MavlinkHighresImu, MavlinkOdometry, OdometryState
+from core.schemas import MavlinkHighresImu, OdometryState
 from sensing.odometry import VehicleState
 
 
@@ -23,22 +23,17 @@ def imu_sample(
     )
 
 
-def test_mavlink_odometry_ingest_outputs_odometry_state() -> None:
+def test_update_odometry_outputs_odometry_state() -> None:
     state = VehicleState()
 
-    odometry = state.ingest_mavlink_odometry(
-        MavlinkOdometry(
-            time_usec=1234,
-            frame_id=1,
-            child_frame_id=12,
-            attitude_quaternion=(1.0, 0.0, 0.0, 0.0),
-            pose_covariance=(),
-            velocity_covariance=(),
-            reset_count=7,
-            estimator_type=1,
+    odometry = state.update_odometry(
+        OdometryState(
+            sim_time_ns=1_234_000,
             position_local_ned_m=(1.0, 2.0, -3.0),
             velocity_local_ned_mps=(4.0, 5.0, 6.0),
-            angular_velocity_body_frd_rps=(0.1, 0.2, 0.3),
+            attitude_quaternion=(1.0, 0.0, 0.0, 0.0),
+            body_rates_frd_rps=(0.1, 0.2, 0.3),
+            acceleration_local_ned_mps2=(0.0, 0.0, 0.0),
         )
     )
 
@@ -66,7 +61,38 @@ def test_first_imu_sample_updates_sensor_fields_without_integrating_state() -> N
     assert state.angular_velocity_body_frd_rps == (0.1, 0.2, 0.3)
     assert odometry.position_local_ned_m == (0.0, 0.0, 0.0)
     assert odometry.velocity_local_ned_mps == (0.0, 0.0, 0.0)
-    assert odometry.attitude_quaternion == (1.0, 0.0, 0.0, 0.0)
+    np.testing.assert_allclose(np.linalg.norm(odometry.attitude_quaternion), 1.0)
+
+
+def test_first_imu_sample_infers_level_attitude_from_gravity() -> None:
+    state = VehicleState()
+
+    odometry = state.update_from_imu(
+        imu_sample(
+            1_000_000,
+            acceleration_body_frd_mps2=(0.0, 0.0, -GRAVITY_MPS2),
+        )
+    )
+
+    np.testing.assert_allclose(odometry.attitude_quaternion, (1.0, 0.0, 0.0, 0.0))
+    np.testing.assert_allclose(odometry.acceleration_local_ned_mps2, (0.0, 0.0, 0.0), atol=1e-9)
+
+
+def test_update_accepts_highres_imu_and_returns_odometry_state() -> None:
+    state = VehicleState()
+    imu = imu_sample(
+        1_000_000,
+        acceleration_body_frd_mps2=(0.0, 0.0, -GRAVITY_MPS2),
+        gyro_body_frd_rps=(0.1, 0.2, 0.3),
+    )
+
+    odometry = state.update(imu)
+
+    assert odometry is not None
+    assert isinstance(odometry, OdometryState)
+    assert odometry == state.state
+    assert odometry.sim_time_ns == 1_000_000_000
+    assert odometry.body_rates_frd_rps == (0.1, 0.2, 0.3)
 
 
 def test_imu_acceleration_integrates_position_and_velocity() -> None:

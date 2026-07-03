@@ -1,6 +1,6 @@
 import numpy as np
 
-from core.schemas import MavlinkOdometry
+from core.schemas import OdometryState, TrackGate
 from sensing.perception import GateMap, GatePoseEstimator, GateRecord, VisionObservation
 from sensing.telemetry import DataSynchronizer, MavlinkTelemetry
 
@@ -8,18 +8,13 @@ from sensing.telemetry import DataSynchronizer, MavlinkTelemetry
 def telemetry_sample(sim_time_ns: int) -> MavlinkTelemetry:
     return MavlinkTelemetry(
         sim_time_ns=sim_time_ns,
-        odometry=MavlinkOdometry(
-            time_usec=sim_time_ns // 1_000,
-            frame_id=1,
-            child_frame_id=12,
+        odometry=OdometryState(
+            sim_time_ns=sim_time_ns,
             attitude_quaternion=(1.0, 0.0, 0.0, 0.0),
-            pose_covariance=(),
-            velocity_covariance=(),
-            reset_count=0,
-            estimator_type=0,
             position_local_ned_m=(1.0, 2.0, -3.0),
             velocity_local_ned_mps=(0.0, 0.0, 0.0),
-            angular_velocity_body_frd_rps=(0.0, 0.0, 0.0),
+            body_rates_frd_rps=(0.0, 0.0, 0.0),
+            acceleration_local_ned_mps2=(0.0, 0.0, 0.0),
         ),
     )
 
@@ -235,6 +230,45 @@ def test_gate_map_treats_track_gate_as_confirmed_with_single_observation() -> No
     )
 
     assert [gate.gate_id for gate in gate_map.get_next_gates(10)] == ["0"]
+
+
+def test_seed_from_track_gates_sets_relative_positions_from_origin() -> None:
+    gate_map = GateMap()
+
+    changed = gate_map.seed_from_track_gates(
+        [
+            TrackGate(
+                gate_id=7,
+                position_local_ned_m=(10.0, 4.0, -2.0),
+                quaternion=(1.0, 0.0, 0.0, 0.0),
+                width_m=2.0,
+                height_m=1.0,
+            )
+        ],
+        origin_local_ned_m=(1.0, 2.0, 3.0),
+    )
+
+    assert changed
+    assert gate_map.get_gate("7").position_relative_ned_m == (9.0, 2.0, -5.0)
+
+
+def test_seed_from_track_gates_refreshes_relative_positions_without_reseed() -> None:
+    gate_map = GateMap()
+    track_gates = [
+        TrackGate(
+            gate_id=7,
+            position_local_ned_m=(10.0, 4.0, -2.0),
+            quaternion=(1.0, 0.0, 0.0, 0.0),
+            width_m=2.0,
+            height_m=1.0,
+        )
+    ]
+    assert gate_map.seed_from_track_gates(track_gates, origin_local_ned_m=(1.0, 2.0, 3.0))
+
+    changed = gate_map.seed_from_track_gates(track_gates, origin_local_ned_m=(2.0, 2.0, 2.0))
+
+    assert not changed
+    assert gate_map.get_gate("7").position_relative_ned_m == (8.0, 2.0, -4.0)
 
 
 def test_gate_map_coalesces_existing_duplicate_when_tracks_converge() -> None:

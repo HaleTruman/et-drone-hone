@@ -71,25 +71,6 @@ class MavlinkTimesync:
 
 
 @dataclass(frozen=True)
-class MavlinkOdometry:
-    time_usec: int
-    frame_id: int
-    child_frame_id: int
-    attitude_quaternion: QuatWxyz
-    pose_covariance: tuple[float, ...]
-    velocity_covariance: tuple[float, ...]
-    reset_count: int
-    estimator_type: int
-    position_local_ned_m: Vec3 | None = None
-    velocity_local_ned_mps: Vec3 | None = None
-    position_m: Vec3 | None = None
-    velocity_mps: Vec3 | None = None
-    angular_velocity_body_frd_rps: Vec3 | None = None
-    angular_velocity_rps: Vec3 | None = None
-    source: str = "ODOMETRY"
-
-
-@dataclass(frozen=True)
 class MavlinkHighresImu:
     time_boot_us: int
     acceleration_body_frd_mps2: Vec3
@@ -106,7 +87,7 @@ class MavlinkHighresImu:
 @dataclass(frozen=True, init=False)
 class MavlinkTelemetry:
     sim_time_ns: int
-    odometry: MavlinkOdometry | None = None
+    odometry: OdometryState | None = None
     imu: MavlinkHighresImu | None = None
     system_status: str | None = None
     reset_count: int | None = None
@@ -115,7 +96,7 @@ class MavlinkTelemetry:
     def __init__(
         self,
         sim_time_ns: int,
-        odometry: MavlinkOdometry | None = None,
+        odometry: OdometryState | None = None,
         *,
         imu: MavlinkHighresImu | None = None,
         system_status: str | None = None,

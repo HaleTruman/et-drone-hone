@@ -3,7 +3,7 @@ import re
 
 import numpy as np
 
-from core.schemas import MavlinkHighresImu, MavlinkOdometry, MavlinkTelemetry
+from core.schemas import MavlinkHighresImu, MavlinkTelemetry, OdometryState
 from core.modes.system_mode import SystemMode
 from core.logging import Logger
 
@@ -28,18 +28,13 @@ def test_logger_writes_telemetry_and_imu_sidecar_json(tmp_path) -> None:
     logger = Logger(metadata={"scenario": "telemetry-test"})
     telemetry = MavlinkTelemetry(
         sim_time_ns=123,
-        odometry=MavlinkOdometry(
-            time_usec=123,
-            frame_id=1,
-            child_frame_id=12,
+        odometry=OdometryState(
+            sim_time_ns=123_000,
             attitude_quaternion=(1.0, 0.0, 0.0, 0.0),
-            pose_covariance=(),
-            velocity_covariance=(),
-            reset_count=0,
-            estimator_type=0,
             position_local_ned_m=(1.0, 2.0, -3.0),
             velocity_local_ned_mps=(0.0, 0.0, 0.0),
-            angular_velocity_body_frd_rps=(0.0, 0.0, 0.0),
+            body_rates_frd_rps=(0.0, 0.0, 0.0),
+            acceleration_local_ned_mps2=(0.0, 0.0, 0.0),
         ),
         imu=MavlinkHighresImu(
             time_boot_us=123,

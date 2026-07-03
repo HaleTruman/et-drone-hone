@@ -24,6 +24,18 @@ def test_reassembles_and_persists_chunked_jpeg(tmp_path) -> None:
     assert receiver.snapshot()["saved_frame_count"] == 1
 
 
+def test_wait_until_receiving_and_clear_buffer(tmp_path) -> None:
+    receiver = VisionStreamReceiver(output_dir=tmp_path)
+    jpeg = b"\xff\xd8mock-jpeg\xff\xd9"
+    frame = receiver.process_packet(packet(7, 0, 1, len(jpeg), 99, jpeg))
+
+    assert receiver.wait_until_receiving(timeout_s=0.01) is frame
+
+    receiver.clear_buffer()
+
+    assert receiver.snapshot()["buffered_frame_count"] == 0
+
+
 def test_persists_one_manifest_entry_per_frame_id(tmp_path) -> None:
     receiver = VisionStreamReceiver(output_dir=tmp_path / "vision_frames")
     receiver.output_dir.mkdir()

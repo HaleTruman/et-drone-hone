@@ -1,10 +1,8 @@
 import struct
 from types import SimpleNamespace
 
-import numpy as np
-
-from sensing.perception.gate_map import GateMap
-from sensing.telemetry.mavlink_client import MAV_FRAME_BODY_FRD, MAV_FRAME_LOCAL_NED, MavlinkClient
+from sensing.perception.track_gates import TrackGateReceiver
+from sensing.telemetry.mavlink_client import MavlinkClient
 
 
 class Message(SimpleNamespace):
@@ -12,61 +10,15 @@ class Message(SimpleNamespace):
         return self.message_type
 
 
-def test_raw_messages_do_not_inject_cross_message_fields() -> None:
+def test_highres_imu_is_cached_without_building_estimated_state() -> None:
     client = MavlinkClient(endpoint="telemetry-simulator")
     client.handle_message(
         Message(
-            message_type="ATTITUDE",
-            time_boot_ms=1,
-            roll=0.0,
-            pitch=0.0,
-            yaw=0.0,
-            rollspeed=0.1,
-            pitchspeed=0.2,
-            yawspeed=0.3,
-        )
-    )
-    client.handle_message(
-        Message(
-            message_type="ODOMETRY",
-            time_usec=1234,
-            frame_id=MAV_FRAME_LOCAL_NED,
-            child_frame_id=MAV_FRAME_BODY_FRD,
-            x=1.0,
-            y=2.0,
-            z=-3.0,
-            q=[1.0, 0.0, 0.0, 0.0],
-            vx=4.0,
-            vy=5.0,
-            vz=6.0,
-            rollspeed=0.1,
-            pitchspeed=0.2,
-            yawspeed=0.3,
-            pose_covariance=[0.0] * 21,
-            velocity_covariance=[0.0] * 21,
-            reset_counter=7,
-            estimator_type=1,
-        )
-    )
-    client.handle_message(
-        Message(
-            message_type="LOCAL_POSITION_NED",
-            time_boot_ms=1,
-            x=10.0,
-            y=20.0,
-            z=-30.0,
-            vx=40.0,
-            vy=50.0,
-            vz=60.0,
-        )
-    )
-    client.handle_message(
-        Message(
             message_type="HIGHRES_IMU",
-            time_usec=1234,
-            xacc=0.0,
+            time_usec=1_000_000,
+            xacc=1.0,
             yacc=0.0,
-            zacc=9.8,
+            zacc=-9.80665,
             xgyro=0.1,
             ygyro=0.2,
             zgyro=0.3,
@@ -75,25 +27,40 @@ def test_raw_messages_do_not_inject_cross_message_fields() -> None:
     )
 
     assert client.latest_imu is not None
-    assert client.latest_imu.acceleration_body_frd_mps2 == (0.0, 0.0, 9.8)
+    assert client.latest_imu.acceleration_body_frd_mps2 == (1.0, 0.0, -9.80665)
     assert client.latest_imu.gyro_body_frd_rps == (0.1, 0.2, 0.3)
     assert not hasattr(client.latest_imu, "velocity_local_ned_mps")
+    assert not hasattr(client, "latest_estimated_state")
 
-    assert client.latest_odometry is not None
-    assert client.latest_odometry.position_local_ned_m == (1.0, 2.0, -3.0)
-    assert client.latest_odometry.velocity_local_ned_mps == (4.0, 5.0, 6.0)
-    assert client.latest_odometry.angular_velocity_body_frd_rps == (0.1, 0.2, 0.3)
-    assert not hasattr(client.latest_odometry, "acceleration_local_ned_mps2")
-    assert not hasattr(client.latest_odometry, "acceleration_body_frd_mps2")
-
-    telemetry = client.get_latest_telemetry()
+    telemetry = client.get_telemetry()
     assert telemetry is not None
-    assert telemetry.sim_time_ns == 1_234_000
-    assert telemetry.odometry is client.latest_odometry
+    assert telemetry.sim_time_ns == 1_000_000_000
+    assert telemetry.odometry is None
     assert telemetry.imu is client.latest_imu
-    assert telemetry.odometry.position_local_ned_m == (1.0, 2.0, -3.0)
-    assert telemetry.acceleration_body_frd_mps2 == (0.0, 0.0, 9.8)
+    assert telemetry.acceleration_body_frd_mps2 == (1.0, 0.0, -9.80665)
     assert telemetry.gyro_body_frd_rps == (0.1, 0.2, 0.3)
+
+
+def test_wait_until_receiving_returns_imu_telemetry() -> None:
+    client = MavlinkClient(endpoint="telemetry-simulator")
+    client.connected = True
+    client.subscribe_telemetry()
+    client.handle_message(
+        Message(
+            message_type="HIGHRES_IMU",
+            time_usec=1_000_000,
+            xacc=0.0,
+            yacc=0.0,
+            zacc=-9.80665,
+            xgyro=0.0,
+            ygyro=0.0,
+            zgyro=0.0,
+        )
+    )
+
+    telemetry = client.wait_until_receiving(timeout_s=0.01)
+
+    assert telemetry.imu is client.latest_imu
 
 
 def test_highres_imu_optional_fields_are_cached_when_present() -> None:
@@ -149,37 +116,20 @@ def test_send_control_outputs_rejects_unknown_output_shape() -> None:
         raise AssertionError("Expected ValueError")
 
 
-def test_track_chunks_are_reassembled_and_can_seed_gate_map() -> None:
-    client = MavlinkClient(endpoint="telemetry-simulator")
-    track_payload = struct.pack(
-        "<HHfffffffff",
-        1,
-        9,
-        1.0,
-        2.0,
-        -3.0,
-        1.0,
-        0.0,
-        0.0,
-        0.0,
-        2.7,
-        1.5,
-    )
-    client.handle_message(Message(message_type="DATA_TRANSMISSION_HANDSHAKE", width=44, packets=2))
-    split = len(track_payload) // 2
+def test_track_messages_are_forwarded_to_track_gate_receiver() -> None:
+    receiver = TrackGateReceiver()
+    client = MavlinkClient(endpoint="telemetry-simulator", track_gate_receiver=receiver)
+
+    client.handle_message(Message(message_type="DATA_TRANSMISSION_HANDSHAKE", width=44, packets=1))
     client.handle_message(
-        Message(message_type="ENCAPSULATED_DATA", seqnr=0, data=bytes([2]) + struct.pack("<H", 44) + track_payload[:split])
-    )
-    client.handle_message(
-        Message(message_type="ENCAPSULATED_DATA", seqnr=1, data=bytes([2]) + struct.pack("<H", 44) + track_payload[split:])
+        Message(
+            message_type="ENCAPSULATED_DATA",
+            seqnr=0,
+            data=bytes([2]) + struct.pack("<H", 44) + struct.pack("<H", 0),
+        )
     )
 
-    assert len(client.track_gates) == 1
-    assert client.track_gates[0].gate_id == 9
-    gate_map = GateMap()
-    client.populate_gate_map(gate_map)
-    np.testing.assert_allclose(gate_map.get_gate("9").position_local_ned_m, [1.0, 2.0, -3.0])
-    assert gate_map.get_gate("9").source == "track"
+    assert client.track_gates is receiver.track_gates
 
 
 def test_race_status_and_collision_are_retained() -> None:

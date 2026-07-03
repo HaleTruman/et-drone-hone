@@ -3,25 +3,20 @@ import numpy as np
 from core.control.body_rate_guidance import BodyRateGuidanceController
 from autonomy.planning.path_manager import PathManager
 from sensing.perception import GateRecord, GateTargetTracker, select_guidance_gate
-from core.schemas import MavlinkOdometry
-from sensing.telemetry import MavlinkClient, MavlinkTelemetry
+from core.schemas import OdometryState
+from sensing.telemetry import MavlinkTelemetry
 
 
 def telemetry(position=(0.0, 0.0, 0.0), velocity=(0.0, 0.0, 0.0)) -> MavlinkTelemetry:
     return MavlinkTelemetry(
         sim_time_ns=1,
-        odometry=MavlinkOdometry(
-            time_usec=1,
-            frame_id=1,
-            child_frame_id=12,
+        odometry=OdometryState(
+            sim_time_ns=1,
             attitude_quaternion=(1.0, 0.0, 0.0, 0.0),
-            pose_covariance=(),
-            velocity_covariance=(),
-            reset_count=1,
-            estimator_type=0,
             position_local_ned_m=position,
             velocity_local_ned_mps=velocity,
-            angular_velocity_body_frd_rps=(0.0, 0.0, 0.0),
+            body_rates_frd_rps=(0.0, 0.0, 0.0),
+            acceleration_local_ned_mps2=(0.0, 0.0, 0.0),
         ),
         reset_count=1,
     )
@@ -37,33 +32,6 @@ def gate(gate_id: str, position, confidence=0.9, crossed=False, sequence=None, r
         crossed=crossed,
         sequence=sequence,
     )
-
-
-class FakeMavlinkClient(MavlinkClient):
-    def __init__(self, sample: MavlinkTelemetry | None = None) -> None:
-        super().__init__("offline")
-        self.sample = sample or telemetry()
-        self.position_targets = []
-        self.attitude_targets = []
-
-    def get_latest_telemetry(self):
-        return self.sample
-
-    def send_position_target(self, payload):
-        self.position_targets.append(payload)
-        self.latest_position_target = payload
-
-    def send_attitude_target(self, payload):
-        self.attitude_targets.append(payload)
-        self.latest_attitude_target = payload
-
-
-class FakeLogger:
-    def __init__(self) -> None:
-        self.events = []
-
-    def log_event(self, event, **payload):
-        self.events.append({"event": event, **payload})
 
 
 def test_select_guidance_gate_uses_nearest_confident_uncrossed_gate() -> None:
@@ -130,20 +98,6 @@ def test_body_rate_guidance_uses_relative_ned_target_not_local_map_delta() -> No
     np.testing.assert_allclose(payload["raw_target_position_local_ned_m"], [100.0, 50.0, -10.0])
 
 
-def test_velocity_guidance_uses_relative_ned_target_not_local_map_delta() -> None:
-    client = FakeMavlinkClient(telemetry(position=(10.0, 0.0, 0.0)))
-
-    payload = client.build_gate_velocity_target(
-        gate("gate-1", (100.0, 50.0, 0.0), relative=(1.0, 0.0, 0.0)),
-        client.sample,
-        max_speed_mps=0.5,
-        arrival_radius_m=0.0,
-    )
-
-    np.testing.assert_allclose(payload["velocity_local_ned_mps"], [0.5, 0.0, 0.0])
-    np.testing.assert_allclose(payload["target_position_relative_ned_m"], [1.0, 0.0, 0.0])
-
-
 def test_path_manager_uses_relative_ned_waypoints_when_available() -> None:
     from sensing.perception import GateMap
 
@@ -152,42 +106,3 @@ def test_path_manager_uses_relative_ned_waypoints_when_available() -> None:
 
     np.testing.assert_allclose(PathManager().update_from_gate_map(gate_map), [[1.0, 0.0, -0.4]])
 
-
-def test_stream_body_rate_command_continues_after_missing_frame_then_holds_after_expiry() -> None:
-    client = FakeMavlinkClient(telemetry())
-    controller = BodyRateGuidanceController()
-    tracker = GateTargetTracker(hold_s=0.75)
-    tracker.update(gate("gate-1", (10.0, 0.0, 0.0)), now_s=1.0, frame_id=5)
-
-    first = client.stream_gate_body_rate_command(tracker, client.sample, controller, now_s=1.0)
-    repeated_without_new_frame = client.stream_gate_body_rate_command(tracker, client.sample, controller, now_s=1.5)
-    expired = client.stream_gate_body_rate_command(tracker, client.sample, controller, now_s=2.0)
-
-    assert first["reason"] == "streamed_body_rate_guidance"
-    assert repeated_without_new_frame["reason"] == "streamed_body_rate_guidance"
-    assert expired["reason"] == "streamed_body_rate_hold_no_target"
-    assert len(client.attitude_targets) == 3
-    assert client.attitude_targets[-1]["target_control"]["mode"] == "hold_current_position"
-    assert client.attitude_targets[-1]["thrust"] == controller.config.base_thrust
-
-
-def test_run_prelevel_uses_body_rate_guidance_controller_when_provided() -> None:
-    client = FakeMavlinkClient(telemetry())
-    controller = BodyRateGuidanceController()
-    logger = FakeLogger()
-
-    client.run_prelevel(
-        guidance_controller=controller,
-        duration_s=0.01,
-        thrust=0.2,
-        hz=1000.0,
-        log_event=logger.log_event,
-    )
-
-    assert client.attitude_targets
-    payload = client.attitude_targets[0]
-    assert payload["source"] == "main_body_rate_prelevel"
-    assert payload["attitude_type_mask"] == 128
-    assert payload["phase"] == "prelevel"
-    assert payload["thrust"] == 0.2
-    assert [event["event"] for event in logger.events] == ["prelevel_started", "prelevel_finished"]

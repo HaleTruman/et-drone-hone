@@ -278,7 +278,7 @@ def _timesync_offset_ns(events: list[dict[str, Any]]) -> int | None:
         if not isinstance(bridge, dict):
             continue
         timesync = bridge.get("latest_timesync")
-        telemetry = bridge.get("latest_telemetry") or bridge.get("latest_odometry")
+        telemetry = bridge.get("latest_telemetry")
         if not isinstance(timesync, dict) or not isinstance(telemetry, dict):
             continue
         response_time_ns = timesync.get("response_time_ns", timesync.get("tc1"))
