@@ -1,5 +1,7 @@
 # Stack Brief
 
+Note: this is a historical planning brief. The current runtime does not consume MAVLink `ODOMETRY`, `LOCAL_POSITION_NED`, or `ATTITUDE` for vehicle pose. `MavlinkClient` keeps MAVLink telemetry raw, and `VehicleStateEstimator` in `src/sensing/odometry/state.py` owns the flight-facing `VehicleState` estimate.
+
 The full conceptual pipeline is:
 > Vision > Telemetry > Perception > Planning > Control > Pilot Commands > Stabilized Controller
 
@@ -8,11 +10,11 @@ This document will focus on the software stack downstream of Vision.
 ## 1. Information Sources (Raw Inputs)
 - Telemetry (MAVLink, ~100 Hz capable)
   - HEARTBEAT (connection health, system status flags)
-  - ATTITUDE (orientation, body rates)
+  - HIGHRES_IMU-derived vehicle state via `VehicleStateEstimator`
   - HIGHRES_IMU (raw accels/gyros, and per spec §4.5 also linear velocities)
   - TIMESYNC (for precise sim-time alignment)
    
-  You get attitude/orientation, body angular rates, linear velocities, and system status directly. Position is not sent explicitly, so you will maintain it via integration (see §3).\
+  Current runtime estimates attitude/orientation, body angular rates, linear velocities, and position locally from `HIGHRES_IMU` instead of reading MAVLink pose packets.\
 
 - Vision Stream (UDP port 5600, 30 Hz, 640×360 JPEG)
 
@@ -33,8 +35,8 @@ CNN output -> per visible gate: relative 3D position (in camera frame) + orienta
 
 #### Drone state update (fusion):
 
-- Attitude / angular rates: directly from ATTITUDE message (or convert quaternion if you prefer the 13-state model you already have).
-- Linear velocity: directly from telemetry (use in BODY_NED or LOCAL_NED as provided).
+- Attitude / angular rates: estimated locally from `HIGHRES_IMU` through `VehicleStateEstimator`.
+- Linear velocity: estimated locally by integrating IMU-derived acceleration.
 - Position: integrate velocity in LOCAL_NED (simple Euler or RK4). IMU acceleration can be used as a secondary check or for short-term prediction, but vision gate detections provide the absolute correction (landmark-based localization). Because the environment is deterministic, a lightweight EKF or even a simple complementary filter on gate-derived position updates will keep drift negligible.
 
 #### Store a dictionary/list of gates in global LOCAL_NED coordinates:
@@ -143,7 +145,7 @@ This pipeline keeps the system modular, leverages the exact interfaces in the sp
 This is a table of all of the planned classes and methods downstream of Vision. 
 | File/Module | Primary Class(es) | Key Methods | Description |
 |---|---|---|---|
-| `mavlink_bridge.py` | `MavlinkBridge` | `connect()`, `start_heartbeat()`, `subscribe_telemetry()`, `send_position_target()`, `send_attitude_target()`, `get_latest_telemetry()` | MAVLink UDP client. Handles connection, HEARTBEAT (≥2 Hz), all required telemetry subscriptions (`ATTITUDE`, `HIGHRES_IMU`, `TIMESYNC`), and command sending per spec §4. |
+| `mavlink_bridge.py` | `MavlinkBridge` | `connect()`, `start_heartbeat()`, `subscribe_telemetry()`, `send_position_target()`, `send_attitude_target()`, `get_latest_telemetry()` | MAVLink UDP client. Handles connection, HEARTBEAT, raw telemetry subscriptions (`HIGHRES_IMU`, `TIMESYNC`), and command sending. Vehicle pose is estimated locally, not read from MAVLink pose packets. |
 | `vision_stream.py` | `VisionStreamReceiver` | `start_listener()`, `reassemble_frame()`, `decode_jpeg()`, `get_next_frame()` | UDP listener (port 5600) that reassembles chunked packets (§4.6 header format), decodes 640×360 JPEGs, and timestamps with `sim_time_ns`. |
 | `sync.py` | `DataSynchronizer` | `align_frame_with_telemetry()`, `get_synchronized_data()` | Aligns vision frames with MAVLink telemetry using sim timestamps. Outputs clean (`frame`, `telemetry`) tuples at ~30 Hz. |
 | `gate_pose.py` | `GatePoseEstimator` | `estimate_gate_pose(body_frame)`, `camera_to_body_transform()`, `body_to_local_ned()` | Converts CNN output (ID, bbox/keypoints, relative pose) into 3D gate pose in body frame then LOCAL_NED using camera intrinsics + 20° tilt (§3.8) and known gate geometry (§3.7). |

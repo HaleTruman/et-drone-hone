@@ -14,7 +14,7 @@ DEFAULT_LOGS_DIR = Path(__file__).resolve().parents[1] / "logs" / "runs"
 FRAME_NAME_RE = re.compile(r"frame-(?P<frame_id>\d+)-(?P<sim_time_ns>\d+)\.(?:jpg|jpeg|png)$", re.IGNORECASE)
 
 # Change this to the run folder name you want to render.
-RUN = "run-20260703T191622Z"
+RUN = "run-20260704T041155Z"
 DEFAULT_FPS = 30.0
 MAX_GAP_S = 1.0
 

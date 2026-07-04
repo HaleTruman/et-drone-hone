@@ -66,8 +66,8 @@ class GatePoseEstimator:
         gate_map: GateMap,
         allow_new_gates: bool = True,
     ) -> list[GateRecord]:
-        odometry = getattr(telemetry, "odometry", None)
-        vehicle_position = None if odometry is None else odometry.position_local_ned_m
+        vehicle_state = getattr(telemetry, "vehicle_state", None)
+        vehicle_position = None if vehicle_state is None else vehicle_state.position_local_ned_m
         if vehicle_position is None:
             raise ValueError("Telemetry must include position_local_ned_m to map camera-local gates.")
         records: list[GateRecord] = []
@@ -75,7 +75,7 @@ class GatePoseEstimator:
             record = self.estimate_gate_pose(
                 gate,
                 vehicle_position_local_ned_m=vehicle_position,
-                attitude_quaternion=odometry.attitude_quaternion,
+                attitude_quaternion=vehicle_state.attitude_quaternion,
                 sequence=sequence,
                 observed_cycle=observation.frame_id,
             )

@@ -138,19 +138,27 @@ def _normalized_cycle(cycle: dict[str, Any]) -> dict[str, Any]:
     if isinstance(telemetry, dict):
         telemetry = _normalized_telemetry(telemetry)
         normalized["telemetry"] = telemetry
-        normalized.setdefault("odometry", telemetry.get("odometry"))
+        normalized.setdefault("vehicle_state", telemetry.get("vehicle_state"))
+        normalized.setdefault("odometry", telemetry.get("vehicle_state") or telemetry.get("odometry"))
+    vehicle_state = normalized.get("vehicle_state")
+    if isinstance(vehicle_state, dict):
+        normalized["vehicle_state"] = _normalized_vehicle_state(vehicle_state)
+        normalized.setdefault("odometry", normalized["vehicle_state"])
     odometry = normalized.get("odometry")
     if isinstance(odometry, dict):
-        normalized["odometry"] = _normalized_odometry(odometry)
+        normalized["odometry"] = _normalized_vehicle_state(odometry)
     return normalized
 
 
 def _normalized_telemetry(telemetry: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(telemetry)
-    odometry = normalized.get("odometry")
-    if isinstance(odometry, dict):
-        odometry = _normalized_odometry(odometry)
-        normalized["odometry"] = odometry
+    vehicle_state = normalized.get("vehicle_state")
+    if not isinstance(vehicle_state, dict):
+        vehicle_state = normalized.get("odometry")
+    if isinstance(vehicle_state, dict):
+        vehicle_state = _normalized_vehicle_state(vehicle_state)
+        normalized["vehicle_state"] = vehicle_state
+        normalized.setdefault("odometry", vehicle_state)
         for key in (
             "position_local_ned_m",
             "velocity_local_ned_mps",
@@ -158,15 +166,15 @@ def _normalized_telemetry(telemetry: dict[str, Any]) -> dict[str, Any]:
             "body_rates_frd_rps",
             "acceleration_local_ned_mps2",
         ):
-            if key in odometry:
-                normalized.setdefault(key, odometry[key])
-        normalized.setdefault("attitude", odometry.get("attitude_quaternion"))
-        normalized.setdefault("body_rates_rps", odometry.get("body_rates_frd_rps"))
+            if key in vehicle_state:
+                normalized.setdefault(key, vehicle_state[key])
+        normalized.setdefault("attitude", vehicle_state.get("attitude_quaternion"))
+        normalized.setdefault("body_rates_rps", vehicle_state.get("body_rates_frd_rps"))
     return normalized
 
 
-def _normalized_odometry(odometry: dict[str, Any]) -> dict[str, Any]:
-    normalized = dict(odometry)
+def _normalized_vehicle_state(vehicle_state: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(vehicle_state)
     if "body_rates_frd_rps" not in normalized and "body_rates_rps" in normalized:
         normalized["body_rates_frd_rps"] = normalized["body_rates_rps"]
     if "attitude_quaternion" not in normalized and "attitude" in normalized:

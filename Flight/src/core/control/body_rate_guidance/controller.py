@@ -5,7 +5,7 @@ from typing import Any
 
 import numpy as np
 
-from core.schemas import MavlinkTelemetry
+from core.schemas import VehicleState
 
 
 @dataclass(frozen=True)
@@ -44,12 +44,12 @@ class BodyRateGuidanceController:
     def build_guidance_command(
         self,
         *,
-        telemetry: Any,
+        vehicle_state: VehicleState,
         target: Any | None,
         source: str = "main_body_rate_guidance",
         phase: str = "main",
     ) -> dict[str, Any]:
-        sample = self._sample(telemetry)
+        sample = self._sample(vehicle_state)
         target_payload = (
             self._target_payload(sample, target)
             if target is not None
@@ -77,32 +77,76 @@ class BodyRateGuidanceController:
     def build_prelevel_command(
         self,
         *,
-        telemetry: Any,
+        vehicle_state: VehicleState,
         thrust: float = 0.20,
         target_roll_deg: float = 0.0,
         target_pitch_deg: float = 0.0,
     ) -> dict[str, Any]:
-        sample = self._sample(telemetry)
-        payload = self._build_payload(
-            sample=sample,
-            target_roll_deg=target_roll_deg,
-            target_pitch_deg=target_pitch_deg,
-            target_z_ned_m=float(sample["position_local_ned_m"][2]),
-            phase="prelevel",
+        payload = self.build_rate_command(
+            body_rates_rps=(0.0, 0.0, 0.0),
+            thrust=thrust,
             source="main_body_rate_prelevel",
-            target_payload=self._hold_target_payload(sample, reason="prelevel"),
-            guidance=None,
-            target=None,
-            override_thrust=thrust,
+            phase="prelevel",
+            metadata={
+                "target_roll_pitch_deg": [float(target_roll_deg), float(target_pitch_deg)],
+                "vehicle_state_sim_time_ns": int(vehicle_state.sim_time_ns),
+            },
         )
         self.last_payload = payload
         return payload
 
-    def build_stop_command(self, telemetry: Any | None = None, *, source: str = "main_body_rate_stop") -> dict[str, Any]:
+    def build_rate_command(
+        self,
+        *,
+        body_rates_rps: tuple[float, float, float],
+        thrust: float,
+        source: str,
+        phase: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "quaternion": [1.0, 0.0, 0.0, 0.0],
+            "thrust": float(np.clip(thrust, 0.0, 1.0)),
+            "attitude_type_mask": 128,
+            "body_rates_rps": [float(value) for value in body_rates_rps],
+            "source": source,
+            "phase": phase,
+        }
+        if metadata:
+            payload.update(metadata)
+        self.last_payload = payload
+        return payload
+
+    def build_attitude_command(
+        self,
+        *,
+        quaternion: tuple[float, float, float, float],
+        thrust: float,
+        source: str,
+        phase: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "quaternion": [float(value) for value in quaternion],
+            "thrust": float(np.clip(thrust, 0.0, 1.0)),
+            "attitude_type_mask": 7,
+            "source": source,
+            "phase": phase,
+        }
+        if metadata:
+            payload.update(metadata)
+        self.last_payload = payload
+        return payload
+
+    def build_stop_command(
+        self,
+        vehicle_state: VehicleState | None = None,
+        *,
+        source: str = "main_body_rate_stop",
+    ) -> dict[str, Any]:
         attitude = [1.0, 0.0, 0.0, 0.0]
-        odometry = None if telemetry is None else getattr(telemetry, "odometry", None)
-        if odometry is not None:
-            attitude = [float(value) for value in odometry.attitude_quaternion]
+        if vehicle_state is not None:
+            attitude = [float(value) for value in vehicle_state.attitude_quaternion]
         payload = {
             "quaternion": attitude,
             "thrust": 0.0,
@@ -118,7 +162,7 @@ class BodyRateGuidanceController:
         self,
         *,
         telemetry_client: Any,
-        vehicle_state: Any,
+        vehicle_state_estimator: Any,
         send_attitude_target: Any,
         duration_s: float,
         thrust: float,
@@ -138,19 +182,12 @@ class BodyRateGuidanceController:
             if now_s < next_tick_s:
                 time.sleep(min(0.002, next_tick_s - now_s))
                 continue
-            telemetry = telemetry_client.get_telemetry()
-            odometry = vehicle_state.update(None if telemetry is None else telemetry.imu)
-            if telemetry is not None and odometry is not None:
+            raw_telemetry = telemetry_client.get_telemetry()
+            telemetry = vehicle_state_estimator.update_telemetry(raw_telemetry)
+            if telemetry is not None:
                 send_attitude_target(
                     self.build_prelevel_command(
-                        telemetry=MavlinkTelemetry(
-                            sim_time_ns=odometry.sim_time_ns,
-                            odometry=odometry,
-                            imu=telemetry.imu,
-                            system_status=telemetry.system_status,
-                            reset_count=telemetry.reset_count,
-                            raw={**telemetry.raw, "odometry_source": "vehicle_state_highres_imu"},
-                        ),
+                        vehicle_state=vehicle_state_estimator.state,
                         thrust=thrust,
                     )
                 )
@@ -182,7 +219,7 @@ class BodyRateGuidanceController:
         pitch = math.radians(float(pitch_deg))
         target_roll = math.radians(float(target_roll_deg))
         target_pitch = math.radians(float(target_pitch_deg))
-        roll_rate = -float(self.config.roll_kp) * (target_roll - roll)
+        roll_rate = float(self.config.roll_kp) * (target_roll - roll)
         pitch_rate = float(self.config.pitch_kp) * (target_pitch - pitch)
         roll_rate = float(np.clip(roll_rate, -self.config.max_roll_rate_rps, self.config.max_roll_rate_rps))
         pitch_rate = float(np.clip(pitch_rate, -self.config.max_pitch_rate_rps, self.config.max_pitch_rate_rps))
@@ -310,8 +347,8 @@ class BodyRateGuidanceController:
         xy_error = error[:2].copy()
         xy_error[np.abs(xy_error) < float(config.position_deadband_m)] = 0.0
 
-        pitch_raw = float(config.position_kp_deg_per_m) * float(xy_error[0])
-        pitch_raw -= float(config.velocity_kd_deg_per_mps) * float(velocity[0])
+        pitch_raw = -float(config.position_kp_deg_per_m) * float(xy_error[0])
+        pitch_raw += float(config.velocity_kd_deg_per_mps) * float(velocity[0])
         roll_raw = float(config.position_kp_deg_per_m) * float(xy_error[1])
         roll_raw -= float(config.velocity_kd_deg_per_mps) * float(velocity[1])
 
@@ -327,29 +364,28 @@ class BodyRateGuidanceController:
             "velocity_local_ned_mps": velocity.tolist(),
             "target_position_local_ned_m": target.tolist(),
             "config": asdict(config),
-            "mapping_note": "positive local X -> positive pitch; positive local Y -> positive roll",
+            "mapping_note": "positive local X -> negative pitch; positive local Y -> positive roll",
         }
 
     @staticmethod
-    def _sample(telemetry: Any) -> dict[str, Any]:
-        odometry = getattr(telemetry, "odometry", None)
-        position = None if odometry is None else odometry.position_local_ned_m
-        velocity = None if odometry is None else odometry.velocity_local_ned_mps
-        attitude = None if odometry is None else odometry.attitude_quaternion
+    def _sample(vehicle_state: VehicleState) -> dict[str, Any]:
+        position = vehicle_state.position_local_ned_m
+        velocity = vehicle_state.velocity_local_ned_mps
+        attitude = vehicle_state.attitude_quaternion
         if position is None:
-            raise ValueError("Telemetry must include position_local_ned_m for body-rate guidance.")
+            raise ValueError("VehicleState must include position_local_ned_m for body-rate guidance.")
         if velocity is None:
-            raise ValueError("Telemetry must include velocity_local_ned_mps for body-rate guidance.")
+            raise ValueError("VehicleState must include velocity_local_ned_mps for body-rate guidance.")
         if attitude is None:
-            raise ValueError("Telemetry must include attitude for body-rate guidance.")
+            raise ValueError("VehicleState must include attitude for body-rate guidance.")
         attitude_list = [float(value) for value in attitude]
         return {
-            "sim_time_ns": int(getattr(telemetry, "sim_time_ns", 0)),
+            "sim_time_ns": int(vehicle_state.sim_time_ns),
             "position_local_ned_m": [float(value) for value in position],
             "velocity_local_ned_mps": [float(value) for value in velocity],
             "attitude": attitude_list,
             "euler_deg": BodyRateGuidanceController.euler_deg(attitude_list),
-            "reset_count": getattr(telemetry, "reset_count", None),
+            "reset_count": None,
         }
 
     @staticmethod

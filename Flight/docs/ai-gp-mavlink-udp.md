@@ -17,7 +17,7 @@ The runtime now uses only the MAVLink messages observed on the simulator UDP str
 - race-status `ENCAPSULATED_DATA`
 - track-gate `DATA_TRANSMISSION_HANDSHAKE`/`ENCAPSULATED_DATA` if the simulator emits them again
 
-The simulator did not emit MAVLink `ODOMETRY`, `LOCAL_POSITION_NED`, or `ATTITUDE` in this capture. Position, velocity, attitude, body rates, and local acceleration therefore come from `sensing/odometry/VehicleState`. The runtime flow is `telemetry = client.get_telemetry()`, then `telemetry = vehicle_state.update(telemetry)`.
+The simulator did not emit MAVLink `ODOMETRY`, `LOCAL_POSITION_NED`, or `ATTITUDE` in this capture. Position, velocity, attitude, body rates, and local acceleration therefore come from `sensing/odometry/VehicleStateEstimator`. The runtime flow is `raw_telemetry = client.get_telemetry()`, then `telemetry = vehicle_state_estimator.update_telemetry(raw_telemetry)`.
 
 The first IMU sample initializes attitude by rotating the measured accelerometer direction onto local NED up, using gravity as the only absolute reference. Yaw is unobservable from accelerometer alone, so it starts at zero and then propagates from gyro integration.
 
@@ -123,7 +123,7 @@ The current startup path is:
 1. `main.py` connects to `MAVLINK_ENDPOINT`.
 2. `MavlinkClient.connect()` succeeds because `HEARTBEAT` is present.
 3. `MavlinkClient.subscribe_telemetry()` starts receiving messages.
-4. `MavlinkClient.get_telemetry()` returns raw telemetry with `imu` populated and `odometry` unset.
-5. `main.py` feeds `telemetry.imu` into its `VehicleState` instance.
-6. `main.py` builds the flight-facing telemetry bundle whose `odometry` field is `vehicle_state.state`.
+4. `MavlinkClient.get_telemetry()` returns raw telemetry with `imu` populated and `vehicle_state` unset.
+5. `main.py` feeds raw telemetry through its `VehicleStateEstimator` instance.
+6. `VehicleStateEstimator.update_telemetry()` returns the flight-facing telemetry bundle whose `vehicle_state` field is `vehicle_state_estimator.state`.
 7. Reset readiness and guidance use that local estimate instead of a simulator pose packet.

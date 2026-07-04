@@ -9,7 +9,7 @@ QuatWxyz = tuple[float, float, float, float]
 
 
 @dataclass(frozen=True)
-class OdometryState:
+class VehicleState:
     sim_time_ns: int
     position_local_ned_m: Vec3
     velocity_local_ned_mps: Vec3
@@ -87,7 +87,7 @@ class MavlinkHighresImu:
 @dataclass(frozen=True, init=False)
 class MavlinkTelemetry:
     sim_time_ns: int
-    odometry: OdometryState | None = None
+    vehicle_state: VehicleState | None = None
     imu: MavlinkHighresImu | None = None
     system_status: str | None = None
     reset_count: int | None = None
@@ -96,19 +96,24 @@ class MavlinkTelemetry:
     def __init__(
         self,
         sim_time_ns: int,
-        odometry: OdometryState | None = None,
+        vehicle_state: VehicleState | None = None,
         *,
+        odometry: VehicleState | None = None,
         imu: MavlinkHighresImu | None = None,
         system_status: str | None = None,
         reset_count: int | None = None,
         raw: dict[str, Any] | None = None,
     ):
         object.__setattr__(self, "sim_time_ns", int(sim_time_ns))
-        object.__setattr__(self, "odometry", odometry)
+        object.__setattr__(self, "vehicle_state", vehicle_state if vehicle_state is not None else odometry)
         object.__setattr__(self, "imu", imu)
         object.__setattr__(self, "system_status", system_status)
         object.__setattr__(self, "reset_count", reset_count)
         object.__setattr__(self, "raw", raw or {})
+
+    @property
+    def odometry(self) -> VehicleState | None:
+        return self.vehicle_state
 
     @property
     def acceleration_body_frd_mps2(self) -> Vec3 | None:

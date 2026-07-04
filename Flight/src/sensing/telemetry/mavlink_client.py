@@ -5,6 +5,7 @@ import threading
 import time
 from dataclasses import asdict
 from typing import Any, Callable
+from pymavlink import mavutil
 
 from core.coordinates import vec3
 from core.schemas import (
@@ -16,12 +17,9 @@ from core.schemas import (
     MavlinkTimesync,
     RaceStatus,
     RuntimeStatus,
-    TrackGate,
 )
-from sensing.perception.track_gates import TrackGateReceiver
 
 ENCAPSULATED_RACE_STATUS_MSG_ID = 1
-ENCAPSULATED_TRACK_INFO_MSG_ID = 2
 MAVLINK_CMD_SIM_RESET = 31000
 MAV_FRAME_LOCAL_NED = 1
 MAV_MODE_FLAG_SAFETY_ARMED = 128
@@ -37,7 +35,6 @@ class MavlinkClient:
         heartbeat_hz: float = 2.0,
         timesync_hz: float = 10.0,
         connection_factory: Callable[[str], Any] | None = None,
-        track_gate_receiver: TrackGateReceiver | None = None,
     ):
         self.endpoint = endpoint
         self.heartbeat_hz = float(heartbeat_hz)
@@ -48,7 +45,6 @@ class MavlinkClient:
         self._timesync_thread: threading.Thread | None = None
         self._running = threading.Event()
         self._lock = threading.Lock()
-        self.track_gate_receiver = track_gate_receiver or TrackGateReceiver()
 
         self.connected = False
         self.heartbeat_started = False
@@ -69,19 +65,14 @@ class MavlinkClient:
     def is_live(self) -> bool:
         return self._connection_factory is not None or ":" in self.endpoint
 
-    @property
-    def track_gates(self) -> list[TrackGate]:
-        return self.track_gate_receiver.track_gates
-
     def connect(self, heartbeat_timeout_s: float = 10.0) -> None:
         if not self.is_live:
             self.connected = True
             return
         factory = self._connection_factory
         if factory is None:
-            from pymavlink import mavutil
-
             factory = mavutil.mavlink_connection
+
         self._connection = factory(self.endpoint)
         heartbeat = self._connection.wait_heartbeat(timeout=heartbeat_timeout_s)
         if heartbeat is None:
@@ -111,7 +102,6 @@ class MavlinkClient:
         print("MAVLink subscribed to telemetry...")
 
     def arm(self) -> None:
-        mavutil = self._require_mavutil()
         connection = self._require_connection()
         connection.mav.command_long_send(
             connection.target_system,
@@ -128,7 +118,6 @@ class MavlinkClient:
         )
 
     def disarm(self) -> None:
-        mavutil = self._require_mavutil()
         connection = self._require_connection()
         connection.mav.command_long_send(
             connection.target_system,
@@ -164,7 +153,6 @@ class MavlinkClient:
         self.latest_position_target = target
         if not self.is_live:
             return
-        mavutil = self._require_mavutil()
         connection = self._require_connection()
         position = target.get("position_local_ned_m")
         position_axes = target.get("position_axes")
@@ -222,7 +210,6 @@ class MavlinkClient:
         self.latest_attitude_target = target
         if not self.is_live:
             return
-        mavutil = self._require_mavutil()
         connection = self._require_connection()
         body_rates = target.get("body_rates_rps", (0.0, 0.0, 0.0))
         type_mask = int(target.get("attitude_type_mask", 0 if "body_rates_rps" in target else 7))
@@ -292,13 +279,13 @@ class MavlinkClient:
         sim_time_ns = self._latest_sample_time_ns()
         return MavlinkTelemetry(
             sim_time_ns=sim_time_ns,
-            odometry=None,
+            vehicle_state=None,
             imu=self.latest_imu,
             system_status=self._latest_system_status(),
             reset_count=None,
             raw={"source": "mavlink_client"},
         )
-
+    
     def status(self) -> RuntimeStatus:
         now = time.monotonic()
         message_age_s = None if self._latest_message_monotonic_s is None else now - self._latest_message_monotonic_s
@@ -324,7 +311,6 @@ class MavlinkClient:
             "latest_imu": self._snapshot_value(self.latest_imu),
             "latest_actuator_output": self._snapshot_value(self.latest_actuator_output),
             "race_status": asdict(self.race_status) if self.race_status else None,
-            "track_gates": [asdict(gate) for gate in self.track_gates],
             "collisions": [asdict(collision) for collision in self.collisions],
             "latest_position_target": self.latest_position_target,
             "latest_attitude_target": self.latest_attitude_target,
@@ -344,8 +330,6 @@ class MavlinkClient:
             self._on_actuator_output_status(msg)
         elif msg_type == "COLLISION":
             self._on_collision(msg)
-        elif msg_type == "DATA_TRANSMISSION_HANDSHAKE":
-            self.track_gate_receiver.handle_handshake(transfer_id=int(msg.width), packets=int(msg.packets))
 
     def shutdown(self) -> None:
         self._running.clear()
@@ -414,8 +398,6 @@ class MavlinkClient:
             return
         if raw_payload[0] == ENCAPSULATED_RACE_STATUS_MSG_ID:
             self._on_race_status(raw_payload)
-        elif raw_payload[0] == ENCAPSULATED_TRACK_INFO_MSG_ID:
-            self.track_gate_receiver.handle_packet(seqnr=int(msg.seqnr), raw_payload=raw_payload)
 
     def _on_race_status(self, raw_payload: bytes) -> None:
         _, sim_boot_ms, race_start_ms, race_finish_ns, gate_index, last_gate_time = struct.unpack_from(
@@ -463,9 +445,3 @@ class MavlinkClient:
         if self._connection is None:
             raise RuntimeError("MAVLink client is not connected")
         return self._connection
-
-    @staticmethod
-    def _require_mavutil() -> Any:
-        from pymavlink import mavutil
-
-        return mavutil
