@@ -15,7 +15,6 @@ From the `Flight/` directory:
 
 ```powershell
 $env:PYTHONPATH = "src"
-python -m pytest -q
 python src/app.py
 ```
 
@@ -60,7 +59,7 @@ src/
 
   sensing/
     telemetry/                    # MAVLink client, bridge alias, telemetry sync
-    odometry/                     # VehicleState estimator/state holder
+    odometry/                     # VehicleStateEstimator and state integration
     vision/                       # UDP frame receiver, CNN/regressor/landmarker pipeline
     perception/                   # Vision observations, gate map, gate targeting, gate pose
 
@@ -86,10 +85,10 @@ At a high level, `src/main.py` wires these pieces together:
 
 ```text
 External simulator
-  |-- MAVLink UDP: HEARTBEAT, TIMESYNC, ODOMETRY, HIGHRES_IMU, track/race packets, collisions
+  |-- MAVLink UDP: HEARTBEAT, TIMESYNC replies, HIGHRES_IMU, ACTUATOR_OUTPUT_STATUS, race packets
   |     -> MavlinkClient
   |     -> MavlinkTelemetry
-  |     -> VehicleState / guidance / perception / logs
+  |     -> VehicleStateEstimator IMU integration / guidance / perception / logs
   |
   |-- FPV image UDP packets
         -> VisionStreamReceiver
@@ -104,11 +103,11 @@ External simulator
 
 The loop in `main.py` runs at `LOOP_HZ` and does the following:
 
-1. Receives latest MAVLink telemetry from `MavlinkClient.get_latest_telemetry()`.
+1. Receives raw MAVLink telemetry from `MavlinkClient.get_telemetry()`.
 2. Receives at most one queued FPV frame from `VisionStreamReceiver.get_next_frame()`.
 3. Seeds or refreshes the authoritative gate map from simulator-provided track packets when available.
-4. Initializes `VehicleState` from MAVLink odometry once odometry is available.
-5. Updates `VehicleState` with `HIGHRES_IMU` data when initialized.
+4. Updates the internal `VehicleState` estimate through `VehicleStateEstimator` from `HIGHRES_IMU`.
+5. Initializes attitude from accelerometer gravity direction on the first IMU sample.
 6. Logs telemetry and cycle state.
 7. If a vision frame is available, runs perception and maps detected gates into local NED.
 8. Selects or holds a gate target.
@@ -136,10 +135,6 @@ The client currently handles:
 - `TIMESYNC`
   - Stored as `MavlinkTimesync`.
   - A periodic timesync loop sends requests while live.
-- `ODOMETRY`
-  - The authoritative pose/velocity/attitude telemetry source.
-  - Stored as `MavlinkOdometry`.
-  - `get_latest_telemetry()` returns `None` until an odometry sample exists.
 - `HIGHRES_IMU`
   - Raw body-frame accelerometer/gyro telemetry.
   - Stored as `MavlinkHighresImu`.
@@ -153,7 +148,7 @@ The client currently handles:
   - Track gates become `TrackGate`.
   - Race status becomes `RaceStatus`.
 
-The client intentionally no longer caches raw `ATTITUDE` or `LOCAL_POSITION_NED` as separate telemetry sources. Flight-facing telemetry should use `MavlinkTelemetry.odometry`, which is backed by `ODOMETRY`.
+The client does not depend on MAVLink `ODOMETRY`, `ATTITUDE`, or `LOCAL_POSITION_NED`. `MavlinkClient.get_telemetry()` returns raw MAVLink telemetry; `main.py` passes that into `VehicleStateEstimator.update_telemetry(telemetry)` and receives the flight-facing telemetry bundle with `MavlinkTelemetry.vehicle_state = vehicle_state_estimator.state`.
 
 ### MAVLink Commands Sent
 
@@ -175,13 +170,13 @@ When `RESET_ON_START = True`, `main.py` does this:
 2. Starts the heartbeat/timesync loop.
 3. Starts telemetry subscription.
 4. Sends the simulator reset command.
-5. Waits for stable post-reset odometry.
+5. Waits for stable post-reset estimated state.
 6. Waits briefly for track gates.
 7. Seeds the gate map from simulator track data.
 8. Arms the simulator if `ARM_ON_START = True`.
 9. Runs a short prelevel phase with low thrust before entering the main loop.
 
-The reset readiness test watches `MavlinkTelemetry.odometry.velocity_local_ned_mps` and requires speed to remain below `RESET_STABLE_MAX_SPEED_MPS`.
+The reset readiness helper watches the IMU-integrated `MavlinkTelemetry.vehicle_state.velocity_local_ned_mps` estimate and requires speed to remain below `RESET_STABLE_MAX_SPEED_MPS`.
 
 ## Runtime Schemas and Boundaries
 
@@ -193,43 +188,45 @@ These dataclasses are raw or near-raw MAVLink cache shapes:
 
 - `MavlinkHeartbeat`
 - `MavlinkTimesync`
-- `MavlinkOdometry`
 - `MavlinkHighresImu`
 - `MavlinkActuatorOutputStatus`
 - `RaceStatus`
 - `TrackGate`
 - `CollisionEvent`
 
-`MavlinkTelemetry` is the flight-facing bundle returned by `MavlinkClient.get_latest_telemetry()`:
+`MavlinkTelemetry` is used in two places:
+
+- `MavlinkClient.get_telemetry()` returns raw simulator telemetry with `imu` populated and `vehicle_state` unset.
+- `VehicleStateEstimator.update_telemetry(telemetry)` returns flight-facing telemetry with `vehicle_state` set to `vehicle_state_estimator.state`.
 
 ```text
 MavlinkTelemetry
   sim_time_ns
-  odometry: MavlinkOdometry | None
+  vehicle_state: VehicleState | None
   imu: MavlinkHighresImu | None
   system_status
   reset_count
   raw
 ```
 
-`MavlinkTelemetry` does not fabricate normalized fields. Code that needs position, velocity, attitude, or body rates should read them from `telemetry.odometry`.
+`MavlinkClient` does not fabricate normalized fields. Code that needs position, velocity, attitude, or body rates should first pass client telemetry through `VehicleStateEstimator.update_telemetry()`, then read the estimate from `telemetry.vehicle_state`.
 
 Examples:
 
 ```python
-position = telemetry.odometry.position_local_ned_m
-velocity = telemetry.odometry.velocity_local_ned_mps
-attitude = telemetry.odometry.attitude_quaternion
-body_rates = telemetry.odometry.angular_velocity_body_frd_rps
+position = telemetry.vehicle_state.position_local_ned_m
+velocity = telemetry.vehicle_state.velocity_local_ned_mps
+attitude = telemetry.vehicle_state.attitude_quaternion
+body_rates = telemetry.vehicle_state.body_rates_frd_rps
 imu_accel = telemetry.imu.acceleration_body_frd_mps2 if telemetry.imu else None
 ```
 
 ### Estimator/Flight-State Shape
 
-`OdometryState` is the normalized state emitted by flight code such as `VehicleState`:
+`VehicleState` is the normalized state emitted by `VehicleStateEstimator`:
 
 ```text
-OdometryState
+VehicleState
   sim_time_ns
   position_local_ned_m
   velocity_local_ned_mps
@@ -240,17 +237,17 @@ OdometryState
 
 The boundary is intentional:
 
-- `MavlinkOdometry` moves telemetry from the simulator through the MAVLink client.
-- `VehicleState.ingest_mavlink_odometry()` accepts that raw MAVLink odometry at the boundary.
-- `VehicleState` stores and outputs `OdometryState`.
+- `MavlinkHighresImu` moves raw IMU telemetry from the simulator through the MAVLink client.
+- `VehicleStateEstimator.initialize_from_imu()` infers initial roll/pitch from accelerometer gravity direction.
+- `VehicleStateEstimator.update_from_imu()` integrates acceleration and gyro samples into `VehicleState`.
 
-This keeps simulator transport data separate from estimator output.
+This keeps simulator transport data separate from estimator output while avoiding any dependency on a simulator pose message.
 
 ## Vehicle State
 
-`src/sensing/odometry/state.py` owns `VehicleState`.
+`src/sensing/odometry/state.py` owns `VehicleStateEstimator`.
 
-`VehicleState` is the mutable state holder used by the live loop. It stores:
+`VehicleStateEstimator` is the mutable state estimator used by the live loop. It stores:
 
 - Local NED position and velocity.
 - Attitude quaternion.
@@ -261,24 +258,26 @@ This keeps simulator transport data separate from estimator output.
 
 Important methods:
 
-- `reset(odometry: OdometryState | None = None) -> OdometryState`
+- `reset(vehicle_state: VehicleState | None = None) -> VehicleState`
   - Clears internal state.
-  - Can seed from an already-normalized `OdometryState`.
-- `update_odometry(odometry: OdometryState) -> OdometryState`
+  - Can seed from an already-normalized `VehicleState`.
+- `update_state(vehicle_state: VehicleState) -> VehicleState`
   - Updates state from normalized estimator data.
-- `ingest_mavlink_odometry(odometry: MavlinkOdometry) -> OdometryState`
-  - Converts MAVLink telemetry into the normalized internal/output state.
-  - This is the MAVLink boundary for the estimator.
-- `update_from_imu(latest_imu: MavlinkHighresImu) -> OdometryState`
+- `update_telemetry(telemetry: MavlinkTelemetry | None) -> MavlinkTelemetry | None`
+  - Updates from raw telemetry and returns flight-facing telemetry with `vehicle_state` set.
+- `initialize_from_imu(latest_imu: MavlinkHighresImu) -> VehicleState`
+  - Uses accelerometer gravity direction to initialize attitude.
+  - Leaves yaw at zero because yaw is not observable from accelerometer alone.
+- `update_from_imu(latest_imu: MavlinkHighresImu) -> VehicleState`
   - Updates acceleration and body rates.
   - Integrates acceleration and gyro deltas over time after the first IMU sample.
 
-The live loop initializes `VehicleState` once odometry is available, then applies IMU updates on subsequent cycles:
+`main.py` owns the live `VehicleStateEstimator` instance and updates it from raw client telemetry:
 
 ```python
-vehicle_state.reset()
-vehicle_state.ingest_mavlink_odometry(telemetry.odometry)
-vehicle_state.update_from_imu(mavlink_client.latest_imu)
+raw_telemetry = mavlink_client.get_telemetry()
+telemetry = vehicle_state_estimator.update_telemetry(raw_telemetry)
+estimated_state = vehicle_state_estimator.state
 ```
 
 ## Vision Input
@@ -363,7 +362,7 @@ Key pieces:
   - Typed representation of gates detected in a vision frame.
 - `GatePoseEstimator`
   - Converts camera-local gate observations into local NED gate records.
-  - Uses vehicle position and attitude from `telemetry.odometry`.
+  - Uses vehicle position and attitude from `telemetry.vehicle_state`.
   - Applies camera optical-to-body and body-to-NED transforms.
 - `GateMap`
   - Maintains known gates.
@@ -375,13 +374,13 @@ Key pieces:
   - Selects the nearest confident, not-yet-crossed gate.
   - Prefers `position_relative_ned_m` when available.
 
-The simulator can send authoritative track gates through MAVLink encapsulated data. `MavlinkClient.populate_gate_map()` converts those `TrackGate` records into `GateRecord` entries. The live loop reseeds the map when track-gate data changes.
+The simulator can send authoritative track gates through MAVLink encapsulated data. `GateMap.seed_from_track_gates()` converts those `TrackGate` records into `GateRecord` entries and reseeds the map when track-gate data changes.
 
 When vision frames are processed, `GatePoseEstimator.update_gate_map_from_observation()` maps observed gates into local NED using:
 
 ```text
-telemetry.odometry.position_local_ned_m
-telemetry.odometry.attitude_quaternion
+telemetry.vehicle_state.position_local_ned_m
+telemetry.vehicle_state.attitude_quaternion
 ```
 
 The hot-start planner then creates a path from the gate map for logging/inspection.
@@ -396,9 +395,9 @@ src/core/control/body_rate_guidance/controller.py
 
 The controller consumes:
 
-- Current position from `telemetry.odometry.position_local_ned_m`.
-- Current velocity from `telemetry.odometry.velocity_local_ned_mps`.
-- Current attitude from `telemetry.odometry.attitude_quaternion`.
+- Current position from `telemetry.vehicle_state.position_local_ned_m`.
+- Current velocity from `telemetry.vehicle_state.velocity_local_ned_mps`.
+- Current attitude from `telemetry.vehicle_state.attitude_quaternion`.
 - A selected or held gate target from `GateTargetTracker`.
 
 It outputs a command payload shaped for MAVLink attitude target commands:
@@ -412,7 +411,7 @@ source
 phase / guidance details
 ```
 
-`MavlinkClient.stream_gate_body_rate_command()` builds the command and immediately sends it through `send_attitude_target()`.
+`main.py` builds the command with `BodyRateGuidanceController` and passes the finished payload to `MavlinkClient.send_attitude_target()`.
 
 If no active target exists, the controller emits a hold/no-target command. During shutdown, `main.py` sends a body-rate stop command before closing the MAVLink connection.
 
@@ -485,10 +484,10 @@ Each telemetry sample contains the cycle/timing context and the serialized `Mavl
 sample.telemetry.imu
 ```
 
-Odometry data is logged through:
+Vehicle state data is logged through:
 
 ```text
-sample.telemetry.odometry
+sample.telemetry.vehicle_state
 ```
 
 ### `gate_map.json`
@@ -526,7 +525,7 @@ gate_map.json
 frames.jsonl
 ```
 
-The app normalizes telemetry for plotting in `src/app/data.py`. That normalization copies fields from `telemetry.odometry` into legacy top-level plotting keys such as `position_local_ned_m`, `velocity_local_ned_mps`, and `attitude_quaternion`. This is a viewer compatibility layer for old and new logs; it is not the runtime telemetry contract.
+The app normalizes telemetry for plotting in `src/app/data.py`. That normalization copies fields from `telemetry.vehicle_state` into legacy top-level plotting keys such as `position_local_ned_m`, `velocity_local_ned_mps`, and `attitude_quaternion`. It also reads older `telemetry.odometry` logs for compatibility; that compatibility layer is not the runtime telemetry contract.
 
 Frame images are served by:
 
@@ -536,36 +535,16 @@ Frame images are served by:
 
 The route verifies the requested run is discoverable before serving the JPEG file with Flask `send_file(..., conditional=True)`.
 
-## Tests
-
-Run all tests from `Flight/`:
-
-```powershell
-$env:PYTHONPATH = "src"
-python -m pytest -q
-```
-
-Current test coverage includes:
-
-- MAVLink message parsing/cache behavior.
-- Runtime helper behavior in `main.py`.
-- `VehicleState` IMU integration and MAVLink odometry ingestion boundary.
-- Body-rate guidance, hover, forward velocity, and mode helpers.
-- Vision stream packet reassembly and frame persistence.
-- Vision/perception/gate-map contract tests.
-- Logger sidecar output.
-- Dash run viewer and live frame serving behavior.
 
 ## Important Current Contracts
 
 - The external simulator is authoritative for MAVLink telemetry.
-- `ODOMETRY` is the authoritative pose/velocity/attitude telemetry message.
+- The active MAVLink UDP stream provides `HEARTBEAT`, `HIGHRES_IMU`, `ACTUATOR_OUTPUT_STATUS`, race-status `ENCAPSULATED_DATA`, and `TIMESYNC` replies.
 - `HIGHRES_IMU` is the authoritative raw IMU telemetry message.
-- `MavlinkClient.get_latest_telemetry()` returns `None` until `ODOMETRY` exists.
-- `MavlinkTelemetry` carries raw MAVLink-shaped data and does not fabricate normalized position/attitude fields.
-- Flight/state-estimation code emits `OdometryState`, not `MavlinkOdometry`.
-- `VehicleState.ingest_mavlink_odometry()` is the explicit boundary from simulator telemetry into flight-state estimation.
-- Runtime code should read MAVLink position/velocity/attitude through `telemetry.odometry`.
+- `MavlinkClient.get_telemetry()` returns raw telemetry once `HIGHRES_IMU` is available; its `vehicle_state` field is unset.
+- `VehicleStateEstimator.update_telemetry(telemetry)` is the state-estimation boundary and returns telemetry with `vehicle_state` set.
+- The flight-facing telemetry used inside `main.py` carries the local `VehicleState` estimate from `VehicleStateEstimator`, not a MAVLink odometry packet.
+- Runtime code should read estimated position/velocity/attitude through `telemetry.vehicle_state`.
 - Runtime code should read raw IMU through `telemetry.imu` or `mavlink_client.latest_imu`.
 - The Dash viewer may normalize logs for plotting, but that does not define the live runtime contract.
 
@@ -583,7 +562,7 @@ The following are intentionally no longer part of the active code path:
 - `MavlinkTelemetry.attitude_sample`.
 - `MavlinkTelemetry.local_position`.
 - Compatibility construction of `MavlinkTelemetry` from normalized position/velocity/attitude args.
-- Helpers that converted `OdometryState` back into `MavlinkTelemetry`.
+- Helpers that converted estimator state back into `MavlinkTelemetry`.
 
 ## Current Limitations and Follow-Up Areas
 

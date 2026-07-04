@@ -69,8 +69,8 @@ def select_guidance_gate(
 ) -> GateRecord | None:
     """Pick the nearest not-yet-crossed gate, preferring drone-relative NED vectors."""
 
-    odometry = getattr(telemetry, "odometry", None)
-    position = None if odometry is None else odometry.position_local_ned_m
+    vehicle_state = getattr(telemetry, "vehicle_state", None)
+    position = None if vehicle_state is None else vehicle_state.position_local_ned_m
     if position is None:
         return None
     current = np.asarray(position, dtype=float)

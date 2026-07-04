@@ -1,7 +1,7 @@
 """Functional local-NED odometry utilities."""
 
-from .state import VehicleState
+from .state import VehicleStateEstimator
 
 __all__ = [
-    "VehicleState",
+    "VehicleStateEstimator",
 ]

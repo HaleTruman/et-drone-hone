@@ -27,6 +27,7 @@ class GateMap:
         authoritative_association_distance_m: float = 18.0,
     ):
         self._gates: dict[str, GateRecord] = {}
+        self._track_gate_signature: tuple | None = None
         self.association_distance_m = float(association_distance_m)
         self.min_observations = max(1, int(min_observations))
         self.authoritative_association_distance_m = float(authoritative_association_distance_m)
@@ -48,9 +49,73 @@ class GateMap:
 
     def clear(self) -> None:
         self._gates.clear()
+        self._track_gate_signature = None
 
     def get_gate(self, gate_id: str) -> GateRecord | None:
         return self._gates.get(gate_id)
+
+    def seed_from_track_gates(self, track_gates, *, target_tracker=None, origin_local_ned_m=None) -> bool:
+        if not track_gates:
+            return False
+        signature = tuple(
+            (
+                gate.gate_id,
+                tuple(round(float(value), 4) for value in gate.position_local_ned_m),
+                tuple(round(float(value), 4) for value in gate.quaternion),
+            )
+            for gate in track_gates
+        )
+        if signature != self._track_gate_signature:
+            self._gates.clear()
+            for sequence, gate in enumerate(track_gates):
+                self.add_or_update_gate(
+                    GateRecord(
+                        gate_id=str(gate.gate_id),
+                        position_local_ned_m=gate.position_local_ned_m,
+                        position_relative_ned_m=self._relative_position_from_origin(
+                            gate.position_local_ned_m,
+                            origin_local_ned_m,
+                        ),
+                        quaternion=gate.quaternion,
+                        confidence=1.0,
+                        sequence=sequence,
+                        source="track",
+                        width_m=gate.width_m,
+                        height_m=gate.height_m,
+                    )
+                )
+            if target_tracker is not None:
+                target_tracker.clear()
+            self._track_gate_signature = signature
+            return True
+        self.update_track_relative_positions(origin_local_ned_m)
+        return False
+
+    def update_track_relative_positions(self, origin_local_ned_m) -> bool:
+        if origin_local_ned_m is None:
+            return False
+        changed = False
+        for gate_id, gate in list(self._gates.items()):
+            if gate.source != "track":
+                continue
+            relative = self._relative_position_from_origin(gate.position_local_ned_m, origin_local_ned_m)
+            if relative is not None and gate.position_relative_ned_m != relative:
+                self._gates[gate_id] = replace(gate, position_relative_ned_m=relative)
+                changed = True
+        return changed
+
+    def active_track_gate_record(self, race_status, track_gates) -> GateRecord | None:
+        if race_status is None or not self.has_authoritative_gates():
+            return None
+        active_gate_index = int(race_status.active_gate_index)
+        for track_gate in track_gates:
+            if int(track_gate.gate_id) == active_gate_index:
+                gate = self.get_gate(str(track_gate.gate_id))
+                return gate if gate is not None and gate.position_relative_ned_m is not None else None
+        if 0 <= active_gate_index < len(track_gates):
+            gate = self.get_gate(str(track_gates[active_gate_index].gate_id))
+            return gate if gate is not None and gate.position_relative_ned_m is not None else None
+        return None
 
     def get_next_gates(self, n: int) -> list[GateRecord]:
         remaining = [
@@ -195,4 +260,11 @@ class GateMap:
         relative = old_weight * np.asarray(current.position_relative_ned_m) + new_weight * np.asarray(
             observed.position_relative_ned_m
         )
+        return tuple(float(value) for value in relative)
+
+    @staticmethod
+    def _relative_position_from_origin(position_local_ned_m, origin_local_ned_m) -> tuple[float, float, float] | None:
+        if origin_local_ned_m is None:
+            return None
+        relative = np.asarray(position_local_ned_m, dtype=float) - np.asarray(origin_local_ned_m, dtype=float)
         return tuple(float(value) for value in relative)

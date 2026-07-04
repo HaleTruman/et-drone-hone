@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import socket
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -60,6 +61,7 @@ class VisionStreamReceiver:
         self._running.set()
         self._thread = threading.Thread(target=self._vision_loop, name="vision-rx", daemon=True)
         self._thread.start()
+        print("Vision receiver started...")
 
     def process_packet(self, packet: bytes) -> VisionFrame | None:
         if len(packet) < VISION_HEADER_SIZE:
@@ -111,9 +113,23 @@ class VisionStreamReceiver:
         with self._lock:
             return self._frames.popleft() if self._frames else None
 
+    def wait_until_receiving(self, *, timeout_s: float, idle_sleep_s: float = 0.02) -> VisionFrame:
+        deadline_s = time.perf_counter() + float(timeout_s)
+        while time.perf_counter() < deadline_s:
+            with self._lock:
+                if self._frames:
+                    return self._frames[0]
+            time.sleep(idle_sleep_s)
+        raise TimeoutError("No vision frame received before timeout.")
+
     def queue_frame(self, frame: VisionFrame) -> None:
         with self._lock:
             self._frames.append(frame)
+
+    def clear_buffer(self) -> None:
+        with self._lock:
+            self._frames.clear()
+            self._partial_frames.clear()
 
     def snapshot(self) -> dict[str, Any]:
         return {
