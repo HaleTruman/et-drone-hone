@@ -37,6 +37,7 @@ GATE_ASSOCIATION_DISTANCE_M = 6.0
 GATE_MIN_OBSERVATIONS = 2
 HOVER_THRUST = 0.50
 LEVEL_QUATERNION = (1.0, 0.0, 0.0, 0.0)
+TAKEOFF = False
 
 def main() -> int:
 
@@ -58,7 +59,7 @@ def main() -> int:
         }
     )
 
-    print(f"Initializing run at {run_dir}...")
+    print(f"Starting run at {run_dir}...")
     print(f">> Inner loop rate {INNER_LOOP_HZ}")
     print(f">> Outer loop rate {OUTER_LOOP_HZ}")
 
@@ -83,6 +84,8 @@ def main() -> int:
 
     started_s = time.perf_counter()
     next_inner_cycle_s = started_s
+    
+    imu_data_t = None
     telemetry = None
     latest_frame = None
 
@@ -118,16 +121,20 @@ def main() -> int:
             vision_rx.clear_buffer()
             gate_target_tracker.clear()
             gate_map.clear()
-
+            
             reset_countdown_deadline_s = time.perf_counter() + RESET_WAIT_S
 
             # before the countdown deadline has been reached
             while time.perf_counter() < reset_countdown_deadline_s:
                 loop_started_s = time.perf_counter()
-                latest_imu = mavlink_client.latest_imu
-                vehicle_state = vehicle_state_estimator.update(imu=latest_imu)
+                imu_data_t = mavlink_client.latest_imu
 
+                if not vehicle_state_estimator.initialized and imu_data_t:
+                    vehicle_state_estimator.initialize_from_imu(imu_data_t=imu_data_t)
+
+                vehicle_state = vehicle_state_estimator.update(imu_data_t=imu_data_t)
                 latest_frame = vision_rx.get_next_frame()
+
                 try:
                     # init gate map
                     observation = vision_perception.process_vision_frame(frame=latest_frame)
@@ -193,13 +200,17 @@ def main() -> int:
 
             # inner loop: ingest telemetry and update state
             telemetry = mavlink_client.get_telemetry()
-            latest_imu = mavlink_client.latest_imu
-            vehicle_state = vehicle_state_estimator.update(imu=latest_imu)
+            imu_data_t = mavlink_client.latest_imu
+            vehicle_state = vehicle_state_estimator.update(imu_data_t=imu_data_t)
 
             if inner_cycle % int(INNER_LOOP_HZ) == 0:
                 print(
-                    f"Vehicle state position - {vehicle_state.position_local_ned_m if telemetry else 'No Telemetry yet'}",
+                    (f"Vehicle state position - {vehicle_state.position_local_ned_m if telemetry else 'No Telemetry yet'} -- " f"Vehicle state acceleration (local NED) - {vehicle_state_estimator.state.acceleration_local_ned_mps2}"),
                     flush=True,
+                )
+                print(
+                    (f"Vehicle attitude quat local NED - {vehicle_state_estimator.attitude_euler_local_ned(unit="deg")}"),
+                    flush=True
                 )
 
             if telemetry is not None:
@@ -294,31 +305,33 @@ def main() -> int:
             if telemetry is None:
                 command_result = {"emitted": False, "reason": "missing_highres_imu"}
             else:
-                payload = body_rate_guidance.build_attitude_command(
-                    quaternion=LEVEL_QUATERNION,
-                    thrust=HOVER_THRUST,
-                    source="main_level_attitude_hover",
-                    phase="hover",
-                    metadata={
-                        "vehicle_state_sim_time_ns": int(vehicle_state.sim_time_ns),
-                        "target_pitch_rad": 0.0,
-                    },
-                )
-                # mavlink_client.send_attitude_target(payload)
-                test_motor_cmd = 0.274
-                mavlink_client.send_motor_target([test_motor_cmd] * 4)
+                command_result = None
+                if TAKEOFF:
+                    payload = body_rate_guidance.build_attitude_command(
+                        quaternion=LEVEL_QUATERNION,
+                        thrust=HOVER_THRUST,
+                        source="main_level_attitude_hover",
+                        phase="hover",
+                        metadata={
+                            "vehicle_state_sim_time_ns": int(vehicle_state.sim_time_ns),
+                            "target_pitch_rad": 0.0,
+                        },
+                    )
+                    # mavlink_client.send_attitude_target(payload)
+                    test_motor_cmd = 0.274
+                    mavlink_client.send_motor_target([test_motor_cmd] * 4)
 
-                command_result = {
-                    "emitted": True,
-                    "reason": "streamed_level_attitude_hover",
-                    "command": payload,
-                    "target": None,
-                    "target_age_s": None,
-                    "hover": {
-                        "thrust": HOVER_THRUST,
-                        "quaternion": LEVEL_QUATERNION,
-                    },
-                }
+                    command_result = {
+                        "emitted": True,
+                        "reason": "streamed_level_attitude_hover",
+                        "command": payload,
+                        "target": None,
+                        "target_age_s": None,
+                        "hover": {
+                            "thrust": HOVER_THRUST,
+                            "quaternion": LEVEL_QUATERNION,
+                        },
+                    }
 
             # timing
             next_inner_cycle_s += inner_period_s

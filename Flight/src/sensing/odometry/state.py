@@ -1,12 +1,13 @@
 """Stateful vehicle state estimator."""
 
+import math
 import time
 from collections.abc import Callable
 
 import numpy as np
 
 from core.coordinates import quat_wxyz, vec3
-from core.coordinates import normalize_quaternion, rotate_vector
+from core.coordinates import euler_from_quaternion, normalize_quaternion, rotate_vector
 from core.schemas import MavlinkHighresImu, MavlinkTelemetry, QuatWxyz, Vec3, VehicleState
 
 
@@ -20,6 +21,7 @@ class VehicleStateEstimator:
 
     def __init__(self, vehicle_state: VehicleState | None = None):
         self.sim_time_ns = 0
+        self.initialized = False
         self.position_local_ned_m: Vec3 = ZERO_VEC3
         self.velocity_local_ned_mps: Vec3 = ZERO_VEC3
         self.attitude_quaternion: QuatWxyz = IDENTITY_QUATERNION
@@ -41,6 +43,16 @@ class VehicleStateEstimator:
             body_rates_frd_rps=self.angular_velocity_body_frd_rps,
             acceleration_local_ned_mps2=self.acceleration_local_ned_mps2,
         )
+
+    def attitude_euler_local_ned(self, unit: str = "rad") -> Vec3:
+        """Return current local-NED attitude as roll, pitch, yaw."""
+
+        euler_rad = euler_from_quaternion(self.attitude_quaternion)
+        if unit == "rad":
+            return vec3(euler_rad)
+        if unit == "deg":
+            return vec3(math.degrees(value) for value in euler_rad)
+        raise ValueError('unit must be "rad" or "deg"')
 
     def reset(self, vehicle_state: VehicleState | None = None) -> VehicleState:
         self.sim_time_ns = 0
@@ -65,10 +77,10 @@ class VehicleStateEstimator:
         self.acceleration_local_ned_mps2 = vec3(vehicle_state.acceleration_local_ned_mps2)
         return self.state
 
-    def update(self, imu: MavlinkHighresImu | None) -> VehicleState | None:
-        if imu is None:
+    def update(self, imu_data_t: MavlinkHighresImu | None) -> VehicleState | None:
+        if imu_data_t is None:
             return None
-        return self.update_from_imu(imu)
+        return self.update_from_imu(imu_data_t)
 
     def update_telemetry(self, telemetry: MavlinkTelemetry | None) -> MavlinkTelemetry | None:
         vehicle_state = self.update(None if telemetry is None else telemetry.imu)
@@ -130,32 +142,36 @@ class VehicleStateEstimator:
             time.sleep(idle_sleep_s)
         raise TimeoutError("Vehicle state did not remain stable before timeout.")
 
-    def initialize_from_imu(self, latest_imu: MavlinkHighresImu) -> VehicleState:
+    def initialize_from_imu(self, imu_data_t: MavlinkHighresImu) -> VehicleState:
         """Initialize attitude from accelerometer gravity direction and cache the sample."""
 
-        self.sim_time_ns = int(latest_imu.time_boot_us) * 1_000
-        self.last_imu_time_boot_us = int(latest_imu.time_boot_us)
-        self.acceleration_body_frd_mps2 = vec3(latest_imu.acceleration_body_frd_mps2)
-        self.angular_velocity_body_frd_rps = vec3(latest_imu.gyro_body_frd_rps)
+        self.sim_time_ns = int(imu_data_t.time_boot_us) * 1_000
+        self.last_imu_time_boot_us = int(imu_data_t.time_boot_us)
+        self.acceleration_body_frd_mps2 = vec3(imu_data_t.acceleration_body_frd_mps2)
+        self.angular_velocity_body_frd_rps = vec3(imu_data_t.gyro_body_frd_rps)
         self.attitude_quaternion = _attitude_from_accelerometer(self.acceleration_body_frd_mps2)
         self.acceleration_local_ned_mps2 = vec3(
             np.asarray(rotate_vector(self.attitude_quaternion, self.acceleration_body_frd_mps2), dtype=float)
             + np.asarray(GRAVITY_LOCAL_NED_MPS2, dtype=float)
         )
+        self._set_initialized()
         return self.state
+    
+    def _set_initialized(self):
+        self.initialized = True
 
-    def update_from_imu(self, latest_imu: MavlinkHighresImu) -> VehicleState:
+    def update_from_imu(self, imu_data_t: MavlinkHighresImu) -> VehicleState:
         previous_time_boot_us = self.last_imu_time_boot_us
         previous_velocity = self.velocity_local_ned_mps
         previous_angular_velocity = self.angular_velocity_body_frd_rps
 
         if previous_time_boot_us is None:
-            return self.initialize_from_imu(latest_imu)
+            return self.initialize_from_imu(imu_data_t)
 
-        self.sim_time_ns = int(latest_imu.time_boot_us) * 1_000
-        self.last_imu_time_boot_us = int(latest_imu.time_boot_us)
-        self.acceleration_body_frd_mps2 = vec3(latest_imu.acceleration_body_frd_mps2)
-        self.angular_velocity_body_frd_rps = vec3(latest_imu.gyro_body_frd_rps)
+        self.sim_time_ns = int(imu_data_t.time_boot_us) * 1_000
+        self.last_imu_time_boot_us = int(imu_data_t.time_boot_us)
+        self.acceleration_body_frd_mps2 = vec3(imu_data_t.acceleration_body_frd_mps2)
+        self.angular_velocity_body_frd_rps = vec3(imu_data_t.gyro_body_frd_rps)
         acceleration_local_ned = np.asarray(
             rotate_vector(
                 self.attitude_quaternion,
