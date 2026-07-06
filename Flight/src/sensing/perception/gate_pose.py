@@ -4,6 +4,7 @@ import numpy as np
 
 from .gate_map import GateMap, GateRecord
 from .vision_observation import VisionGateObservation, VisionObservation
+from core.schemas import VehicleState
 
 
 class GatePoseEstimator:
@@ -61,12 +62,10 @@ class GatePoseEstimator:
     def update_gate_map_from_observation(
         self,
         observation: VisionObservation,
-        *,
-        telemetry: Any,
+        vehicle_state: VehicleState,
         gate_map: GateMap,
         allow_new_gates: bool = True,
     ) -> list[GateRecord]:
-        vehicle_state = getattr(telemetry, "vehicle_state", None)
         vehicle_position = None if vehicle_state is None else vehicle_state.position_local_ned_m
         if vehicle_position is None:
             raise ValueError("Telemetry must include position_local_ned_m to map camera-local gates.")

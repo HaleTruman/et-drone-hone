@@ -97,14 +97,14 @@ def main() -> int:
         mavlink_client.subscribe_telemetry()
         logger.log_event("mavlink_connected", bridge=mavlink_client.snapshot())
 
-        startup_telemetry = mavlink_client.wait_until_receiving(timeout_s=STARTUP_DATA_TIMEOUT_S)
-        logger.log_event("mavlink_receiving", sim_time_ns=startup_telemetry.sim_time_ns)
+        telemetry = mavlink_client.wait_until_receiving(timeout_s=STARTUP_DATA_TIMEOUT_S)
+        logger.log_event("mavlink_receiving", sim_time_ns=telemetry.sim_time_ns)
 
-        startup_frame = vision_rx.wait_until_receiving(timeout_s=STARTUP_DATA_TIMEOUT_S)
+        frame = vision_rx.wait_until_receiving(timeout_s=STARTUP_DATA_TIMEOUT_S)
         logger.log_event(
             "vision_receiving",
-            frame_id=startup_frame.frame_id,
-            sim_time_ns=startup_frame.sim_time_ns,
+            frame_id=frame.frame_id,
+            sim_time_ns=frame.sim_time_ns,
             receiver=vision_rx.snapshot(),
         )
 
@@ -124,14 +124,34 @@ def main() -> int:
             # before the countdown deadline has been reached
             while time.perf_counter() < reset_countdown_deadline_s:
                 loop_started_s = time.perf_counter()
+                latest_imu = mavlink_client.latest_imu
+                vehicle_state = vehicle_state_estimator.update(imu=latest_imu)
 
-                raw_telemetry = mavlink_client.get_telemetry()
-                telemetry = vehicle_state_estimator.update_telemetry(raw_telemetry)
                 latest_frame = vision_rx.get_next_frame()
+                try:
+                    # init gate map
+                    observation = vision_perception.process_vision_frame(frame=latest_frame)
+                    gates = observation.gates
 
-                # init gate map
-                # init hot start path plan
+                    # init hot start path plan
+                    if vehicle_state is not None and gates:
+                        gate_pose_estimator.update_gate_map_from_observation(
+                            observation,
+                            vehicle_state=vehicle_state,
+                            gate_map=gate_map,
+                        )
+                        hot_start_path = hot_start_planner.plan_from_gate_map(gate_map)
 
+                        logger.log_planned_path(
+                            hot_start_path.to_log_dict(origin_local_ned_m=vehicle_state.position_local_ned_m),
+                            cycle=inner_cycle,
+                            planner="hot_start_reset",
+                        )
+
+                except Exception as error:
+                    print(error)
+
+                # timing
                 next_inner_cycle_s += inner_period_s
                 sleep_s = max(0.0, next_inner_cycle_s - time.perf_counter())
 
@@ -143,6 +163,7 @@ def main() -> int:
 
         ## DO NOT RESET ON START
         else:
+
             telemetry = vehicle_state_estimator.wait_for_update(mavlink_client.get_telemetry, timeout_s=HEARTBEAT_TIMEOUT_S)
 
         if ARM_ON_START:
@@ -170,10 +191,10 @@ def main() -> int:
             loop_started_s = time.perf_counter()
             scheduled_s = next_inner_cycle_s
 
-            # inner loop: ingest telemetry and send the latest attitude target
-            raw_telemetry = mavlink_client.get_telemetry()
-            telemetry = vehicle_state_estimator.update_telemetry(raw_telemetry)
-            vehicle_state = vehicle_state_estimator.state
+            # inner loop: ingest telemetry and update state
+            telemetry = mavlink_client.get_telemetry()
+            latest_imu = mavlink_client.latest_imu
+            vehicle_state = vehicle_state_estimator.update(imu=latest_imu)
 
             if inner_cycle % int(INNER_LOOP_HZ) == 0:
                 print(
@@ -209,16 +230,16 @@ def main() -> int:
                     # frame_log["gate_count"] = len(observation.gates)
                     # frame_log["observation"] = observation.to_controller_payload(output_dir="memory")
 
-                    # if telemetry is not None and telemetry.vehicle_state is not None and telemetry.vehicle_state.position_local_ned_m is not None:
+                    # if latest_imu is not None and vehicle_state is not None and vehicle_state.position_local_ned_m is not None:
                     #     mapped_gates = gate_pose_estimator.update_gate_map_from_observation(
                     #         observation,
-                    #         telemetry=telemetry,
+                    #         vehicle_state=vehicle_state,
                     #         gate_map=gate_map,
                     #         allow_new_gates=not gate_map.has_authoritative_gates(),
                     #     )
                     #     hot_start_path = hot_start_planner.plan_from_gate_map(gate_map)
                     #     hot_start_log = hot_start_path.to_log_dict(
-                    #         origin_local_ned_m=telemetry.vehicle_state.position_local_ned_m,
+                    #         origin_local_ned_m=vehicle_state.position_local_ned_m,
                     #     )
                     #     frame_log["hot_start_path"] = hot_start_log
                     #     logger.log_planned_path(
@@ -263,14 +284,15 @@ def main() -> int:
 
                     # else:
                     #     frame_log["mapping_status"] = "skipped_no_telemetry"
-                    # logger.log_vision_frame(frame_log, cycle=cycle, status="processed")
+                    
+                    # logger.log_vision_frame(frame_log, cycle=outer_cycle, status="processed")
                 except Exception as error:  # noqa: BLE001
                     pass
                     # logger.log_vision_frame(frame_log, cycle=inner_cycle, status="failed", error=str(error))
                     # print(f"vision frame={latest_frame.frame_id} failed: {error}", flush=True)
 
             if telemetry is None:
-                command_result = {"emitted": False, "reason": "missing_highres_imu_for_hover_command"}
+                command_result = {"emitted": False, "reason": "missing_highres_imu"}
             else:
                 payload = body_rate_guidance.build_attitude_command(
                     quaternion=LEVEL_QUATERNION,
