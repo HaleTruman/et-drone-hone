@@ -354,7 +354,7 @@ That means the live loop currently runs CNN + regressor and returns `VisionObser
 
 ## Gate Mapping and Target Selection
 
-Gate-related code lives under `src/sensing/perception/`.
+Gate perception code lives under `src/sensing/perception/`; persistent gate map state lives under `src/sensing/gates/`.
 
 Key pieces:
 
@@ -364,7 +364,7 @@ Key pieces:
   - Converts camera-local gate observations into local NED gate records.
   - Uses vehicle position and attitude from `telemetry.vehicle_state`.
   - Applies camera optical-to-body and body-to-NED transforms.
-- `GateMap`
+- `GateMap` (`src/sensing/gates/gate_map.py`)
   - Maintains known gates.
   - Can be seeded from authoritative simulator track gates.
   - Can merge vision observations into existing gate records.

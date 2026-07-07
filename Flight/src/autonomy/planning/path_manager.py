@@ -2,7 +2,7 @@ from collections.abc import Callable
 
 import numpy as np
 
-from sensing.perception.gate_map import GateMap
+from sensing.gates import GateMap
 
 
 class PathManager:

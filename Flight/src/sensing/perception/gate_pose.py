@@ -2,7 +2,7 @@ from typing import Any
 
 import numpy as np
 
-from .gate_map import GateMap, GateRecord
+from sensing.gates import GateMap, GateRecord
 from .vision_observation import VisionGateObservation, VisionObservation
 from core.schemas import VehicleState
 

@@ -4,7 +4,7 @@ from typing import Any
 
 import numpy as np
 
-from sensing.perception.gate_map import GateMap, GateRecord
+from sensing.gates import GateMap, GateRecord
 
 
 @dataclass(frozen=True)

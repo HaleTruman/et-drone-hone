@@ -6,7 +6,8 @@ import time
 from autonomy.planning import HotStartPlanner
 from core.control.body_rate_guidance import BodyRateGuidanceController
 from core.logging import Logger
-from sensing.perception import GateMap, GatePoseEstimator, GateTargetTracker, select_guidance_gate
+from sensing.gates import GateMap
+from sensing.perception import GatePoseEstimator, GateTargetTracker, select_guidance_gate
 from sensing.telemetry import MavlinkClient
 from sensing.vision import VisionStreamReceiver
 from sensing.odometry import VehicleStateEstimator

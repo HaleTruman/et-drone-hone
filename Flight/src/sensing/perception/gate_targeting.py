@@ -3,7 +3,7 @@ from typing import Any
 
 import numpy as np
 
-from .gate_map import GateRecord
+from sensing.gates import GateRecord
 
 
 @dataclass(frozen=True)
