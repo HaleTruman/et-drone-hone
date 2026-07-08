@@ -42,7 +42,7 @@ GATE_MIN_OBSERVATIONS = 2
 HOVER_THRUST = 0.50
 MOTOR_HOVER_COMMAND = 0.274
 LEVEL_QUATERNION = (1.0, 0.0, 0.0, 0.0)
-TAKEOFF = False
+ALLOW_FLIGHT = False
 
 def main() -> int:
 
@@ -75,6 +75,7 @@ def main() -> int:
     gate_pose_estimator = GatePoseEstimator()
     gate_map = GateMap()
 
+    # TODO: create new hot start path schema that contains a control state rather than just a raw path. i.e we need position (local NED) and also a control state (quat/thrust)
     hot_start_planner = HotStartPlanner()
 
     # test path
@@ -99,7 +100,6 @@ def main() -> int:
             max_thrust=0.32,
         ),
     )
-    attitude_motor_controller = AttitudeMotorController()
 
     inner_cycle = 0
     outer_cycle = 0
@@ -310,30 +310,37 @@ def main() -> int:
                         # logger.log_vision_frame(frame_log, cycle=inner_cycle, status="failed", error=str(error))
                         # print(f"vision frame={latest_frame.frame_id} failed: {error}", flush=True)
 
-            if telemetry is None:
-                command_result = {"emitted": False, "reason": "missing_highres_imu"}
+            if imu_data_t is None:
+                command_result = {
+                    "emitted": False,
+                    "sim_time_ns": telemetry.sim_time_ns,
+                    "reason": "missing_highres_imu"
+                }
+
             else:
                 command_result = None
-                if TAKEOFF:
+                if ALLOW_FLIGHT:
                     if CONTROL_METHOD == "carrot_motor_test":
                         if latest_carrot_attitude_target is None:
-                            command_result = {"emitted": False, "reason": "missing_outer_loop_carrot_target"}
+                            command_result = {
+                                "emitted": False, 
+                                "sim_time_ns": telemetry.sim_time_ns, 
+                                "reason": "missing_outer_loop_carrot_target"
+                            }
+
                         else:
-                            motor_commands = attitude_motor_controller.compute_motor_commands(
-                                vehicle_state,
-                                latest_carrot_attitude_target,
-                            )
-                            mavlink_client.send_motor_target(motor_commands)
+                            # TODO: Convert to SET_ATTITUDE_TARGET MAVLink control
 
                             command_result = {
                                 "emitted": True,
+                                "sim_time_ns": telemetry.sim_time_ns,
                                 "reason": "carrot_motor_test_inner_attitude",
                                 "attitude_target": latest_carrot_attitude_target,
-                                "motor_commands": [float(value) for value in motor_commands],
                                 "path_waypoints_local_ned_m": [
                                     [float(axis) for axis in waypoint]
                                     for waypoint in path_manager.get_waypoints()
                                 ],
+                                "inner_loop_cycle": inner_cycle,
                                 "outer_loop_cycle": outer_cycle,
                             }
 
@@ -360,6 +367,8 @@ def main() -> int:
 
             logger.log_cycle(
                 cycle=inner_cycle,
+                inner_cycle=inner_cycle,
+                outer_cycle=outer_cycle,
                 sim_time_ns=telemetry.sim_time_ns if telemetry else None,
                 wall_elapsed_ms=(loop_started_s - started_s) * 1000.0,
                 loop_elapsed_ms=loop_elapsed_ms,
@@ -402,6 +411,9 @@ def main() -> int:
 
     except KeyboardInterrupt:
         logger.log_event("interrupted")
+
+    except Exception:
+        print("Some error occured.")
 
     # SHUTDOWN
     finally:
