@@ -54,8 +54,8 @@ class VehicleStateEstimator:
             return vec3(math.degrees(value) for value in euler_rad)
         raise ValueError('unit must be "rad" or "deg"')
 
-    def reset(self, vehicle_state: VehicleState | None = None) -> VehicleState:
-        self.sim_time_ns = 0
+    def reset(self, sim_time_ns: int = 0, vehicle_state: VehicleState | None = None) -> VehicleState:
+        self.sim_time_ns = sim_time_ns
         self.position_local_ned_m = ZERO_VEC3
         self.velocity_local_ned_mps = ZERO_VEC3
         self.attitude_quaternion = IDENTITY_QUATERNION
@@ -155,6 +155,8 @@ class VehicleStateEstimator:
             + np.asarray(GRAVITY_LOCAL_NED_MPS2, dtype=float)
         )
         self._set_initialized()
+        print("Vehicle state initialized...")
+        
         return self.state
     
     def _set_initialized(self):
