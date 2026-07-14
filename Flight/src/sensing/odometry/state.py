@@ -25,6 +25,8 @@ class VehicleStateEstimator:
         self.position_local_ned_m: Vec3 = ZERO_VEC3
         self.velocity_local_ned_mps: Vec3 = ZERO_VEC3
         self.attitude_quaternion: QuatWxyz = IDENTITY_QUATERNION
+        self.attitude_euler_frd_deg: Vec3 = ZERO_VEC3
+        self.attitude_euler_frd_rad: Vec3 = ZERO_VEC3
         self.angular_velocity_body_frd_rps: Vec3 = ZERO_VEC3
         self.angular_acceleration_body_frd_rps2: Vec3 = ZERO_VEC3
         self.acceleration_body_frd_mps2: Vec3 = ZERO_VEC3
@@ -155,13 +157,19 @@ class VehicleStateEstimator:
         self.acceleration_body_frd_mps2 = vec3(imu_data_t.acceleration_body_frd_mps2)
         self.angular_velocity_body_frd_rps = self._corrected_gyro(imu_data_t.gyro_body_frd_rps)
         self.attitude_quaternion = _attitude_from_accelerometer(self.acceleration_body_frd_mps2)
+
         self.acceleration_local_ned_mps2 = vec3(
             np.asarray(rotate_vector(self.attitude_quaternion, self.acceleration_body_frd_mps2), dtype=float)
             + np.asarray(GRAVITY_LOCAL_NED_MPS2, dtype=float)
         )
+        self.attitude_euler_frd_deg = self.attitude_euler_local_ned(unit="deg")
+        self.attitude_euler_frd_rad = self.attitude_euler_local_ned(unit="rad")
         self._set_initialized()
         print("Vehicle state initialized...")
-        
+        print("Init accel body:", self.acceleration_body_frd_mps2)
+        print("Resulting quaternion:", self.attitude_quaternion)
+        print("Euler:", self.attitude_euler_frd_deg)
+            
         return self.state
 
     def initialize_from_stationary_imu_samples(self, imu_samples: Sequence[MavlinkHighresImu]) -> VehicleState:
@@ -199,19 +207,23 @@ class VehicleStateEstimator:
         previous_angular_velocity = self.angular_velocity_body_frd_rps
 
         if previous_time_boot_us is None:
+            print("No previous boot time... must initialize from imu.")
             return self.initialize_from_imu(imu_data_t)
 
         self.sim_time_ns = int(imu_data_t.time_boot_us) * 1_000
         self.last_imu_time_boot_us = int(imu_data_t.time_boot_us)
-        self.acceleration_body_frd_mps2 = vec3(imu_data_t.acceleration_body_frd_mps2)
-        self.angular_velocity_body_frd_rps = self._corrected_gyro(imu_data_t.gyro_body_frd_rps)
 
         dt_s = (self.last_imu_time_boot_us - previous_time_boot_us) / 1_000_000
         if dt_s <= 0.0:
             return self.state
 
+        # Correct body-frame specific force before rotating it with the updated attitude.
+        self.acceleration_body_frd_mps2 = self._corrected_accel(imu_data_t.acceleration_body_frd_mps2)
+        self.angular_velocity_body_frd_rps = self._corrected_gyro(imu_data_t.gyro_body_frd_rps)
+
         angular_velocity = np.asarray(self.angular_velocity_body_frd_rps, dtype=float)
         previous_rates = np.asarray(previous_angular_velocity, dtype=float)
+        
         self.angular_acceleration_body_frd_rps2 = vec3((angular_velocity - previous_rates) / dt_s)
         self.attitude_quaternion = _integrate_attitude_quaternion(
             self.attitude_quaternion,
@@ -219,14 +231,15 @@ class VehicleStateEstimator:
             dt_s,
         )
 
-        acceleration_local_ned = np.asarray(
-            rotate_vector(
-                self.attitude_quaternion,
-                self.acceleration_body_frd_mps2,
-            ),
-            dtype=float,
-        ) + np.asarray(GRAVITY_LOCAL_NED_MPS2, dtype=float)
-        self.acceleration_local_ned_mps2 = vec3(acceleration_local_ned)
+        self.attitude_euler_frd_deg = self.attitude_euler_local_ned(unit="deg")
+        self.attitude_euler_frd_rad = self.attitude_euler_local_ned(unit="rad")
+
+        specific_force_ned = np.asarray(
+            rotate_vector(self.attitude_quaternion, self.acceleration_body_frd_mps2),
+            dtype=float
+        )
+        self.acceleration_local_ned_mps2 = vec3(specific_force_ned + GRAVITY_LOCAL_NED_MPS2)
+        
 
         acceleration = np.asarray(self.acceleration_local_ned_mps2, dtype=float)
         velocity = np.asarray(previous_velocity, dtype=float)
@@ -237,18 +250,54 @@ class VehicleStateEstimator:
         return self.state
 
     def _corrected_gyro(self, gyro_body_frd_rps: Vec3) -> Vec3:
-        return vec3(np.asarray(gyro_body_frd_rps, dtype=float) - np.asarray(self.gyro_bias_body_frd_rps, dtype=float))
+        """
+        This correction applies both a gyro bias correction that is measured during startup
+        and a sign correction to align the gyro data with the FRD angular convention.
+        Pitch up - positive
+        Roll right - positive
+        Yaw right - positive
+        """
+        return vec3(-(np.asarray(gyro_body_frd_rps, dtype=float) - np.asarray(self.gyro_bias_body_frd_rps, dtype=float)))
 
+    def _corrected_accel(self, acceleration_body_frd_mps2: Vec3) -> Vec3:
+        """
+        Flip front/right acceleration signs while preserving the down/up axis.
+        """
+        acceleration = np.asarray(acceleration_body_frd_mps2, dtype=float)
+        return vec3((-acceleration[0], -acceleration[1], acceleration[2]))
+
+# old stuff
+# def _attitude_from_accelerometer(acceleration_body_frd_mps2: Vec3) -> QuatWxyz:
+#     acceleration = np.asarray(acceleration_body_frd_mps2, dtype=float)
+#     norm = float(np.linalg.norm(acceleration))
+#     if norm <= 1e-9:
+#         return IDENTITY_QUATERNION
+#     measured_up_local = np.array((0.0, 0.0, -1.0), dtype=float)
+#     measured_up_body = acceleration / norm
+#     return _quaternion_between_vectors(measured_up_body, measured_up_local)
 
 def _attitude_from_accelerometer(acceleration_body_frd_mps2: Vec3) -> QuatWxyz:
-    acceleration = np.asarray(acceleration_body_frd_mps2, dtype=float)
-    norm = float(np.linalg.norm(acceleration))
-    if norm <= 1e-9:
+    accel = np.asarray(acceleration_body_frd_mps2, dtype=float)
+    norm = float(np.linalg.norm(accel))
+    if norm < 1e-6:
         return IDENTITY_QUATERNION
-    measured_up_local = np.array((0.0, 0.0, -1.0), dtype=float)
-    measured_up_body = acceleration / norm
-    return _quaternion_between_vectors(measured_up_body, measured_up_local)
+    
+    # accel already points "up" in body frame (specific force)
+    measured_up_body = accel / norm
+    measured_up_inertial = np.array([0.0, 0.0, -1.0])   # up in NED
+    
+    return _quaternion_between_vectors(measured_up_body, measured_up_inertial)
 
+# TODO: Old
+# def _integrate_attitude_quaternion(
+#     attitude_quaternion: QuatWxyz,
+#     angular_velocity_body_frd_rps: Vec3,
+#     dt_s: float,
+# ) -> QuatWxyz:
+#     q = np.asarray(attitude_quaternion, dtype=float)
+#     omega = np.asarray((0.0, *angular_velocity_body_frd_rps), dtype=float)
+#     q_dot = 0.5 * _quaternion_multiply(q, omega)
+#     return quat_wxyz(normalize_quaternion(q + q_dot * float(dt_s)))
 
 def _integrate_attitude_quaternion(
     attitude_quaternion: QuatWxyz,
@@ -256,9 +305,13 @@ def _integrate_attitude_quaternion(
     dt_s: float,
 ) -> QuatWxyz:
     q = np.asarray(attitude_quaternion, dtype=float)
-    omega = np.asarray((0.0, *angular_velocity_body_frd_rps), dtype=float)
+    omega = np.array([0.0, *angular_velocity_body_frd_rps], dtype=float)
+    
+    # Standard body-to-inertial integration
     q_dot = 0.5 * _quaternion_multiply(q, omega)
-    return quat_wxyz(normalize_quaternion(q + q_dot * float(dt_s)))
+    
+    q_new = q + q_dot * dt_s
+    return quat_wxyz(normalize_quaternion(q_new))
 
 
 def _quaternion_between_vectors(source: np.ndarray, target: np.ndarray) -> QuatWxyz:

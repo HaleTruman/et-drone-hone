@@ -6,16 +6,16 @@ import numpy as np
 from core.coordinates import euler_from_quaternion, normalize_quaternion
 from core.schemas import VehicleState
 
-
+# TODO: Switch controller back from euler to direct quaternion vector error
 class AttitudeController:
     """Convert a desired local-NED attitude quaternion into FRD body rates."""
 
     def __init__(
         self,
         *,
-        roll_gain: float = 2.0,
-        pitch_gain: float = 2.0,
-        yaw_gain: float = 0.2,
+        roll_gain: float = 1.5,
+        pitch_gain: float = 1.5,
+        yaw_gain: float = 0.75,
         max_body_rate_rps: float | Iterable[float] | None = None,
     ) -> None:
         self.gains = np.array((float(roll_gain), float(pitch_gain), float(yaw_gain)), dtype=float)
@@ -37,7 +37,7 @@ class AttitudeController:
             attitude_error = -attitude_error
 
         body_rotation_error = np.asarray(euler_from_quaternion(attitude_error), dtype=float)
-        body_rates = -self.gains * body_rotation_error
+        body_rates = self.gains * body_rotation_error
         if self.max_body_rate_rps is not None:
             body_rates = np.clip(body_rates, -self.max_body_rate_rps, self.max_body_rate_rps)
 
@@ -47,7 +47,7 @@ class AttitudeController:
         if thrust is not None:
             payload["thrust"] = float(thrust)
 
-        payload["body_angle_error"] = body_rotation_error
+        payload["body_angle_error"] = tuple(body_rotation_error.tolist())
         self.last_payload = payload
         return payload
 

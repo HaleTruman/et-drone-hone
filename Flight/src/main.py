@@ -38,9 +38,9 @@ MIN_GATE_CONFIDENCE = 0.10
 CONTROL_METHOD = "carrot_motor_test"
 GATE_ASSOCIATION_DISTANCE_M = 6.0
 GATE_MIN_OBSERVATIONS = 2
-HOVER_THRUST = 0.3
+HOVER_THRUST = 0.27
 LEVEL_QUATERNION = (1.0, 0.0, 0.0, 0.0)
-ALLOW_FLIGHT = False
+ALLOW_FLIGHT = True
 CREATE_VIDEO = False
 RECORD_SCREEN = False
 
@@ -82,24 +82,6 @@ def main() -> int:
     path_manager = PathManager()
 
     # controllers
-    carrot_controller = CarrotChaserController(
-        path_manager,
-        config=CarrotChaserConfig(
-            desired_speed_mps=0.6,
-            lookahead_time_s=1.5,
-            min_lookahead_m=2.0,
-            path_tolerance_m=0.60,
-            lateral_position_gain=0.25,
-            velocity_gain=0.35,
-            max_along_track_acceleration_mps2=0.35,
-            max_lateral_acceleration_mps2=0.45,
-            max_vertical_acceleration_mps2=0.30,
-            mass_kg=0.5094496144145988,
-            thrust_coefficient_n=16.65,
-            min_thrust=0.24,
-            max_thrust=0.32,
-        ),
-    )
     attitude_controller = AttitudeController()
 
     inner_cycle = 0
@@ -274,9 +256,7 @@ def main() -> int:
                 next_outer_cycle_s += outer_period_s
                 latest_frame = vision_rx.get_next_frame()
                 outer_cycle += 1
-                if CONTROL_METHOD == "carrot_motor_test" and vehicle_state is not None:
-                    latest_carrot_attitude_target = carrot_controller.compute_control(vehicle_state)
-
+           
                 if latest_frame is not None:
                     vision_rx.record_frame_cycle(latest_frame.frame_id, inner_cycle)
                     frame_log = {
@@ -372,8 +352,10 @@ def main() -> int:
                         thrust=HOVER_THRUST,
                     )
 
+                # Send flight commands for one second
                 if ALLOW_FLIGHT:
                     mavlink_client.send_attitude_target(control_target)
+                    # mavlink_client.send_motor_target(motor_commands=(0.3, 0.27, 0.3, 0.27))
 
                     command_result = {
                         "emitted": True,
@@ -384,6 +366,7 @@ def main() -> int:
                         "outer_loop_cycle": outer_cycle,
                     }
                 else:
+                    # mavlink_client.send_motor_target(motor_commands=(0.0, 0.0, 0.0, 0.0))
                     command_result = {
                             "emitted": False,
                             "sim_time_ns": telemetry.sim_time_ns,
@@ -399,14 +382,14 @@ def main() -> int:
             sleep_s = max(0.0, next_inner_cycle_s - time.perf_counter())
             loop_elapsed_ms = (time.perf_counter() - loop_started_s) * 1000.0
 
-            if inner_cycle % int(INNER_LOOP_HZ) == 0:
+            if inner_cycle % int(INNER_LOOP_HZ/2) == 0:
                 print(
                     f"inner_cycle={inner_cycle} - outer_cycle={outer_cycle} - loop_ms={loop_elapsed_ms:.2f}\n"
                     # f"State position (local NED) - {tuple(round(x, 2) for x in vehicle_state.position_local_ned_m) if telemetry else 'No Telemetry yet'}  |  " 
-                    f"State attitude euler (local NED) - {tuple(round(x, 2) for x in vehicle_state_estimator.attitude_euler_local_ned(unit='deg'))}  |  ",
+                    f"State attitude euler (local NED) - {tuple(round(x, 2) for x in vehicle_state_estimator.attitude_euler_frd_deg)}  |  ",
                     f"Attitude control command (body FRD rps) - {tuple(round(x, 4) for x in control_target["body_rates_rps"]) if "body_rates_rps" in control_target else "NO COMMAND YET"}  |  ",
-                    f"Body angle error (body FRD euler) - {tuple(round(x, 4) for x in control_target["body_angle_error"]) if "body_angle_error" in control_target else "NO COMMAND YET"}\n",
-                    # f"State acceleration (local NED) - {tuple(round(x,4) for x in vehicle_state_estimator.state.acceleration_local_ned_mps2)}  |  " 
+                    f"Body angle error (body FRD euler) - {tuple(round(x, 4) for x in control_target["body_angle_error"]) if "body_angle_error" in control_target else "NO COMMAND YET"}  |  ",
+                    f"State acceleration (local NED) - {tuple(round(x,4) for x in vehicle_state_estimator.state.acceleration_local_ned_mps2)}\n",
                     # f"IMU accel (body FRD) - {tuple(round(x, 4) for x in imu_data_t.acceleration_body_frd_mps2)}  |  ",
                     # f"IMU body rates (body FRD) - {tuple(round(x, 4) for x in imu_data_t.gyro_body_frd_rps)}\n",
                     flush=True,
