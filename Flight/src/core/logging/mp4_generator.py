@@ -4,17 +4,15 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import median
 from typing import Any
 
 NS_PER_SECOND = 1_000_000_000
-DEFAULT_LOGS_DIR = Path(__file__).resolve().parents[1] / "logs" / "runs"
 FRAME_NAME_RE = re.compile(r"frame-(?P<frame_id>\d+)-(?P<sim_time_ns>\d+)\.(?:jpg|jpeg|png)$", re.IGNORECASE)
 
-# Change this to the run folder name you want to render.
-RUN = "run-20260704T041155Z"
 DEFAULT_FPS = 30.0
 MAX_GAP_S = 1.0
 
@@ -27,7 +25,16 @@ class LoggedFrame:
 
 
 def main() -> None:
-    log_path = _resolve_log_path(RUN)
+    if len(sys.argv) != 2:
+        raise SystemExit("Usage: python -m core.logging.mp4_generator <run_dir>")
+    generate_mp4(sys.argv[1])
+
+
+def generate_mp4(run_dir: str | Path | None) -> Path:
+    if run_dir is None:
+        raise ValueError("run_dir must not be None")
+    
+    log_path = Path(run_dir).resolve()
     frames = _load_frames(log_path)
     if not frames:
         raise SystemExit(f"No frames found under {log_path}")
@@ -48,6 +55,7 @@ def main() -> None:
     print(f"Video frames: {written_count}")
     print(f"FPS: {fps:.3f}")
     print(f"Approx duration: {duration_s:.3f}s")
+    return output_path
 
 
 def write_video(frames: list[LoggedFrame], output_path: Path, fps: float, max_gap_s: float | None = 1.0) -> int:
@@ -82,13 +90,6 @@ def write_video(frames: list[LoggedFrame], output_path: Path, fps: float, max_ga
     if written_count == 0:
         raise ValueError("No video frames were written")
     return written_count
-
-
-def _resolve_log_path(run: str) -> Path:
-    path = (DEFAULT_LOGS_DIR / run).resolve()
-    if not path.exists():
-        raise SystemExit(f"Run does not exist: {path}")
-    return path
 
 
 def _load_frames(log_path: Path) -> list[LoggedFrame]:

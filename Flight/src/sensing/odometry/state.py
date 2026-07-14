@@ -2,7 +2,7 @@
 
 import math
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import numpy as np
 
@@ -28,7 +28,9 @@ class VehicleStateEstimator:
         self.angular_velocity_body_frd_rps: Vec3 = ZERO_VEC3
         self.angular_acceleration_body_frd_rps2: Vec3 = ZERO_VEC3
         self.acceleration_body_frd_mps2: Vec3 = ZERO_VEC3
+        self.acceleration_rest_body_frd_mps2: Vec3 | None = None
         self.acceleration_local_ned_mps2: Vec3 = ZERO_VEC3
+        self.gyro_bias_body_frd_rps: Vec3 = ZERO_VEC3
         self.last_imu_time_boot_us: int | None = None
         if vehicle_state is not None:
             self.update_state(vehicle_state)
@@ -62,8 +64,11 @@ class VehicleStateEstimator:
         self.angular_velocity_body_frd_rps = ZERO_VEC3
         self.angular_acceleration_body_frd_rps2 = ZERO_VEC3
         self.acceleration_body_frd_mps2 = ZERO_VEC3
+        self.acceleration_rest_body_frd_mps2 = None
         self.acceleration_local_ned_mps2 = ZERO_VEC3
+        self.gyro_bias_body_frd_rps = ZERO_VEC3
         self.last_imu_time_boot_us = None
+        self.initialized = False
         if vehicle_state is not None:
             return self.update_state(vehicle_state)
         return self.state
@@ -148,7 +153,7 @@ class VehicleStateEstimator:
         self.sim_time_ns = int(imu_data_t.time_boot_us) * 1_000
         self.last_imu_time_boot_us = int(imu_data_t.time_boot_us)
         self.acceleration_body_frd_mps2 = vec3(imu_data_t.acceleration_body_frd_mps2)
-        self.angular_velocity_body_frd_rps = vec3(imu_data_t.gyro_body_frd_rps)
+        self.angular_velocity_body_frd_rps = self._corrected_gyro(imu_data_t.gyro_body_frd_rps)
         self.attitude_quaternion = _attitude_from_accelerometer(self.acceleration_body_frd_mps2)
         self.acceleration_local_ned_mps2 = vec3(
             np.asarray(rotate_vector(self.attitude_quaternion, self.acceleration_body_frd_mps2), dtype=float)
@@ -157,6 +162,32 @@ class VehicleStateEstimator:
         self._set_initialized()
         print("Vehicle state initialized...")
         
+        return self.state
+
+    def initialize_from_stationary_imu_samples(self, imu_samples: Sequence[MavlinkHighresImu]) -> VehicleState:
+        if not imu_samples:
+            raise ValueError("imu_samples must contain at least one sample")
+
+        accelerations = np.asarray([sample.acceleration_body_frd_mps2 for sample in imu_samples], dtype=float)
+        gyros = np.asarray([sample.gyro_body_frd_rps for sample in imu_samples], dtype=float)
+        mean_acceleration = accelerations.mean(axis=0)
+        mean_gyro = gyros.mean(axis=0)
+        latest_sample = imu_samples[-1]
+
+        self.sim_time_ns = int(latest_sample.time_boot_us) * 1_000
+        self.last_imu_time_boot_us = int(latest_sample.time_boot_us)
+        self.acceleration_rest_body_frd_mps2 = vec3(mean_acceleration)
+        self.acceleration_body_frd_mps2 = vec3(mean_acceleration)
+        self.gyro_bias_body_frd_rps = vec3(mean_gyro)
+        self.angular_velocity_body_frd_rps = ZERO_VEC3
+        self.angular_acceleration_body_frd_rps2 = ZERO_VEC3
+        self.attitude_quaternion = _attitude_from_accelerometer(self.acceleration_rest_body_frd_mps2)
+        self.acceleration_local_ned_mps2 = vec3(
+            np.asarray(rotate_vector(self.attitude_quaternion, self.acceleration_body_frd_mps2), dtype=float)
+            + np.asarray(GRAVITY_LOCAL_NED_MPS2, dtype=float)
+        )
+        self._set_initialized()
+        print("Vehicle state initialized from stationary IMU calibration...")
         return self.state
     
     def _set_initialized(self):
@@ -173,7 +204,21 @@ class VehicleStateEstimator:
         self.sim_time_ns = int(imu_data_t.time_boot_us) * 1_000
         self.last_imu_time_boot_us = int(imu_data_t.time_boot_us)
         self.acceleration_body_frd_mps2 = vec3(imu_data_t.acceleration_body_frd_mps2)
-        self.angular_velocity_body_frd_rps = vec3(imu_data_t.gyro_body_frd_rps)
+        self.angular_velocity_body_frd_rps = self._corrected_gyro(imu_data_t.gyro_body_frd_rps)
+
+        dt_s = (self.last_imu_time_boot_us - previous_time_boot_us) / 1_000_000
+        if dt_s <= 0.0:
+            return self.state
+
+        angular_velocity = np.asarray(self.angular_velocity_body_frd_rps, dtype=float)
+        previous_rates = np.asarray(previous_angular_velocity, dtype=float)
+        self.angular_acceleration_body_frd_rps2 = vec3((angular_velocity - previous_rates) / dt_s)
+        self.attitude_quaternion = _integrate_attitude_quaternion(
+            self.attitude_quaternion,
+            self.angular_velocity_body_frd_rps,
+            dt_s,
+        )
+
         acceleration_local_ned = np.asarray(
             rotate_vector(
                 self.attitude_quaternion,
@@ -181,29 +226,18 @@ class VehicleStateEstimator:
             ),
             dtype=float,
         ) + np.asarray(GRAVITY_LOCAL_NED_MPS2, dtype=float)
-        self.acceleration_local_ned_mps2 = vec3(
-            acceleration_local_ned,
-        )
-
-        dt_s = (self.last_imu_time_boot_us - previous_time_boot_us) / 1_000_000
-        if dt_s <= 0.0:
-            return self.state
+        self.acceleration_local_ned_mps2 = vec3(acceleration_local_ned)
 
         acceleration = np.asarray(self.acceleration_local_ned_mps2, dtype=float)
         velocity = np.asarray(previous_velocity, dtype=float)
         position = np.asarray(self.position_local_ned_m, dtype=float)
-        angular_velocity = np.asarray(self.angular_velocity_body_frd_rps, dtype=float)
-        previous_rates = np.asarray(previous_angular_velocity, dtype=float)
 
         self.position_local_ned_m = vec3(position + velocity * dt_s + 0.5 * acceleration * dt_s * dt_s)
         self.velocity_local_ned_mps = vec3(velocity + acceleration * dt_s)
-        self.angular_acceleration_body_frd_rps2 = vec3((angular_velocity - previous_rates) / dt_s)
-        self.attitude_quaternion = _integrate_attitude_quaternion(
-            self.attitude_quaternion,
-            self.angular_velocity_body_frd_rps,
-            dt_s,
-        )
         return self.state
+
+    def _corrected_gyro(self, gyro_body_frd_rps: Vec3) -> Vec3:
+        return vec3(np.asarray(gyro_body_frd_rps, dtype=float) - np.asarray(self.gyro_bias_body_frd_rps, dtype=float))
 
 
 def _attitude_from_accelerometer(acceleration_body_frd_mps2: Vec3) -> QuatWxyz:

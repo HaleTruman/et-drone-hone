@@ -5,10 +5,11 @@ from pathlib import Path
 import time
 
 from autonomy.planning import HotStartPlanner, PathManager
-from core.control.attitude import AttitudeMotorController
+from core.control.attitude import AttitudeController
 from core.control.carrot import CarrotChaserConfig, CarrotChaserController
-from core.logging import Logger
-from core.schemas import VehicleState
+from core.logging import Logger, generate_mp4
+from core.logging.obs import OBSRecordingError, start_recording, stop_recording
+from core.schemas import MavlinkHighresImu, MavlinkTelemetry, VehicleState
 from sensing.gates import GateMap
 from sensing.perception import GatePoseEstimator, GateTargetTracker, select_guidance_gate
 from sensing.telemetry import MavlinkClient
@@ -32,17 +33,16 @@ RESET_STABLE_MAX_SPEED_MPS = 0.03
 POST_RESET_DELAY_S = 1.5
 ARM_ON_START = True
 ARM_TIMEOUT_S = 5.0
-PRELEVEL_S = 1.0
-PRELEVEL_THRUST = 0.50
 TARGET_HOLD_S = 0.75
 MIN_GATE_CONFIDENCE = 0.10
 CONTROL_METHOD = "carrot_motor_test"
 GATE_ASSOCIATION_DISTANCE_M = 6.0
 GATE_MIN_OBSERVATIONS = 2
-HOVER_THRUST = 0.50
-MOTOR_HOVER_COMMAND = 0.274
+HOVER_THRUST = 0.3
 LEVEL_QUATERNION = (1.0, 0.0, 0.0, 0.0)
 ALLOW_FLIGHT = False
+CREATE_VIDEO = False
+RECORD_SCREEN = False
 
 def main() -> int:
 
@@ -100,9 +100,11 @@ def main() -> int:
             max_thrust=0.32,
         ),
     )
+    attitude_controller = AttitudeController()
 
     inner_cycle = 0
     outer_cycle = 0
+    obs_recording_started = False
 
     started_s = time.perf_counter()
     next_inner_cycle_s = started_s
@@ -133,18 +135,36 @@ def main() -> int:
             mavlink_client.send_sim_reset_command()
             logger.log_event("simulator_reset_sent", sim_time_ns=telemetry.sim_time_ns)
 
+            if RECORD_SCREEN:
+                try:
+                    start_recording(run_dir)
+                    obs_recording_started = True
+                    logger.log_event("obs_recording_started", output_dir=str(run_dir))
+                    print(f"OBS recording started in {run_dir}", flush=True)
+                except OBSRecordingError as error:
+                    logger.log_event("obs_recording_start_failed", error=str(error), output_dir=str(run_dir))
+                    print(f"OBS recording start failed: {error}", flush=True)
+
             # clear states, buffers, and maps
             vehicle_state = vehicle_state_estimator.reset(sim_time_ns=telemetry.sim_time_ns)
             vision_rx.clear_buffer()
             gate_map.clear()
             
             reset_countdown_deadline_s = time.perf_counter() + RESET_WAIT_S
+            stationary_imu_samples: list[MavlinkHighresImu] = []
+            last_calibration_imu_time_boot_us: int | None = None
 
             # before the countdown deadline has been reached
             # TODO: to be changed to montoring the start lights rather than a countdown
             while time.perf_counter() < reset_countdown_deadline_s:
                 imu_data_t = mavlink_client.latest_imu
                 latest_frame = vision_rx.get_next_frame()
+                if (
+                    imu_data_t is not None
+                    and imu_data_t.time_boot_us != last_calibration_imu_time_boot_us
+                ):
+                    stationary_imu_samples.append(imu_data_t)
+                    last_calibration_imu_time_boot_us = imu_data_t.time_boot_us
 
                 # initialize vehicle state
                 if not vehicle_state_estimator.initialized and imu_data_t:
@@ -178,6 +198,22 @@ def main() -> int:
 
                 if sleep_s > 0.0:
                     time.sleep(sleep_s)
+
+            if stationary_imu_samples:
+                vehicle_state = vehicle_state_estimator.initialize_from_stationary_imu_samples(stationary_imu_samples)
+                logger.log_event(
+                    "stationary_imu_calibrated",
+                    sample_count=len(stationary_imu_samples),
+                    duration_s=(
+                        stationary_imu_samples[-1].time_boot_us - stationary_imu_samples[0].time_boot_us
+                    )
+                    / 1_000_000,
+                    gyro_bias_body_frd_rps=vehicle_state_estimator.gyro_bias_body_frd_rps,
+                    acceleration_rest_body_frd_mps2=vehicle_state_estimator.acceleration_rest_body_frd_mps2,
+                    attitude_quaternion=vehicle_state.attitude_quaternion,
+                )
+            else:
+                logger.log_event("stationary_imu_calibration_skipped", reason="no_imu_samples")
 
             if POST_RESET_DELAY_S > 0.0:
                 time.sleep(POST_RESET_DELAY_S)
@@ -214,9 +250,19 @@ def main() -> int:
             scheduled_s = next_inner_cycle_s
 
             # inner loop: ingest telemetry and update state
-            telemetry = mavlink_client.get_telemetry()
+            raw_telemetry = mavlink_client.get_telemetry()
             imu_data_t = mavlink_client.latest_imu
             vehicle_state = vehicle_state_estimator.update(imu_data_t=imu_data_t)
+            telemetry = raw_telemetry
+            if raw_telemetry is not None and vehicle_state is not None:
+                telemetry = MavlinkTelemetry(
+                    sim_time_ns=vehicle_state.sim_time_ns,
+                    vehicle_state=vehicle_state,
+                    imu=raw_telemetry.imu,
+                    system_status=raw_telemetry.system_status,
+                    reset_count=raw_telemetry.reset_count,
+                    raw={**raw_telemetry.raw, "vehicle_state_source": "vehicle_state_estimator_highres_imu"},
+                )
 
             if telemetry is not None:
                 logger.log_telemetry(telemetry, cycle=inner_cycle)
@@ -319,34 +365,33 @@ def main() -> int:
 
             else:
                 command_result = None
+
+                control_target = attitude_controller.compute_control(
+                        vehicle_state,
+                        LEVEL_QUATERNION,
+                        thrust=HOVER_THRUST,
+                    )
+
                 if ALLOW_FLIGHT:
-                    if CONTROL_METHOD == "carrot_motor_test":
-                        if latest_carrot_attitude_target is None:
-                            command_result = {
-                                "emitted": False, 
-                                "sim_time_ns": telemetry.sim_time_ns, 
-                                "reason": "missing_outer_loop_carrot_target"
-                            }
+                    mavlink_client.send_attitude_target(control_target)
 
-                        else:
-                            # TODO: Convert to SET_ATTITUDE_TARGET MAVLink control
-
-                            command_result = {
-                                "emitted": True,
-                                "sim_time_ns": telemetry.sim_time_ns,
-                                "reason": "carrot_motor_test_inner_attitude",
-                                "attitude_target": latest_carrot_attitude_target,
-                                "path_waypoints_local_ned_m": [
-                                    [float(axis) for axis in waypoint]
-                                    for waypoint in path_manager.get_waypoints()
-                                ],
-                                "inner_loop_cycle": inner_cycle,
-                                "outer_loop_cycle": outer_cycle,
-                            }
-
-                
-                # test_motor_cmd = MOTOR_HOVER_COMMAND
-                # mavlink_client.send_motor_target([test_motor_cmd] * 4)
+                    command_result = {
+                        "emitted": True,
+                        "sim_time_ns": telemetry.sim_time_ns,
+                        "reason": "hover_level_attitude",
+                        "attitude_target": control_target,
+                        "inner_loop_cycle": inner_cycle,
+                        "outer_loop_cycle": outer_cycle,
+                    }
+                else:
+                    command_result = {
+                            "emitted": False,
+                            "sim_time_ns": telemetry.sim_time_ns,
+                            "reason": "hover_level_attitude",
+                            "attitude_target": control_target,
+                            "inner_loop_cycle": inner_cycle,
+                            "outer_loop_cycle": outer_cycle,
+                        }
 
 
             # timing
@@ -357,11 +402,13 @@ def main() -> int:
             if inner_cycle % int(INNER_LOOP_HZ) == 0:
                 print(
                     f"inner_cycle={inner_cycle} - outer_cycle={outer_cycle} - loop_ms={loop_elapsed_ms:.2f}\n"
-                    f"State position (local NED) - {tuple(round(x, 2) for x in vehicle_state.position_local_ned_m) if telemetry else 'No Telemetry yet'}  |  " 
-                    f"State attitude euler (local NED) - {tuple(round(x, 2) for x in vehicle_state_estimator.attitude_euler_local_ned(unit="deg"))}  |  ",
-                    f"State acceleration (local NED) - {tuple(round(x,4) for x in vehicle_state_estimator.state.acceleration_local_ned_mps2)}  |  " 
-                    f"IMU accel (body FRD) - {tuple(round(x, 4) for x in imu_data_t.acceleration_body_frd_mps2)}  |  ",
-                    f"IMU body rates (body FRD) - {tuple(round(x, 4) for x in imu_data_t.gyro_body_frd_rps)}\n",
+                    # f"State position (local NED) - {tuple(round(x, 2) for x in vehicle_state.position_local_ned_m) if telemetry else 'No Telemetry yet'}  |  " 
+                    f"State attitude euler (local NED) - {tuple(round(x, 2) for x in vehicle_state_estimator.attitude_euler_local_ned(unit='deg'))}  |  ",
+                    f"Attitude control command (body FRD rps) - {tuple(round(x, 4) for x in control_target["body_rates_rps"]) if "body_rates_rps" in control_target else "NO COMMAND YET"}  |  ",
+                    f"Body angle error (body FRD euler) - {tuple(round(x, 4) for x in control_target["body_angle_error"]) if "body_angle_error" in control_target else "NO COMMAND YET"}\n",
+                    # f"State acceleration (local NED) - {tuple(round(x,4) for x in vehicle_state_estimator.state.acceleration_local_ned_mps2)}  |  " 
+                    # f"IMU accel (body FRD) - {tuple(round(x, 4) for x in imu_data_t.acceleration_body_frd_mps2)}  |  ",
+                    # f"IMU body rates (body FRD) - {tuple(round(x, 4) for x in imu_data_t.gyro_body_frd_rps)}\n",
                     flush=True,
                 )
 
@@ -412,11 +459,23 @@ def main() -> int:
     except KeyboardInterrupt:
         logger.log_event("interrupted")
 
-    except Exception:
-        print("Some error occured.")
+    except Exception as error:
+        print("Error occured: ", error)
 
     # SHUTDOWN
     finally:
+        if obs_recording_started:
+            try:
+                obs_output_path = stop_recording()
+                logger.log_event(
+                    "obs_recording_stopped",
+                    output_path=str(obs_output_path) if obs_output_path else None,
+                )
+                print(f"OBS recording stopped: {obs_output_path}", flush=True)
+            except OBSRecordingError as error:
+                logger.log_event("obs_recording_stop_failed", error=str(error))
+                print(f"OBS recording stop failed: {error}", flush=True)
+
         vision_rx.shutdown()
         if getattr(mavlink_client, "connected", False):
             try:
@@ -436,6 +495,9 @@ def main() -> int:
         )
         logger.save_run(log_path)
         print(f"Log saved to {log_path}", flush=True)
+
+        if CREATE_VIDEO:
+            generate_mp4(run_dir)
 
     return 0
 
@@ -457,31 +519,6 @@ def build_controller_test_path(
         up_m = up_slope * forward_m
         waypoints.append((start_x + forward_m, start_y + curve_y_m, start_z - up_m))
     return waypoints
-
-
-def run_motor_prelevel(
-    *,
-    mavlink_client: MavlinkClient,
-    vehicle_state_estimator: VehicleStateEstimator,
-    attitude_motor_controller: AttitudeMotorController,
-    duration_s: float,
-    hz: float,
-) -> None:
-    attitude_motor_controller.reset()
-    period_s = 1.0 / float(hz)
-    deadline_s = time.perf_counter() + float(duration_s)
-    next_cycle_s = time.perf_counter()
-    target = {"quaternion": LEVEL_QUATERNION, "thrust": MOTOR_HOVER_COMMAND}
-    while time.perf_counter() < deadline_s:
-        vehicle_state = vehicle_state_estimator.update(mavlink_client.latest_imu)
-        if vehicle_state is not None:
-            mavlink_client.send_motor_target(
-                attitude_motor_controller.compute_motor_commands(vehicle_state, target)
-            )
-        next_cycle_s += period_s
-        sleep_s = max(0.0, next_cycle_s - time.perf_counter())
-        if sleep_s > 0.0:
-            time.sleep(sleep_s)
 
 
 if __name__ == "__main__":

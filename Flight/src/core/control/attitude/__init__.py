@@ -1,3 +1,3 @@
-from .controller import AttitudeMotorConfig, AttitudeMotorController
+from .controller import AttitudeController
 
-__all__ = ["AttitudeMotorConfig", "AttitudeMotorController"]
+__all__ = ["AttitudeController"]

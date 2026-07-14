@@ -191,6 +191,7 @@ class MavlinkClient:
         if yaw is None:
             yaw = 0.0
             mask |= mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_IGNORE
+
         connection.mav.set_position_target_local_ned_send(
             self._time_boot_ms(),
             connection.target_system,
@@ -211,16 +212,29 @@ class MavlinkClient:
         if not self.is_live:
             return
         connection = self._require_connection()
+
+        if "body_rates_rps" not in target:
+            type_mask = (
+                mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_BODY_ROLL_RATE_IGNORE	|
+                mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_BODY_PITCH_RATE_IGNORE	|
+                mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_BODY_YAW_RATE_IGNORE
+            )
+
+        else:
+            type_mask = (mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_ATTITUDE_IGNORE)
+       
+        quaternion = target.get("quaternion", (1.0, 0.0, 0.0, 0.0))
         body_rates = target.get("body_rates_rps", (0.0, 0.0, 0.0))
-        type_mask = int(target.get("attitude_type_mask", 0 if "body_rates_rps" in target else 7))
+        thrust = target.get("thrust", 0.0)
+
         connection.mav.set_attitude_target_send(
             self._time_boot_ms(),
             connection.target_system,
             connection.target_component,
             type_mask,
-            target["quaternion"],
+            quaternion,
             *body_rates,
-            target["thrust"],
+            thrust,
         )
 
     def send_control_outputs(self, control_outputs: dict[str, Any]) -> None:
