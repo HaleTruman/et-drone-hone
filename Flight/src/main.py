@@ -30,7 +30,6 @@ RESET_READY_TIMEOUT_S = 20.0
 RESET_STABLE_S = 0.5
 RESET_STABLE_MAX_SPEED_MPS = 0.03
 POST_RESET_DELAY_S = 1.5
-ARM_ON_START = True
 ARM_TIMEOUT_S = 5.0
 TARGET_HOLD_S = 0.75
 MIN_GATE_CONFIDENCE = 0.10
@@ -117,7 +116,6 @@ def main() -> int:
         logger.log_event("obs_recording_started", sim_time_ns=telemetry.sim_time_ns) if obs_recorder.start_recording() and RECORD_SCREEN else logger.log_event("obs_recording_failed", sim_time_ns=telemetry.sim_time_ns)
 
         # clear states, buffers, and maps
-        vehicle_state = vehicle_state_estimator.reset(sim_time_ns=telemetry.sim_time_ns)
         vision_rx.clear_buffer()
         gate_map.clear()
         
@@ -126,14 +124,12 @@ def main() -> int:
         last_calibration_imu_time_boot_us: int | None = None
 
         # before the countdown deadline has been reached
-        # TODO: to be changed to montoring the start lights rather than a countdown
-        while time.perf_counter() < reset_countdown_deadline_s:
+        while time.perf_counter() < reset_countdown_deadline_s: # TODO: change to montoring the start lights rather than a countdown
             imu_data_t = mavlink_client.latest_imu
             latest_frame = vision_rx.get_next_frame()
-            if (
-                imu_data_t is not None
-                and imu_data_t.time_boot_us != last_calibration_imu_time_boot_us
-            ):
+
+            # collect imu samples for estimating sensor drift/bias
+            if (imu_data_t is not None and imu_data_t.time_boot_us != last_calibration_imu_time_boot_us):
                 stationary_imu_samples.append(imu_data_t)
                 last_calibration_imu_time_boot_us = imu_data_t.time_boot_us
 
@@ -170,6 +166,7 @@ def main() -> int:
             if sleep_s > 0.0:
                 time.sleep(sleep_s)
 
+        # init state with bias
         if stationary_imu_samples:
             vehicle_state = vehicle_state_estimator.initialize_from_stationary_imu_samples(stationary_imu_samples)
             logger.log_event(
@@ -190,25 +187,13 @@ def main() -> int:
         if POST_RESET_DELAY_S > 0.0:
             time.sleep(POST_RESET_DELAY_S)
 
-
-
-        if ARM_ON_START:
-            mavlink_client.arm_and_wait(timeout_s=ARM_TIMEOUT_S)
-            logger.log_event("armed", bridge=mavlink_client.snapshot())
+        # arm drone
+        mavlink_client.arm_and_wait(timeout_s=ARM_TIMEOUT_S)
+        logger.log_event("armed", bridge=mavlink_client.snapshot())
         
         # TODO: work on path_manager and allow it to update the remainder of the path from the current position of the drone (i.e reset origin and "initial" velocity and have the drone continue from there)
-        test_path = build_controller_test_path((0.0, 0.0, 0.0))
-        path_manager.set_waypoints(test_path)
-        logger.log_planned_path(
-            {
-                "type": "carrot_controller_test_path",
-                "waypoints_local_ned_m": [[float(axis) for axis in waypoint] for waypoint in test_path],
-                "pitch_up_angle_deg": 2.5,
-            },
-            cycle=inner_cycle,
-            planner="main_test_path",
-        )
-
+        
+        
         ## MAIN LOOP
         control_started_s = time.perf_counter()
         next_inner_cycle_s = control_started_s
