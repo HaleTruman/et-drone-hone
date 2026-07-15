@@ -16,6 +16,7 @@ from sensing.telemetry import MavlinkClient
 from sensing.vision import VisionStreamReceiver
 from sensing.odometry import VehicleStateEstimator
 from sensing.vision.service import VisionPerceptionConfig, VisionPerceptionService
+from core.coordinates import quaternion_from_roll_pitch_yaw_deg
 
 MAVLINK_ENDPOINT = "udpin:127.0.0.1:14550"
 VISION_HOST = "0.0.0.0"
@@ -37,7 +38,8 @@ CONTROL_METHOD = "carrot_motor_test"
 GATE_ASSOCIATION_DISTANCE_M = 6.0
 GATE_MIN_OBSERVATIONS = 2
 HOVER_THRUST = 0.27
-LEVEL_QUATERNION = (1.0, 0.0, 0.0, 0.0)
+LEVEL_QUATERNION = (1.0,  0.0,  0.0, 0.0)
+TARGET_QUATERNION = quaternion_from_roll_pitch_yaw_deg(0.0, -9.5, 0.0)
 ALLOW_FLIGHT = True
 CREATE_VIDEO = False
 RECORD_SCREEN = False
@@ -113,7 +115,8 @@ def main() -> int:
         logger.log_event("simulator_reset_sent", sim_time_ns=telemetry.sim_time_ns)
 
         # start screen recording
-        logger.log_event("obs_recording_started", sim_time_ns=telemetry.sim_time_ns) if obs_recorder.start_recording() and RECORD_SCREEN else logger.log_event("obs_recording_failed", sim_time_ns=telemetry.sim_time_ns)
+        if RECORD_SCREEN:
+            logger.log_event("obs_recording_started", sim_time_ns=telemetry.sim_time_ns) if obs_recorder.start_recording() else logger.log_event("obs_recording_failed", sim_time_ns=telemetry.sim_time_ns)
 
         # clear states, buffers, and maps
         vision_rx.clear_buffer()
@@ -465,7 +468,6 @@ def build_controller_test_path(
         up_m = up_slope * forward_m
         waypoints.append((start_x + forward_m, start_y + curve_y_m, start_z - up_m))
     return waypoints
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

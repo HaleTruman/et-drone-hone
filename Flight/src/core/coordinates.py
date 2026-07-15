@@ -101,6 +101,32 @@ def quaternion_from_roll_pitch_yaw(roll_rad: float, pitch_rad: float, yaw_rad: f
         )
     )
 
+def quaternion_from_roll_pitch_yaw_deg(roll_deg: float, pitch_deg: float, yaw_deg: float = 0.0) -> tuple[float, float, float, float]:
+    """
+    Convert roll, pitch, yaw in degrees to quaternion (w, x, y, z).
+    - Positive roll  = right bank
+    - Positive pitch = nose down (forward pitch)
+    - Positive yaw   = nose right
+    """
+    # Convert to radians
+    roll_rad  = math.radians(roll_deg)
+    pitch_rad = math.radians(pitch_deg)
+    yaw_rad   = math.radians(yaw_deg)
+    
+    cr = math.cos(roll_rad / 2.0)
+    sr = math.sin(roll_rad / 2.0)
+    cp = math.cos(pitch_rad / 2.0)
+    sp = math.sin(pitch_rad / 2.0)
+    cy = math.cos(yaw_rad / 2.0)
+    sy = math.sin(yaw_rad / 2.0)
+    
+    qw = cr * cp * cy + sr * sp * sy
+    qx = sr * cp * cy - cr * sp * sy
+    qy = cr * sp * cy + sr * cp * sy
+    qz = cr * cp * sy - sr * sp * cy
+    
+    return (qw, qx, qy, qz)
+
 
 def euler_from_quaternion(quaternion: Iterable[float]) -> tuple[float, float, float]:
     qw, qx, qy, qz = normalize_quaternion(quaternion)
