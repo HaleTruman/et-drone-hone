@@ -8,7 +8,7 @@ from autonomy.planning import HotStartPlanner, PathManager
 from core.control.attitude import AttitudeController
 from core.control.carrot import CarrotChaserConfig, CarrotChaserController
 from core.logging import Logger, generate_mp4
-from core.logging.obs import OBSRecordingError, start_recording, stop_recording
+from core.logging.obs import OBSRecorder
 from core.schemas import MavlinkHighresImu, MavlinkTelemetry, VehicleState
 from sensing.gates import GateMap
 from sensing.perception import GatePoseEstimator, GateTargetTracker, select_guidance_gate
@@ -25,7 +25,6 @@ OUTER_LOOP_HZ = 30.0
 HEARTBEAT_TIMEOUT_S = 120.0
 STARTUP_DATA_TIMEOUT_S = 5.0
 RUN_S: float | None = None
-RESET_ON_START = True
 RESET_WAIT_S = 3.0
 RESET_READY_TIMEOUT_S = 20.0
 RESET_STABLE_S = 0.5
@@ -45,7 +44,6 @@ CREATE_VIDEO = False
 RECORD_SCREEN = False
 
 def main() -> int:
-
     inner_period_s = 1.0 / INNER_LOOP_HZ
     outer_period_s = 1.0 / OUTER_LOOP_HZ
 
@@ -68,141 +66,131 @@ def main() -> int:
     print(f">> Inner loop rate {INNER_LOOP_HZ}")
     print(f">> Outer loop rate {OUTER_LOOP_HZ}")
 
+    # clients and managers
     vehicle_state_estimator = VehicleStateEstimator()
     mavlink_client = MavlinkClient(endpoint=MAVLINK_ENDPOINT)
     vision_rx = VisionStreamReceiver(host=VISION_HOST, port=VISION_PORT, output_dir=run_dir / "vision_frames")
     vision_perception = VisionPerceptionService(VisionPerceptionConfig(run_landmarker=False))
     gate_pose_estimator = GatePoseEstimator()
     gate_map = GateMap()
-
-    # TODO: create new hot start path schema that contains a control state rather than just a raw path. i.e we need position (local NED) and also a control state (quat/thrust)
-    hot_start_planner = HotStartPlanner()
-
-    # test path
+    hot_start_planner = HotStartPlanner() # TODO: create new hot start path schema that contains a control state rather than just a raw path. i.e we need position (local NED) and also a control state (quat/thrust)
     path_manager = PathManager()
+    obs_recorder = OBSRecorder(run_dir)
 
     # controllers
-    attitude_controller = AttitudeController()
+    attitude_controller = AttitudeController(max_body_rate_rps=2.0)
+
+    # holders
+    imu_data_t = None
+    telemetry = None
+    latest_frame = None
+
+
+    ## STARTUP PROCESS
+    mavlink_client.connect(heartbeat_timeout_s=HEARTBEAT_TIMEOUT_S)
+    mavlink_client.start_heartbeat()
+    mavlink_client.subscribe_telemetry()
+    logger.log_event("mavlink_connected", bridge=mavlink_client.snapshot())
+
+    telemetry = mavlink_client.wait_until_receiving(timeout_s=STARTUP_DATA_TIMEOUT_S)
+    logger.log_event("mavlink_receiving", sim_time_ns=telemetry.sim_time_ns)
+
+    vision_rx.start_listener()
+    logger.log_event("vision_started", receiver=vision_rx.snapshot(), perception=vision_perception.snapshot())
+
+    frame = vision_rx.wait_until_receiving(timeout_s=STARTUP_DATA_TIMEOUT_S)
+    logger.log_event("vision_receiving", sim_time_ns=frame.sim_time_ns)
 
     inner_cycle = 0
     outer_cycle = 0
-    obs_recording_started = False
 
     started_s = time.perf_counter()
     next_inner_cycle_s = started_s
     
-    imu_data_t = None
-    telemetry = None
-    latest_frame = None
-    latest_carrot_attitude_target = None
-
+    # Main try/except/finally
     try:
-        ## STARTUP PROCESS
-        mavlink_client.connect(heartbeat_timeout_s=HEARTBEAT_TIMEOUT_S)
-        mavlink_client.start_heartbeat()
-        mavlink_client.subscribe_telemetry()
-        logger.log_event("mavlink_connected", bridge=mavlink_client.snapshot())
-
-        telemetry = mavlink_client.wait_until_receiving(timeout_s=STARTUP_DATA_TIMEOUT_S)
-        logger.log_event("mavlink_receiving", sim_time_ns=telemetry.sim_time_ns)
-
-        vision_rx.start_listener()
-        logger.log_event("vision_started", receiver=vision_rx.snapshot(), perception=vision_perception.snapshot())
-
-        frame = vision_rx.wait_until_receiving(timeout_s=STARTUP_DATA_TIMEOUT_S)
-        logger.log_event("vision_receiving", sim_time_ns=frame.sim_time_ns)
-
         ## RESET SIM AFTER START
-        if RESET_ON_START:
-            mavlink_client.send_sim_reset_command()
-            logger.log_event("simulator_reset_sent", sim_time_ns=telemetry.sim_time_ns)
+        mavlink_client.send_sim_reset_command()
+        logger.log_event("simulator_reset_sent", sim_time_ns=telemetry.sim_time_ns)
 
-            if RECORD_SCREEN:
+        # start screen recording
+        logger.log_event("obs_recording_started", sim_time_ns=telemetry.sim_time_ns) if obs_recorder.start_recording() and RECORD_SCREEN else logger.log_event("obs_recording_failed", sim_time_ns=telemetry.sim_time_ns)
+
+        # clear states, buffers, and maps
+        vehicle_state = vehicle_state_estimator.reset(sim_time_ns=telemetry.sim_time_ns)
+        vision_rx.clear_buffer()
+        gate_map.clear()
+        
+        reset_countdown_deadline_s = time.perf_counter() + RESET_WAIT_S
+        stationary_imu_samples: list[MavlinkHighresImu] = []
+        last_calibration_imu_time_boot_us: int | None = None
+
+        # before the countdown deadline has been reached
+        # TODO: to be changed to montoring the start lights rather than a countdown
+        while time.perf_counter() < reset_countdown_deadline_s:
+            imu_data_t = mavlink_client.latest_imu
+            latest_frame = vision_rx.get_next_frame()
+            if (
+                imu_data_t is not None
+                and imu_data_t.time_boot_us != last_calibration_imu_time_boot_us
+            ):
+                stationary_imu_samples.append(imu_data_t)
+                last_calibration_imu_time_boot_us = imu_data_t.time_boot_us
+
+            # initialize vehicle state
+            if not vehicle_state_estimator.initialized and imu_data_t:
+                vehicle_state = vehicle_state_estimator.initialize_from_imu(imu_data_t)
+        
+            # init gate map
+            if latest_frame is not None:
+                observation = vision_perception.process_vision_frame(frame=latest_frame)
                 try:
-                    start_recording(run_dir)
-                    obs_recording_started = True
-                    logger.log_event("obs_recording_started", output_dir=str(run_dir))
-                    print(f"OBS recording started in {run_dir}", flush=True)
-                except OBSRecordingError as error:
-                    logger.log_event("obs_recording_start_failed", error=str(error), output_dir=str(run_dir))
-                    print(f"OBS recording start failed: {error}", flush=True)
 
-            # clear states, buffers, and maps
-            vehicle_state = vehicle_state_estimator.reset(sim_time_ns=telemetry.sim_time_ns)
-            vision_rx.clear_buffer()
-            gate_map.clear()
-            
-            reset_countdown_deadline_s = time.perf_counter() + RESET_WAIT_S
-            stationary_imu_samples: list[MavlinkHighresImu] = []
-            last_calibration_imu_time_boot_us: int | None = None
-
-            # before the countdown deadline has been reached
-            # TODO: to be changed to montoring the start lights rather than a countdown
-            while time.perf_counter() < reset_countdown_deadline_s:
-                imu_data_t = mavlink_client.latest_imu
-                latest_frame = vision_rx.get_next_frame()
-                if (
-                    imu_data_t is not None
-                    and imu_data_t.time_boot_us != last_calibration_imu_time_boot_us
-                ):
-                    stationary_imu_samples.append(imu_data_t)
-                    last_calibration_imu_time_boot_us = imu_data_t.time_boot_us
-
-                # initialize vehicle state
-                if not vehicle_state_estimator.initialized and imu_data_t:
-                    vehicle_state = vehicle_state_estimator.initialize_from_imu(imu_data_t)
-            
-                # init gate map
-                if latest_frame is not None:
-                    observation = vision_perception.process_vision_frame(frame=latest_frame)
-                    try:
-
-                        # init hot start path plan
-                        gate_pose_estimator.update_gate_map_from_observation(
-                            observation,
-                            vehicle_state=vehicle_state,
-                            gate_map=gate_map,
-                        )
-                        hot_start_path = hot_start_planner.plan_from_gate_map(gate_map)
-
-                        logger.log_planned_path(
-                            hot_start_path.to_log_dict(origin_local_ned_m=vehicle_state.position_local_ned_m),
-                            cycle=inner_cycle,
-                            planner="hot_start_reset",
-                        )
-
-                    except Exception as error:
-                        print(">> Initializing hot-start failed due to: ", error)
-
-                # timing
-                next_inner_cycle_s += inner_period_s
-                sleep_s = max(0.0, next_inner_cycle_s - time.perf_counter())
-
-                if sleep_s > 0.0:
-                    time.sleep(sleep_s)
-
-            if stationary_imu_samples:
-                vehicle_state = vehicle_state_estimator.initialize_from_stationary_imu_samples(stationary_imu_samples)
-                logger.log_event(
-                    "stationary_imu_calibrated",
-                    sample_count=len(stationary_imu_samples),
-                    duration_s=(
-                        stationary_imu_samples[-1].time_boot_us - stationary_imu_samples[0].time_boot_us
+                    # init hot start path plan
+                    gate_pose_estimator.update_gate_map_from_observation(
+                        observation,
+                        vehicle_state=vehicle_state,
+                        gate_map=gate_map,
                     )
-                    / 1_000_000,
-                    gyro_bias_body_frd_rps=vehicle_state_estimator.gyro_bias_body_frd_rps,
-                    acceleration_rest_body_frd_mps2=vehicle_state_estimator.acceleration_rest_body_frd_mps2,
-                    attitude_quaternion=vehicle_state.attitude_quaternion,
+                    hot_start_path = hot_start_planner.plan_from_gate_map(gate_map)
+
+                    logger.log_planned_path(
+                        hot_start_path.to_log_dict(origin_local_ned_m=vehicle_state.position_local_ned_m),
+                        cycle=inner_cycle,
+                        planner="hot_start_reset",
+                    )
+
+                except Exception as error:
+                    print(">> Initializing hot-start failed due to: ", error)
+
+            # timing
+            next_inner_cycle_s += inner_period_s
+            sleep_s = max(0.0, next_inner_cycle_s - time.perf_counter())
+
+            if sleep_s > 0.0:
+                time.sleep(sleep_s)
+
+        if stationary_imu_samples:
+            vehicle_state = vehicle_state_estimator.initialize_from_stationary_imu_samples(stationary_imu_samples)
+            logger.log_event(
+                "stationary_imu_calibrated",
+                sample_count=len(stationary_imu_samples),
+                duration_s=(
+                    stationary_imu_samples[-1].time_boot_us - stationary_imu_samples[0].time_boot_us
                 )
-            else:
-                logger.log_event("stationary_imu_calibration_skipped", reason="no_imu_samples")
-
-            if POST_RESET_DELAY_S > 0.0:
-                time.sleep(POST_RESET_DELAY_S)
-
-        ## DO NOT RESET ON START
+                / 1_000_000,
+                gyro_bias_body_frd_rps=vehicle_state_estimator.gyro_bias_body_frd_rps,
+                acceleration_rest_body_frd_mps2=vehicle_state_estimator.acceleration_rest_body_frd_mps2,
+                attitude_quaternion=vehicle_state.attitude_quaternion,
+            )
         else:
-            telemetry = vehicle_state_estimator.wait_for_update(mavlink_client.get_telemetry, timeout_s=HEARTBEAT_TIMEOUT_S)
+            logger.log_event("stationary_imu_calibration_skipped", reason="no_imu_samples")
+
+        # DELAY BUFFER POST RESET
+        if POST_RESET_DELAY_S > 0.0:
+            time.sleep(POST_RESET_DELAY_S)
+
+
 
         if ARM_ON_START:
             mavlink_client.arm_and_wait(timeout_s=ARM_TIMEOUT_S)
@@ -247,7 +235,7 @@ def main() -> int:
                 )
 
             if telemetry is not None:
-                logger.log_telemetry(telemetry, cycle=inner_cycle)
+                logger.log_telemetry(telemetry, inner_cycle=inner_cycle)
 
             outer_loop_ran = loop_started_s >= next_outer_cycle_s
 
@@ -261,7 +249,7 @@ def main() -> int:
                     vision_rx.record_frame_cycle(latest_frame.frame_id, inner_cycle)
                     frame_log = {
                         "frame_id": latest_frame.frame_id,
-                        "cycle": inner_cycle,
+                        "inner_cycle": inner_cycle,
                         "outer_cycle": outer_cycle,
                         "sim_time_ns": latest_frame.sim_time_ns,
                         "saved_path": latest_frame.saved_path,
@@ -396,7 +384,6 @@ def main() -> int:
                 )
 
             logger.log_cycle(
-                cycle=inner_cycle,
                 inner_cycle=inner_cycle,
                 outer_cycle=outer_cycle,
                 sim_time_ns=telemetry.sim_time_ns if telemetry else None,
@@ -409,11 +396,11 @@ def main() -> int:
                 bridge=mavlink_client.snapshot(),
                 command=command_result,
                 inner_loop={
-                    "cycle": inner_cycle,
+                    "inner_cycle": inner_cycle,
                     "hz": INNER_LOOP_HZ,
                 },
                 outer_loop={
-                    "cycle": outer_cycle,
+                    "outer_cycle": outer_cycle,
                     "hz": OUTER_LOOP_HZ,
                     "ran": outer_loop_ran,
                 },
@@ -429,13 +416,13 @@ def main() -> int:
             )
             logger.log_gate_map(
                 gate_map.get_next_gates(10_000),
-                cycle=inner_cycle,
+                inner_cycle=inner_cycle,
                 sim_time_ns=telemetry.sim_time_ns if telemetry else None,
             )
 
             inner_cycle += 1
 
-            # sleep until next cycle begins
+            # sleep until next inner cycle begins
             if sleep_s > 0.0:
                 time.sleep(sleep_s)
 
@@ -447,17 +434,8 @@ def main() -> int:
 
     # SHUTDOWN
     finally:
-        if obs_recording_started:
-            try:
-                obs_output_path = stop_recording()
-                logger.log_event(
-                    "obs_recording_stopped",
-                    output_path=str(obs_output_path) if obs_output_path else None,
-                )
-                print(f"OBS recording stopped: {obs_output_path}", flush=True)
-            except OBSRecordingError as error:
-                logger.log_event("obs_recording_stop_failed", error=str(error))
-                print(f"OBS recording stop failed: {error}", flush=True)
+        if RECORD_SCREEN:
+            obs_recorder.stop_recording()
 
         vision_rx.shutdown()
         if getattr(mavlink_client, "connected", False):

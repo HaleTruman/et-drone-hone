@@ -33,13 +33,45 @@ class OBSConfig:
 
 
 class OBSRecorder:
-    def __init__(self, config: OBSConfig | None = None) -> None:
-        self.config = config or OBSConfig.from_env()
+    def __init__(self, output_path: str | Path | None = None, config: OBSConfig | None = None) -> None:
+        self.config = config
+        self.output_path = Path(output_path) if output_path is not None else None
         self._client: Any | None = None
         self._target_path: Path | None = None
+        self._recording_started = False
 
-    def start_recording(self, path: str | Path) -> None:
-        output_path = Path(path)
+    def start_recording(self, path: str | Path | None = None) -> bool:
+        try:
+            self._start_recording(path)
+        except Exception as exc:  # noqa: BLE001 - screen recording should not stop the flight loop.
+            print(f"OBS recording start failed: {exc}", flush=True)
+            return False
+
+        self._recording_started = True
+        print(f"OBS recording started in {self.output_path}", flush=True)
+        return True
+
+    def stop_recording(self) -> Path | None:
+        if not self._recording_started:
+            return None
+
+        try:
+            output_path = self._stop_recording()
+        except Exception as exc:  # noqa: BLE001 - shutdown should continue even if OBS fails.
+            print(f"OBS recording stop failed: {exc}", flush=True)
+            return None
+
+        self._recording_started = False
+        print(f"OBS recording stopped: {output_path}", flush=True)
+        return output_path
+
+    def _start_recording(self, path: str | Path | None = None) -> None:
+        if path is not None:
+            self.output_path = Path(path)
+        if self.output_path is None:
+            raise OBSRecordingError("OBS recording output path is not configured.")
+
+        output_path = self.output_path
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         client = self._connect()
@@ -53,7 +85,7 @@ class OBSRecorder:
         except Exception as exc:  # noqa: BLE001 - OBS client raises transport/request-specific exceptions.
             raise OBSRecordingError(f"Failed to start OBS recording: {exc}") from exc
 
-    def stop_recording(self) -> Path | None:
+    def _stop_recording(self) -> Path | None:
         client = self._connect()
 
         try:
@@ -79,6 +111,9 @@ class OBSRecorder:
         if self._client is not None:
             return self._client
 
+        if self.config is None:
+            self.config = OBSConfig.from_env()
+
         try:
             import obsws_python as obs
         except ImportError as exc:
@@ -98,24 +133,6 @@ class OBSRecorder:
             ) from exc
 
         return self._client
-
-
-_DEFAULT_RECORDER: OBSRecorder | None = None
-
-
-def start_recording(path: str | Path) -> None:
-    _get_default_recorder().start_recording(path)
-
-
-def stop_recording() -> Path | None:
-    return _get_default_recorder().stop_recording()
-
-
-def _get_default_recorder() -> OBSRecorder:
-    global _DEFAULT_RECORDER
-    if _DEFAULT_RECORDER is None:
-        _DEFAULT_RECORDER = OBSRecorder()
-    return _DEFAULT_RECORDER
 
 
 def _find_dotenv() -> Path | None:
