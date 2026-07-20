@@ -24,6 +24,7 @@ class Logger:
             "events": [],
             "cycles": [],
             "vision_frames": [],
+            "vision_observations": [],
             "planned_paths": [],
         }
         self.telemetry_records: dict[str, Any] = {
@@ -89,6 +90,16 @@ class Logger:
         self.records["vision_frames"].append(record)
         self._append_jsonl("vision_frames.jsonl", record)
 
+    def log_vision_observation(self, observation: Any, **data: Any) -> None:
+        payload = (
+            observation.to_controller_payload(output_dir="memory")
+            if hasattr(observation, "to_controller_payload")
+            else observation
+        )
+        record = self._with_record_fields({"observation": payload, **data}, record_type="vision_observation")
+        self.records["vision_observations"].append(record)
+        self._append_jsonl("vision_observations.jsonl", record)
+
     def log_planned_path(self, planned_path: Any, **data: Any) -> None:
         record = self._with_record_fields({"planned_path": planned_path, **data}, record_type="planned_path")
         self.records["planned_paths"].append(record)
@@ -141,6 +152,7 @@ class Logger:
             "telemetry_samples": len(self.telemetry_records["samples"]),
             "gate_map_cycles": len(self.gate_map_records["cycles"]),
             "vision_frames": len(self.records["vision_frames"]),
+            "vision_observations": len(self.records["vision_observations"]),
             "planned_paths": len(self.records["planned_paths"]),
             "commands_emitted": command_count,
             "max_deadline_lateness_ms": self._max_deadline_lateness_ms,
@@ -271,6 +283,7 @@ class Logger:
             "telemetry.jsonl": self.telemetry_records["samples"],
             "gate_map.jsonl": self.gate_map_records["cycles"],
             "vision_frames.jsonl": self.records["vision_frames"],
+            "vision_observations.jsonl": self.records["vision_observations"],
             "planned_paths.jsonl": self.records["planned_paths"],
         }
         for filename, records in streams.items():

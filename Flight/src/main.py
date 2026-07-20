@@ -3,6 +3,8 @@
 from pathlib import Path
 import time
 
+from core.control.hover.controller import HoverController
+from core.coordinates import quaternion_from_roll_pitch_yaw_deg
 from autonomy.planning import HotStartPlanner, PathManager
 from core.control.attitude import AttitudeController
 from core.control.carrot import CarrotController
@@ -38,7 +40,11 @@ GATE_MIN_OBSERVATIONS = 2
 CARROT_LOOKAHEAD_M = 3.0
 ALLOW_FLIGHT = True
 CREATE_VIDEO = False
-RECORD_SCREEN = False
+RECORD_SCREEN = True
+
+# Test
+TARGET_QUATERNION = quaternion_from_roll_pitch_yaw_deg(0.0, -0.8, 0)
+TARGET_THRUST = 0.265
 
 def main() -> int:
     inner_period_s = 1.0 / INNER_LOOP_HZ
@@ -72,11 +78,18 @@ def main() -> int:
     gate_map = GateMap()
     hot_start_planner = HotStartPlanner() # TODO: create new hot start path schema that contains a control state rather than just a raw path. i.e we need position (local NED) and also a control state (quat/thrust)
     path_manager = PathManager()
-    path_manager.build_test_path(
-        length_m=70,
-        width_m=20,
-        height_m=2.0,
-        point_count=150
+
+    # path_manager.build_test_path(
+    #     length_m=70,
+    #     width_m=20,
+    #     height_m=2.0,
+    #     point_count=150
+    # )
+    path_manager.build_straight_line(
+        length_m=100,
+        up_down_angle_deg=4.5,
+        left_right_angle_deg=17,
+        point_count=200
     )
     obs_recorder = OBSRecorder(run_dir)
 
@@ -90,17 +103,19 @@ def main() -> int:
         )
     
     carrot_controller = CarrotController(
-        speed_mps=3,
+        speed_mps=1,
         position_gain=0.75,
         velocity_gain=1.0,
         initial_thrust=0.265
         )
-    # hover_controller = HoverController()
+    
+    hover_controller = HoverController()
 
     # holders
     imu_data_t = None
     telemetry = None
     latest_frame = None
+    observation = None
 
 
     ## STARTUP PROCESS
@@ -157,26 +172,34 @@ def main() -> int:
                 vehicle_state = vehicle_state_estimator.initialize_from_imu(imu_data_t)
         
             # init gate map
-            # if latest_frame is not None:
-            #     observation = vision_perception.process_vision_frame(frame=latest_frame)
-            #     try:
+            if latest_frame is not None:
+                observation = vision_perception.process_vision_frame(frame=latest_frame)
+                logger.log_vision_observation(
+                    observation,
+                    frame_id=latest_frame.frame_id,
+                    sim_time_ns=latest_frame.sim_time_ns,
+                    gate_count=len(observation.gates),
+                    source=observation.source,
+                    phase="reset_countdown",
+                )
 
-            #         # init hot start path plan
-            #         gate_pose_estimator.update_gate_map_from_observation(
-            #             observation,
-            #             vehicle_state=vehicle_state,
-            #             gate_map=gate_map,
-            #         )
-            #         hot_start_path = hot_start_planner.plan_from_gate_map(gate_map)
+                # try:
+                #     # init hot start path plan
+                #     gate_pose_estimator.update_gate_map_from_observation(
+                #         observation,
+                #         vehicle_state=vehicle_state,
+                #         gate_map=gate_map,
+                #     )
+                #     hot_start_path = hot_start_planner.plan_from_gate_map(gate_map)
 
-            #         logger.log_planned_path(
-            #             hot_start_path.to_log_dict(origin_local_ned_m=vehicle_state.position_local_ned_m),
-            #             cycle=inner_cycle,
-            #             planner="hot_start_reset",
-            #         )
+                #     logger.log_planned_path(
+                #         hot_start_path.to_log_dict(origin_local_ned_m=vehicle_state.position_local_ned_m),
+                #         cycle=inner_cycle,
+                #         planner="hot_start_reset",
+                #     )
 
-            #     except Exception as error:
-            #         print(">> Initializing hot-start failed due to: ", error)
+                # except Exception as error:
+                #     print(">> Initializing hot-start failed due to: ", error)
 
             # timing
             next_inner_cycle_s += inner_period_s
@@ -211,7 +234,7 @@ def main() -> int:
         logger.log_event("armed", bridge=mavlink_client.snapshot())
         
         # TODO: work on path_manager and allow it to update the remainder of the path from the current position of the drone (i.e reset origin and "initial" velocity and have the drone continue from there)
-        
+        print("LATEST OBSERVATION: ", observation)
         
         ## MAIN LOOP
         control_started_s = time.perf_counter()
@@ -374,9 +397,15 @@ def main() -> int:
                             desired_attitude_quaternion=carrot_target["quaternion"],
                             thrust=carrot_target["thrust"]
                         )
+                    
+                    ## TESTING ##
+                    # control_target = attitude_controller.compute_control(
+                    #     vehicle_state,
+                    #     desired_attitude_quaternion=TARGET_QUATERNION,
+                    #     thrust=TARGET_THRUST
+                    # )
 
                     mavlink_client.send_attitude_target(control_target)
-                    # mavlink_client.send_motor_target(motor_commands=(0.3, 0.27, 0.3, 0.27))
 
                     command_result = {
                         "emitted": True,

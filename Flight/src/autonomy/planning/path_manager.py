@@ -46,6 +46,36 @@ class PathManager:
         down = -1.5 * height + 0.5 * height * np.sin(2.0 * np.pi * north / length)
         return self.set_waypoints(zip(north, east, down))
 
+    def build_straight_line(
+        self,
+        *,
+        length_m: float = 10,
+        point_count: int = 30,
+        up_down_angle_deg: float = 0.0,
+        left_right_angle_deg: float = 0.0,
+    ) -> np.ndarray:
+        """Build a straight local-NED path from the origin.
+
+        Angles are measured from forward/north. Positive up_down_angle_deg points
+        upward, and positive left_right_angle_deg points right/east.
+        """
+        length = float(length_m)
+        count = int(point_count)
+        up_down_rad = np.deg2rad(float(up_down_angle_deg))
+        left_right_rad = np.deg2rad(float(left_right_angle_deg))
+        if length <= 0.0:
+            raise ValueError("length_m must be positive")
+        if count < 2:
+            raise ValueError("point_count must be at least 2")
+
+        distance = np.linspace(0.0, length, count)
+        horizontal_scale = np.cos(up_down_rad)
+        north = distance * horizontal_scale * np.cos(left_right_rad)
+        east = distance * horizontal_scale * np.sin(left_right_rad)
+        down = -distance * np.sin(up_down_rad)
+
+        return self.set_waypoints(zip(north, east, down))
+
     def generate_spline(self) -> object:
         if self.spline_generator is None:
             raise NotImplementedError("Inject the chosen spline generator.")
