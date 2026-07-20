@@ -1,22 +1,20 @@
 """Minimal live MAVLink and vision stream entry point."""
 
-import math
 from pathlib import Path
 import time
 
 from autonomy.planning import HotStartPlanner, PathManager
 from core.control.attitude import AttitudeController
-from core.control.carrot import CarrotChaserConfig, CarrotChaserController
+from core.control.carrot import CarrotController
 from core.logging import Logger, generate_mp4
 from core.logging.obs import OBSRecorder
-from core.schemas import MavlinkHighresImu, MavlinkTelemetry, VehicleState
+from core.schemas import MavlinkHighresImu, MavlinkTelemetry
 from sensing.gates import GateMap
-from sensing.perception import GatePoseEstimator, GateTargetTracker, select_guidance_gate
+from sensing.perception import GatePoseEstimator
 from sensing.telemetry import MavlinkClient
 from sensing.vision import VisionStreamReceiver
 from sensing.odometry import VehicleStateEstimator
 from sensing.vision.service import VisionPerceptionConfig, VisionPerceptionService
-from core.coordinates import quaternion_from_roll_pitch_yaw_deg
 
 MAVLINK_ENDPOINT = "udpin:127.0.0.1:14550"
 VISION_HOST = "0.0.0.0"
@@ -37,9 +35,7 @@ MIN_GATE_CONFIDENCE = 0.10
 CONTROL_METHOD = "carrot_motor_test"
 GATE_ASSOCIATION_DISTANCE_M = 6.0
 GATE_MIN_OBSERVATIONS = 2
-HOVER_THRUST = 0.27
-LEVEL_QUATERNION = (1.0,  0.0,  0.0, 0.0)
-TARGET_QUATERNION = quaternion_from_roll_pitch_yaw_deg(0.0, -9.5, 0.0)
+CARROT_LOOKAHEAD_M = 3.0
 ALLOW_FLIGHT = True
 CREATE_VIDEO = False
 RECORD_SCREEN = False
@@ -76,10 +72,30 @@ def main() -> int:
     gate_map = GateMap()
     hot_start_planner = HotStartPlanner() # TODO: create new hot start path schema that contains a control state rather than just a raw path. i.e we need position (local NED) and also a control state (quat/thrust)
     path_manager = PathManager()
+    path_manager.build_test_path(
+        length_m=70,
+        width_m=20,
+        height_m=2.0,
+        point_count=150
+    )
     obs_recorder = OBSRecorder(run_dir)
 
     # controllers
-    attitude_controller = AttitudeController(max_body_rate_rps=2.0)
+    attitude_controller = AttitudeController(
+        roll_gain=1.0,
+        pitch_gain=1.0,
+        yaw_gain=0.5,
+        damping=0.15,
+        max_body_rate_rps=1.0
+        )
+    
+    carrot_controller = CarrotController(
+        speed_mps=3,
+        position_gain=0.75,
+        velocity_gain=1.0,
+        initial_thrust=0.265
+        )
+    # hover_controller = HoverController()
 
     # holders
     imu_data_t = None
@@ -141,26 +157,26 @@ def main() -> int:
                 vehicle_state = vehicle_state_estimator.initialize_from_imu(imu_data_t)
         
             # init gate map
-            if latest_frame is not None:
-                observation = vision_perception.process_vision_frame(frame=latest_frame)
-                try:
+            # if latest_frame is not None:
+            #     observation = vision_perception.process_vision_frame(frame=latest_frame)
+            #     try:
 
-                    # init hot start path plan
-                    gate_pose_estimator.update_gate_map_from_observation(
-                        observation,
-                        vehicle_state=vehicle_state,
-                        gate_map=gate_map,
-                    )
-                    hot_start_path = hot_start_planner.plan_from_gate_map(gate_map)
+            #         # init hot start path plan
+            #         gate_pose_estimator.update_gate_map_from_observation(
+            #             observation,
+            #             vehicle_state=vehicle_state,
+            #             gate_map=gate_map,
+            #         )
+            #         hot_start_path = hot_start_planner.plan_from_gate_map(gate_map)
 
-                    logger.log_planned_path(
-                        hot_start_path.to_log_dict(origin_local_ned_m=vehicle_state.position_local_ned_m),
-                        cycle=inner_cycle,
-                        planner="hot_start_reset",
-                    )
+            #         logger.log_planned_path(
+            #             hot_start_path.to_log_dict(origin_local_ned_m=vehicle_state.position_local_ned_m),
+            #             cycle=inner_cycle,
+            #             planner="hot_start_reset",
+            #         )
 
-                except Exception as error:
-                    print(">> Initializing hot-start failed due to: ", error)
+            #     except Exception as error:
+            #         print(">> Initializing hot-start failed due to: ", error)
 
             # timing
             next_inner_cycle_s += inner_period_s
@@ -202,6 +218,9 @@ def main() -> int:
         next_inner_cycle_s = control_started_s
         next_outer_cycle_s = control_started_s
 
+        logger.log_event("flight_began", flight_began_s=control_started_s)
+        carrot_target = None
+
         while RUN_S is None or time.perf_counter() - control_started_s < RUN_S:
             # inner loop timing
             loop_started_s = time.perf_counter()
@@ -232,6 +251,18 @@ def main() -> int:
                 next_outer_cycle_s += outer_period_s
                 latest_frame = vision_rx.get_next_frame()
                 outer_cycle += 1
+
+                # compute attitude target for path-following test
+                carrot = path_manager.carrot_point(
+                    vehicle_state.position_local_ned_m,
+                    CARROT_LOOKAHEAD_M,
+                )
+                carrot_target = carrot_controller.compute_control(
+                    vehicle_state=vehicle_state,
+                    carrot=carrot,
+                    lookahead_m=CARROT_LOOKAHEAD_M,
+                )
+                # hover_target = hover_controller.compute_control(vehicle_state=vehicle_state)
            
                 if latest_frame is not None:
                     vision_rx.record_frame_cycle(latest_frame.frame_id, inner_cycle)
@@ -321,22 +352,36 @@ def main() -> int:
 
             else:
                 command_result = None
-
-                control_target = attitude_controller.compute_control(
-                        vehicle_state,
-                        LEVEL_QUATERNION,
-                        thrust=HOVER_THRUST,
-                    )
+                control_target = {}
 
                 # Send flight commands for one second
                 if ALLOW_FLIGHT:
+                    # carrot target
+                    if carrot_target is None:
+                        carrot = path_manager.carrot_point(
+                            vehicle_state.position_local_ned_m,
+                            CARROT_LOOKAHEAD_M,
+                        )
+                        carrot_target = carrot_controller.compute_control(
+                            vehicle_state=vehicle_state,
+                            carrot=carrot,
+                            lookahead_m=CARROT_LOOKAHEAD_M,
+                        )
+
+                    if carrot_target:
+                        control_target = attitude_controller.compute_control(
+                            vehicle_state,
+                            desired_attitude_quaternion=carrot_target["quaternion"],
+                            thrust=carrot_target["thrust"]
+                        )
+
                     mavlink_client.send_attitude_target(control_target)
                     # mavlink_client.send_motor_target(motor_commands=(0.3, 0.27, 0.3, 0.27))
 
                     command_result = {
                         "emitted": True,
                         "sim_time_ns": telemetry.sim_time_ns,
-                        "reason": "hover_level_attitude",
+                        "reason": "carrot_path_following",
                         "attitude_target": control_target,
                         "inner_loop_cycle": inner_cycle,
                         "outer_loop_cycle": outer_cycle,
@@ -346,7 +391,7 @@ def main() -> int:
                     command_result = {
                             "emitted": False,
                             "sim_time_ns": telemetry.sim_time_ns,
-                            "reason": "hover_level_attitude",
+                            "reason": "carrot_path_following",
                             "attitude_target": control_target,
                             "inner_loop_cycle": inner_cycle,
                             "outer_loop_cycle": outer_cycle,
@@ -392,14 +437,14 @@ def main() -> int:
                     "hz": OUTER_LOOP_HZ,
                     "ran": outer_loop_ran,
                 },
-                hover={
-                    "thrust": HOVER_THRUST,
-                    "quaternion": LEVEL_QUATERNION,
-                },
+                carrot=carrot_controller.last_payload,
+                # hover={
+                #     "target": hover_controller.last_payload,
+                # },
                 vision={
                     **vision_rx.snapshot(),
                     "perception": vision_perception.snapshot(),
-                    "gate_count": len(gate_map.get_next_gates(10_000)),
+                    # "gate_count": len(gate_map.get_next_gates(10_000)),
                 },
             )
             logger.log_gate_map(
@@ -450,24 +495,6 @@ def main() -> int:
 
     return 0
 
-
-def build_controller_test_path(
-    start_position_local_ned_m: tuple[float, float, float],
-    *,
-    length_m: float = 30.0,
-    point_count: int = 7,
-    pitch_up_angle_deg: float = 2.5,
-) -> list[tuple[float, float, float]]:
-    start_x, start_y, start_z = (float(value) for value in start_position_local_ned_m)
-    up_slope = math.tan(math.radians(float(pitch_up_angle_deg)))
-    waypoints: list[tuple[float, float, float]] = []
-    for index in range(point_count):
-        fraction = index / max(point_count - 1, 1)
-        forward_m = float(length_m) * fraction
-        curve_y_m = 2.0 * math.sin(fraction * math.pi / 2.0)
-        up_m = up_slope * forward_m
-        waypoints.append((start_x + forward_m, start_y + curve_y_m, start_z - up_m))
-    return waypoints
 
 if __name__ == "__main__":
     raise SystemExit(main())

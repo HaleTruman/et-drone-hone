@@ -1,3 +1,3 @@
-from .controller import CarrotChaserConfig, CarrotChaserController
+from .controller import CarrotController
 
-__all__ = ["CarrotChaserConfig", "CarrotChaserController"]
+__all__ = ["CarrotController"]

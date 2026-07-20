@@ -24,6 +24,28 @@ class PathManager:
         self._refresh_lengths()
         return self.get_waypoints()
 
+    def build_test_path(
+        self,
+        *,
+        length_m: float = 30.0,
+        width_m: float = 8.0,
+        height_m: float = 1.0,
+        point_count: int = 31,
+    ) -> np.ndarray:
+        length = float(length_m)
+        width = float(width_m)
+        height = float(height_m)
+        count = int(point_count)
+        if length <= 0.0:
+            raise ValueError("length_m must be positive")
+        if count < 2:
+            raise ValueError("point_count must be at least 2")
+
+        north = np.linspace(0.0, length, count)
+        east = 0.5 * width * np.sin(2.0 * np.pi * north / (0.5 * length))
+        down = -1.5 * height + 0.5 * height * np.sin(2.0 * np.pi * north / length)
+        return self.set_waypoints(zip(north, east, down))
+
     def generate_spline(self) -> object:
         if self.spline_generator is None:
             raise NotImplementedError("Inject the chosen spline generator.")

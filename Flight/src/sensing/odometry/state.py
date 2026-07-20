@@ -155,7 +155,7 @@ class VehicleStateEstimator:
         self.sim_time_ns = int(imu_data_t.time_boot_us) * 1_000
         self.last_imu_time_boot_us = int(imu_data_t.time_boot_us)
         self.acceleration_body_frd_mps2 = vec3(imu_data_t.acceleration_body_frd_mps2)
-        self.angular_velocity_body_frd_rps = self._corrected_gyro(imu_data_t.gyro_body_frd_rps)
+        self.angular_velocity_body_frd_rps = self._adjusted_gyro(imu_data_t.gyro_body_frd_rps)
         self.attitude_quaternion = _attitude_from_accelerometer(self.acceleration_body_frd_mps2)
 
         self.acceleration_local_ned_mps2 = vec3(
@@ -218,8 +218,8 @@ class VehicleStateEstimator:
             return self.state
 
         # Correct body-frame specific force before rotating it with the updated attitude.
-        self.acceleration_body_frd_mps2 = self._corrected_accel(imu_data_t.acceleration_body_frd_mps2)
-        self.angular_velocity_body_frd_rps = self._corrected_gyro(imu_data_t.gyro_body_frd_rps)
+        self.acceleration_body_frd_mps2 = self._ajusted_accel(imu_data_t.acceleration_body_frd_mps2)
+        self.angular_velocity_body_frd_rps = self._adjusted_gyro(imu_data_t.gyro_body_frd_rps)
 
         angular_velocity = np.asarray(self.angular_velocity_body_frd_rps, dtype=float)
         previous_rates = np.asarray(previous_angular_velocity, dtype=float)
@@ -249,32 +249,23 @@ class VehicleStateEstimator:
         self.velocity_local_ned_mps = vec3(velocity + acceleration * dt_s)
         return self.state
 
-    def _corrected_gyro(self, gyro_body_frd_rps: Vec3) -> Vec3:
+    def _adjusted_gyro(self, gyro_body_frd_rps: Vec3) -> Vec3:
         """
         This correction applies both a gyro bias correction that is measured during startup
         and a sign correction to align the gyro data with the FRD angular convention.
-        Pitch up - positive
-        Roll right - positive
-        Yaw right - positive
+        - Pitch up - positive
+        - Roll right - positive
+        - Yaw right - positive
         """
         return vec3(-(np.asarray(gyro_body_frd_rps, dtype=float) - np.asarray(self.gyro_bias_body_frd_rps, dtype=float)))
 
-    def _corrected_accel(self, acceleration_body_frd_mps2: Vec3) -> Vec3:
+    def _ajusted_accel(self, acceleration_body_frd_mps2: Vec3) -> Vec3:
         """
-        Flip front/right acceleration signs while preserving the down/up axis.
+        Adjust acceleration readings.
         """
         acceleration = np.asarray(acceleration_body_frd_mps2, dtype=float)
-        return vec3((-acceleration[0], -acceleration[1], acceleration[2]))
+        return vec3((acceleration[0], acceleration[1], acceleration[2]))
 
-# old stuff
-# def _attitude_from_accelerometer(acceleration_body_frd_mps2: Vec3) -> QuatWxyz:
-#     acceleration = np.asarray(acceleration_body_frd_mps2, dtype=float)
-#     norm = float(np.linalg.norm(acceleration))
-#     if norm <= 1e-9:
-#         return IDENTITY_QUATERNION
-#     measured_up_local = np.array((0.0, 0.0, -1.0), dtype=float)
-#     measured_up_body = acceleration / norm
-#     return _quaternion_between_vectors(measured_up_body, measured_up_local)
 
 def _attitude_from_accelerometer(acceleration_body_frd_mps2: Vec3) -> QuatWxyz:
     accel = np.asarray(acceleration_body_frd_mps2, dtype=float)
@@ -288,22 +279,8 @@ def _attitude_from_accelerometer(acceleration_body_frd_mps2: Vec3) -> QuatWxyz:
     
     return _quaternion_between_vectors(measured_up_body, measured_up_inertial)
 
-# TODO: Old
-# def _integrate_attitude_quaternion(
-#     attitude_quaternion: QuatWxyz,
-#     angular_velocity_body_frd_rps: Vec3,
-#     dt_s: float,
-# ) -> QuatWxyz:
-#     q = np.asarray(attitude_quaternion, dtype=float)
-#     omega = np.asarray((0.0, *angular_velocity_body_frd_rps), dtype=float)
-#     q_dot = 0.5 * _quaternion_multiply(q, omega)
-#     return quat_wxyz(normalize_quaternion(q + q_dot * float(dt_s)))
 
-def _integrate_attitude_quaternion(
-    attitude_quaternion: QuatWxyz,
-    angular_velocity_body_frd_rps: Vec3,
-    dt_s: float,
-) -> QuatWxyz:
+def _integrate_attitude_quaternion(attitude_quaternion: QuatWxyz, angular_velocity_body_frd_rps: Vec3, dt_s: float) -> QuatWxyz:
     q = np.asarray(attitude_quaternion, dtype=float)
     omega = np.array([0.0, *angular_velocity_body_frd_rps], dtype=float)
     
