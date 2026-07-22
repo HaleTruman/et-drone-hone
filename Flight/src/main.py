@@ -40,6 +40,8 @@ CONTROL_METHOD = "carrot_motor_test"
 GATE_ASSOCIATION_DISTANCE_M = 6.0
 GATE_MIN_OBSERVATIONS = 2
 CARROT_LOOKAHEAD_M = 3.0
+PLANNING_GATE_COUNT = 2
+EXCLUSION_DISTANCE = 2.0
 ALLOW_FLIGHT = True
 CREATE_VIDEO = False
 RECORD_SCREEN = False
@@ -76,7 +78,7 @@ def main() -> int:
     vision_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vision")
     obs_recorder = OBSRecorder(run_dir)
     gate_map = GateMap()
-    path_manager = PathManager()
+    path_manager = PathManager(max_gates=PLANNING_GATE_COUNT, exclusion_distance_m=EXCLUSION_DISTANCE)
     system_mode_manager = SystemModeManager()
     logger.log_event("system_mode_initialized", system_mode=system_mode_manager.system_mode.value)
 
@@ -109,6 +111,20 @@ def main() -> int:
         ],
     )
 
+    planned_path = path_manager.build_straight_line(
+        length_m=100.0,
+        point_count=200,
+        up_down_angle_deg=2.5,
+        left_right_angle_deg=0.0
+    )
+
+    # planned_path = path_manager.build_test_path(
+    #     length_m=120,
+    #     width_m=10,
+    #     height_m=0,
+    #     point_count=200
+    # )
+
     # controllers
     attitude_controller = AttitudeController(
         roll_gain=1.0,
@@ -119,9 +135,9 @@ def main() -> int:
         )
     
     carrot_controller = CarrotController(
-        speed_mps=3,
-        position_gain=0.75,
-        velocity_gain=1.0,
+        speed_mps=5,
+        position_gain=1.5,
+        velocity_gain=0.75,
         initial_thrust=0.265
         )
     
@@ -232,8 +248,13 @@ def main() -> int:
         else:
             logger.log_event("deterministic_vision_test_skipped", reason="no_latest_frame")
 
-        gate_map.update_from_observation(observation=TEST_OBSERVATION, vehicle_state=vehicle_state_estimator.state)
-        planned_path = path_manager.plan_from_gate_map(gate_map.gates)
+        gate_map.update_from_observation(observation=observation, vehicle_state=vehicle_state_estimator.state)
+
+        # planned_path = path_manager.plan_from_gate_map(
+        #     gate_map.gates,
+        #     position_local_ned_m=vehicle_state.position_local_ned_m,
+        # )
+
         logger.log_planned_path(
             planned_path.to_log_dict(origin_local_ned_m=vehicle_state.position_local_ned_m),
             cycle=inner_cycle,
@@ -315,12 +336,27 @@ def main() -> int:
                 outer_cycle += 1
 
                 if vision_pending is not None and vision_pending[0].done():
-                    vision_future, frame_log, frame_outer_cycle = vision_pending
+                    vision_future, frame_log, frame_outer_cycle, frame_vehicle_state = vision_pending
                     try:
                         observation = vision_future.result()
                         frame_log["gate_count"] = len(observation.gates)
                         frame_log["observation"] = observation.to_controller_payload(output_dir="memory")
                         logger.log_vision_frame(frame_log, cycle=frame_outer_cycle, status="processed")
+                        gate_map.update_from_observation(
+                            observation=observation,
+                            vehicle_state=frame_vehicle_state,
+                        )
+                        # planned_path = path_manager.plan_from_gate_map(
+                        #     gate_map.gates,
+                        #     position_local_ned_m=frame_vehicle_state.position_local_ned_m,
+                        # )
+                        # logger.log_test_planned_path(
+                        #     planned_path.to_log_dict(origin_local_ned_m=frame_vehicle_state.position_local_ned_m),
+                        #     cycle=inner_cycle,
+                        #     outer_cycle=outer_cycle,
+                        #     frame_id=frame_log["frame_id"],
+                        #     planner="vision_gate_map_spline",
+                        # )
                     except Exception as error:  # noqa: BLE001
                         logger.log_vision_frame(frame_log, cycle=frame_outer_cycle, status="failed", error=str(error))
                         print(f"vision frame={frame_log['frame_id']} failed: {error}", flush=True)
@@ -356,6 +392,7 @@ def main() -> int:
                         vision_executor.submit(vision_perception.process_vision_frame, latest_frame),
                         frame_log,
                         outer_cycle,
+                        vehicle_state,
                     )
 
             control_target = {}

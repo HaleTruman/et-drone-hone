@@ -190,7 +190,23 @@ class DeterministicVisionBackend:
             lambda: build_pose_frame(self.cv2, frame_entry, frame_index, contour_frame, clipping_frame, self.pose_settings),
         )
         instance_frame = self._timed("instanceTracking", lambda: self.instance_runtime.process_frame(bbox_frame, pose_frame))
-        observation = self._vision_observation_from_instance_frame(instance_frame, frame_id=frame_id, sim_time_ns=sim_time_ns)
+        trace = self._observation_trace(
+            frame_entry=frame_entry,
+            mask_entry=mask_entry,
+            mask_stats=mask_stats,
+            mask_manifest=mask_manifest,
+            bbox_frame=bbox_frame,
+            clipping_frame=clipping_frame,
+            contour_frame=contour_frame,
+            pose_frame=pose_frame,
+            instance_frame=instance_frame,
+        )
+        observation = self._vision_observation_from_instance_frame(
+            instance_frame,
+            frame_id=frame_id,
+            sim_time_ns=sim_time_ns,
+            trace=trace,
+        )
 
         if not self.config.keep_scratch:
             self._cleanup_frame_work(source_path, mask_entry)
@@ -279,7 +295,14 @@ class DeterministicVisionBackend:
                 f"got {width}x{height}"
             )
 
-    def _vision_observation_from_instance_frame(self, instance_frame: dict, *, frame_id: int, sim_time_ns: int) -> VisionObservation:
+    def _vision_observation_from_instance_frame(
+        self,
+        instance_frame: dict,
+        *,
+        frame_id: int,
+        sim_time_ns: int,
+        trace: dict[str, Any] | None = None,
+    ) -> VisionObservation:
         gates = []
         for instance in instance_frame.get("observations") or []:
             gate = self._gate_from_instance(instance)
@@ -290,7 +313,48 @@ class DeterministicVisionBackend:
             sim_time_ns=int(sim_time_ns),
             gates=gates,
             source="deterministic_0721",
+            trace=trace or {},
         )
+
+    def _observation_trace(
+        self,
+        *,
+        frame_entry: dict,
+        mask_entry: dict,
+        mask_stats: dict,
+        mask_manifest: dict,
+        bbox_frame: dict,
+        clipping_frame: dict,
+        contour_frame: dict,
+        pose_frame: dict,
+        instance_frame: dict,
+    ) -> dict[str, Any]:
+        return {
+            "backend": "deterministic_0721",
+            "runId": self.run_id,
+            "frameOrdinal": frame_entry.get("frameOrdinal"),
+            "frameEntry": frame_entry,
+            "settings": {
+                "bbox": self.bbox_settings,
+                "clipping": self.clipping_settings,
+                "contours": self.contour_settings,
+                "pose": self.pose_settings,
+                "instanceTracking": self.instance_settings,
+            },
+            "stageLatencyMs": dict(self.stage_latency_ms),
+            "stages": {
+                "colorMaskbits": {
+                    "entry": mask_entry,
+                    "stats": mask_stats,
+                    "manifest": mask_manifest,
+                },
+                "maskBboxes": bbox_frame,
+                "bboxClipping": clipping_frame,
+                "bboxContours": contour_frame,
+                "poseEstimation": pose_frame,
+                "instanceTracking": instance_frame,
+            },
+        }
 
     def _gate_from_instance(self, instance: dict) -> VisionGateObservation | None:
         pose = instance.get("pose") if isinstance(instance.get("pose"), dict) else {}
@@ -312,6 +376,13 @@ class DeterministicVisionBackend:
             position_confidence=self._clamp01(instance.get("observationQuality")),
             orientation_camera=self._float3(pose.get("rpyCameraDeg")),
             orientation_confidence=self._clamp01(fit_quality.get("overall")),
+            trace={
+                "backend": "deterministic_0721",
+                "sourceInstance": instance,
+                "bbox": instance.get("source", {}).get("bbox") if isinstance(instance.get("source"), dict) else None,
+                "fovClip": instance.get("fovClip") if isinstance(instance.get("fovClip"), dict) else {},
+                "pose": pose,
+            },
         )
 
     @staticmethod

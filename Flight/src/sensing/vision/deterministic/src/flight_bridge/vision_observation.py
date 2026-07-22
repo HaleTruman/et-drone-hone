@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +58,7 @@ class VisionGateObservation:
     position_confidence: float
     orientation_camera: tuple[float, float, float] | None = None
     orientation_confidence: float = 0.0
+    trace: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "VisionGateObservation":
@@ -71,6 +72,7 @@ class VisionGateObservation:
             position_confidence=_clamp01(payload.get("position_confidence")),
             orientation_camera=orientation,
             orientation_confidence=_clamp01(payload.get("orientation_confidence")),
+            trace=dict(payload.get("trace") or {}) if isinstance(payload.get("trace"), dict) else {},
         )
 
     @classmethod
@@ -102,10 +104,17 @@ class VisionGateObservation:
             position_confidence=_clamp01(instance.get("observationQuality")),
             orientation_camera=orientation_camera,
             orientation_confidence=_clamp01(fit_quality.get("overall")),
+            trace={
+                "backend": "vision_instance_mapping",
+                "sourceInstance": instance,
+                "bbox": instance.get("source", {}).get("bbox") if isinstance(instance.get("source"), dict) else None,
+                "fovClip": instance.get("fovClip") if isinstance(instance.get("fovClip"), dict) else {},
+                "pose": pose,
+            },
         )
 
     def to_payload(self) -> dict[str, Any]:
-        return {
+        payload = {
             "id": self.gate_id,
             "position_xyz": [float(value) for value in self.position_camera_m],
             "position_confidence": float(self.position_confidence),
@@ -114,6 +123,9 @@ class VisionGateObservation:
             else [float(value) for value in self.orientation_camera],
             "orientation_confidence": float(self.orientation_confidence),
         }
+        if self.trace:
+            payload["trace"] = self.trace
+        return payload
 
 
 @dataclass(frozen=True)
@@ -130,6 +142,7 @@ class VisionObservation:
     source: str = "vision_instance_mapping"
     camera_position_camera_m: tuple[float, float, float] = (0.0, 0.0, 0.0)
     camera_orientation_camera: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    trace: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_controller_payload(cls, payload: dict[str, Any], *, source: str = "vision") -> "VisionObservation":
@@ -139,11 +152,13 @@ class VisionObservation:
             for gate in payload.get("gates", [])
             if isinstance(gate, dict)
         ]
+        trace = payload.get("trace") if isinstance(payload.get("trace"), dict) else {}
         return cls(
             frame_id=int(run.get("cycle", 0)),
             sim_time_ns=int(run.get("sim_time_ns", 0)),
             gates=gates,
             source=source,
+            trace=dict(trace),
         )
 
     @classmethod
@@ -168,6 +183,7 @@ class VisionObservation:
             sim_time_ns=0 if sim_time_ns is None else int(sim_time_ns),
             gates=gates,
             source=source,
+            trace={"sourceInstanceFrame": payload},
         )
 
     @classmethod
@@ -185,7 +201,7 @@ class VisionObservation:
         return cls.from_instance_frame(payload, sim_time_ns=sim_time_ns, source=source)
 
     def to_controller_payload(self, *, output_dir: str = "memory") -> dict[str, Any]:
-        return {
+        payload = {
             "run": {
                 "output_dir": output_dir,
                 "cycle": int(self.frame_id),
@@ -195,3 +211,6 @@ class VisionObservation:
             "gates": [gate.to_payload() for gate in self.gates],
             "obstacles": [],
         }
+        if self.trace:
+            payload["trace"] = self.trace
+        return payload

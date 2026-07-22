@@ -35,12 +35,14 @@ class PathManager:
         gate_axis_offset_m: float = 1.5,
         max_points: int = 240,
         max_gates: int = 8,
+        exclusion_distance_m: float = 0.0,
     ):
         self.spline_generator = spline_generator
         self.spacing_m = max(0.1, float(spacing_m))
         self.gate_axis_offset_m = max(0.0, float(gate_axis_offset_m))
         self.max_points = max(2, int(max_points))
         self.max_gates = max(1, int(max_gates))
+        self.exclusion_distance_m = max(0.0, float(exclusion_distance_m))
         self._waypoints = np.empty((0, 3))
         self._segment_lengths = np.empty((0,))
         self._cumulative_lengths = np.array([0.0], dtype=float)
@@ -49,10 +51,15 @@ class PathManager:
         return self.set_waypoints(
             [gate.position_local_ned_m for gate in list(gates)[:limit]],
         )
-
-    def plan_from_gate_map(self, gates: Iterable[GateRecord]) -> PlannedPath:
+ 
+    def plan_from_gate_map(
+        self,
+        gates: Iterable[GateRecord],
+        *,
+        position_local_ned_m: Vec3 | None = None,
+    ) -> PlannedPath:
         started = perf_counter()
-        planned_gates = self._planning_gates(gates)
+        planned_gates = self._planning_gates(gates, position_local_ned_m=position_local_ned_m)
         anchors = self._anchors_for_gates(planned_gates)
         points = self._sample_spline(anchors)
         self.set_waypoints(points)
@@ -64,14 +71,32 @@ class PathManager:
             computation_ms=(perf_counter() - started) * 1000.0,
         )
 
-    def _planning_gates(self, gates: Iterable[GateRecord]) -> list[GateRecord]:
+    def _planning_gates(
+        self,
+        gates: Iterable[GateRecord],
+        *,
+        position_local_ned_m: Vec3 | None = None,
+    ) -> list[GateRecord]:
+        position = None if position_local_ned_m is None else _vec3(position_local_ned_m, "position_local_ned_m")
+
+        def distance_m(gate: GateRecord) -> float:
+            if position is None:
+                return 0.0
+            return float(np.linalg.norm(np.asarray(gate.position_local_ned_m, dtype=float) - position))
+
         return sorted(
             [
                 gate
                 for gate in gates
                 if not gate.crossed
+                and (position is None or distance_m(gate) >= self.exclusion_distance_m)
             ],
-            key=lambda gate: (gate.sequence is None, gate.sequence, gate.gate_id),
+            key=lambda gate: (
+                distance_m(gate),
+                gate.sequence is None,
+                gate.sequence,
+                gate.gate_id,
+            ),
         )[: self.max_gates]
 
     def set_waypoints(self, waypoints: Iterable[Vec3]) -> np.ndarray:
@@ -86,7 +111,8 @@ class PathManager:
         width_m: float = 8.0,
         height_m: float = 1.0,
         point_count: int = 31,
-    ) -> np.ndarray:
+    ) -> PlannedPath:
+        started = perf_counter()
         length = float(length_m)
         width = float(width_m)
         height = float(height_m)
@@ -99,7 +125,17 @@ class PathManager:
         north = np.linspace(0.0, length, count)
         east = 0.5 * width * np.sin(2.0 * np.pi * north / (0.5 * length))
         down = -1.5 * height + 0.5 * height * np.sin(2.0 * np.pi * north / length)
-        return self.set_waypoints(zip(north, east, down))
+        waypoints = np.column_stack((north, east, down))
+        waypoints = waypoints - waypoints[0]
+        points = self.set_waypoints(waypoints).astype(float).tolist()
+        return PlannedPath(
+            points_relative_ned_m=points,
+            anchors_relative_ned_m=points,
+            gate_ids=[],
+            spacing_m=float(self.spacing_m),
+            computation_ms=(perf_counter() - started) * 1000.0,
+            source="test_path",
+        )
 
     def build_straight_line(
         self,
@@ -108,12 +144,13 @@ class PathManager:
         point_count: int = 30,
         up_down_angle_deg: float = 0.0,
         left_right_angle_deg: float = 0.0,
-    ) -> np.ndarray:
+    ) -> PlannedPath:
         """Build a straight local-NED path from the origin.
 
         Angles are measured from forward/north. Positive up_down_angle_deg points
         upward, and positive left_right_angle_deg points right/east.
         """
+        started = perf_counter()
         length = float(length_m)
         count = int(point_count)
         up_down_rad = np.deg2rad(float(up_down_angle_deg))
@@ -129,7 +166,15 @@ class PathManager:
         east = distance * horizontal_scale * np.sin(left_right_rad)
         down = -distance * np.sin(up_down_rad)
 
-        return self.set_waypoints(zip(north, east, down))
+        points = self.set_waypoints(zip(north, east, down)).astype(float).tolist()
+        return PlannedPath(
+            points_relative_ned_m=points,
+            anchors_relative_ned_m=points,
+            gate_ids=[],
+            spacing_m=float(self.spacing_m),
+            computation_ms=(perf_counter() - started) * 1000.0,
+            source="straight_line",
+        )
 
     def generate_spline(self) -> object:
         if self.spline_generator is None:
@@ -294,4 +339,3 @@ def _vec3(value: Vec3, name: str) -> np.ndarray:
     if array.shape != (3,):
         raise ValueError(f"{name} must contain exactly three values")
     return array
-

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -15,6 +15,7 @@ class VisionGateObservation:
     position_confidence: float
     orientation_camera: tuple[float, float, float] | None = None
     orientation_confidence: float = 0.0
+    trace: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "VisionGateObservation":
@@ -30,10 +31,11 @@ class VisionGateObservation:
             if orientation is None
             else tuple(float(value) for value in orientation),
             orientation_confidence=float(payload.get("orientation_confidence", 0.0)),
+            trace=dict(payload.get("trace") or {}) if isinstance(payload.get("trace"), dict) else {},
         )
 
     def to_payload(self) -> dict[str, Any]:
-        return {
+        payload = {
             "id": self.gate_id,
             "position_xyz": [float(value) for value in self.position_camera_m],
             "position_confidence": float(self.position_confidence),
@@ -42,6 +44,9 @@ class VisionGateObservation:
             else [float(value) for value in self.orientation_camera],
             "orientation_confidence": float(self.orientation_confidence),
         }
+        if self.trace:
+            payload["trace"] = self.trace
+        return payload
 
 
 @dataclass(frozen=True)
@@ -50,6 +55,7 @@ class VisionObservation:
     sim_time_ns: int
     gates: list[VisionGateObservation]
     source: str = "vision"
+    trace: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_controller_payload(cls, payload: dict[str, Any], *, source: str = "vision") -> "VisionObservation":
@@ -61,10 +67,11 @@ class VisionObservation:
             for gate in payload.get("gates", [])
             if isinstance(gate, dict)
         ]
-        return cls(frame_id=cycle, sim_time_ns=sim_time_ns, gates=gates, source=source)
+        trace = payload.get("trace") if isinstance(payload.get("trace"), dict) else {}
+        return cls(frame_id=cycle, sim_time_ns=sim_time_ns, gates=gates, source=source, trace=dict(trace))
 
     def to_controller_payload(self, *, output_dir: str = "memory") -> dict[str, Any]:
-        return {
+        payload = {
             "run": {
                 "output_dir": output_dir,
                 "cycle": int(self.frame_id),
@@ -74,3 +81,6 @@ class VisionObservation:
             "gates": [gate.to_payload() for gate in self.gates],
             "obstacles": [],
         }
+        if self.trace:
+            payload["trace"] = self.trace
+        return payload

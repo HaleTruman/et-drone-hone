@@ -562,7 +562,7 @@ class InstanceTrackingRuntime:
                 }
                 self.active_tracks.append(track)
                 self.all_instances.append(track)
-            frame_observations.append({key: value for key, value in observation.items() if key != "source"})
+            frame_observations.append(dict(observation))
 
         frame_out = {
             "frameOrdinal": frame_ordinal,
@@ -744,7 +744,7 @@ def build_instance_tracking(args: argparse.Namespace, progress_callback: Callabl
                 }
                 active_tracks.append(track)
                 all_instances.append(track)
-            frame_observations.append({key: value for key, value in observation.items() if key != "source"})
+            frame_observations.append(dict(observation))
 
         frames_out.append(
             {
