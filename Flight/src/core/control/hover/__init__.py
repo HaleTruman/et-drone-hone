@@ -1,5 +1,5 @@
-"""Minimal hover control."""
+"""Hover control."""
 
-from .controller import HoverController, HoverPIDController
+from .controller import HoverController
 
-__all__ = ["HoverController", "HoverPIDController"]
+__all__ = ["HoverController"]

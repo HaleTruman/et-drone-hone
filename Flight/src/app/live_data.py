@@ -1,4 +1,3 @@
-import base64
 import json
 from dataclasses import dataclass
 from datetime import datetime
@@ -6,6 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 from statistics import median
 from typing import Any
+from urllib.parse import urlencode
 
 
 @dataclass(frozen=True)
@@ -28,6 +28,7 @@ class LiveRun:
     cycles: list[dict[str, Any]]
     frames: list[LiveFrame]
     gate_map_cycles: list[dict[str, Any]]
+    vision_observations: list[dict[str, Any]]
     raw: dict[str, Any]
 
     @property
@@ -73,7 +74,7 @@ def load_live_run_cached(path: str) -> LiveRun:
     return _load_live_run_cached(str(run_dir), *live_run_signature(str(run_dir)))
 
 
-def live_run_signature(path: str) -> tuple[int, int, int, int]:
+def live_run_signature(path: str) -> tuple[int, int, int, int, int]:
     return _run_signature(Path(path).resolve())
 
 
@@ -96,6 +97,7 @@ def load_live_run(path: str) -> LiveRun:
 
     cycles = _normalized_cycles(cycles, _load_telemetry_sidecar(run_dir / "run.json"))
     gate_map_cycles = _load_gate_map_sidecar(run_dir / "run.json")
+    vision_observations = _load_vision_observations(run_dir, raw)
 
     return LiveRun(
         path=str(run_dir),
@@ -107,11 +109,19 @@ def load_live_run(path: str) -> LiveRun:
         cycles=cycles,
         frames=_load_frames(_frames_manifest_path(run_dir)),
         gate_map_cycles=gate_map_cycles,
+        vision_observations=vision_observations,
         raw=raw,
     )
 
 
-def frame_data_uri(run: LiveRun, frame: LiveFrame) -> str:
+def frame_image_url(run: LiveRun, frame_index: int) -> str:
+    frame = run.frames[int(frame_index)]
+    image_path = frame_image_path(run, frame)
+    cache_key = f"{frame.frame_id}-{frame.jpeg_size}-{_mtime_ns(image_path)}"
+    return "/live-frame?" + urlencode({"run": run.path, "index": int(frame_index), "v": cache_key})
+
+
+def frame_image_path(run: LiveRun, frame: LiveFrame) -> Path:
     run_dir = Path(run.path).resolve()
     frame_path = Path(frame.path)
     if frame_path.parent == Path("."):
@@ -120,8 +130,7 @@ def frame_data_uri(run: LiveRun, frame: LiveFrame) -> str:
         image_path = (run_dir / frame_path).resolve()
     if not _is_relative_to(image_path, run_dir):
         raise ValueError("Frame path must stay within the run directory.")
-    encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
-    return f"data:image/jpeg;base64,{encoded}"
+    return image_path
 
 
 def nearest_cycle_for_frame(run: LiveRun, frame: LiveFrame) -> FrameSync:
@@ -157,6 +166,20 @@ def nearest_cycle_for_frame(run: LiveRun, frame: LiveFrame) -> FrameSync:
         target_sim_time_ns=target_sim_time_ns,
         error_ms=abs(cycle_sim_time_ns - target_sim_time_ns) / 1_000_000,
     )
+
+
+def vision_observation_for_frame(run: LiveRun, frame: LiveFrame) -> dict[str, Any] | None:
+    selected: dict[str, Any] | None = None
+    for record in run.vision_observations:
+        frame_id = record.get("frame_id") if isinstance(record, dict) else None
+        if frame_id is None:
+            frame_id = _observation_frame_id(record.get("observation") if isinstance(record, dict) else None)
+        try:
+            if int(frame_id) == int(frame.frame_id):
+                selected = record
+        except (TypeError, ValueError):
+            continue
+    return selected
 
 
 def telemetry_times_s(cycles: list[dict[str, Any]]) -> list[float]:
@@ -201,20 +224,23 @@ def _load_live_run_cached(
     telemetry_mtime_ns: int,
     frames_mtime_ns: int,
     gate_map_mtime_ns: int,
+    vision_observations_mtime_ns: int,
 ) -> LiveRun:
     return load_live_run(resolved_path)
 
 
-def _run_signature(run_dir: Path) -> tuple[int, int, int, int]:
+def _run_signature(run_dir: Path) -> tuple[int, int, int, int, int]:
     run_path = run_dir / "run.json"
     telemetry_path = run_dir / "telemetry.json"
     frames_path = _frames_manifest_path(run_dir)
     gate_map_path = run_dir / "gate_map.json"
+    observations_path = _vision_observations_path(run_dir)
     return (
         _mtime_ns(run_path),
         _mtime_ns(telemetry_path),
         _mtime_ns(frames_path),
         _mtime_ns(gate_map_path),
+        _mtime_ns(observations_path),
     )
 
 
@@ -231,6 +257,48 @@ def _load_gate_map_sidecar(run_path: Path) -> list[dict[str, Any]]:
         if isinstance(cycles, list):
             return [cycle for cycle in cycles if isinstance(cycle, dict)]
     return []
+
+
+def _load_vision_observations(run_dir: Path, raw: dict[str, Any]) -> list[dict[str, Any]]:
+    observations_path = _vision_observations_path(run_dir)
+    if observations_path.is_file():
+        return _load_jsonl_records(observations_path)
+    records = raw.get("vision_observations")
+    return [record for record in records if isinstance(record, dict)] if isinstance(records, list) else []
+
+
+def _load_jsonl_records(path: Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        if isinstance(record, dict):
+            records.append(record)
+    return records
+
+
+def _vision_observations_path(run_dir: Path) -> Path:
+    return run_dir / "lists" / "vision_observations.jsonl"
+
+
+def _observation_frame_id(observation: Any) -> int | None:
+    run = observation.get("run") if isinstance(observation, dict) else None
+    if not isinstance(run, dict):
+        return None
+    frame_id = run.get("cycle")
+    if frame_id is not None:
+        try:
+            return int(frame_id)
+        except (TypeError, ValueError):
+            return None
+    frame_label = run.get("frame_id")
+    if isinstance(frame_label, str) and frame_label.startswith("frame_"):
+        try:
+            return int(frame_label.removeprefix("frame_"))
+        except ValueError:
+            return None
+    return None
 
 
 def _mtime_ns(path: Path) -> int:
@@ -272,7 +340,7 @@ def _timesync_offset_ns(events: list[dict[str, Any]]) -> int | None:
         if not isinstance(bridge, dict):
             continue
         timesync = bridge.get("latest_timesync")
-        telemetry = bridge.get("latest_telemetry") or bridge.get("latest_odometry")
+        telemetry = bridge.get("latest_telemetry")
         if not isinstance(timesync, dict) or not isinstance(telemetry, dict):
             continue
         response_time_ns = timesync.get("response_time_ns", timesync.get("tc1"))

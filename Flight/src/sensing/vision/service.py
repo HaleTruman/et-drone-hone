@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from sensing.perception import VisionGateObservation, VisionObservation
+from mapping.perception import VisionGateObservation, VisionObservation
 from sensing.vision.cnn.rgb_inference import DEFAULT_CHECKPOINT, LightmaskInference
 from sensing.vision.cnn.rgb_normalizer import jpeg_bytes_to_tensor
 from sensing.vision.landmarker.landmark_output import build_controller_payload, build_passthrough_controller_payload

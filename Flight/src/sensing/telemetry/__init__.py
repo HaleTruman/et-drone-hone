@@ -1,6 +1,6 @@
 """Telemetry transport and synchronization."""
 
-from core.schemas import CollisionEvent, RaceStatus, TelemetrySample, TrackGate
+from core.schemas import CollisionEvent, MavlinkTelemetry, RaceStatus, TrackGate
 
 from .mavlink_client import MavlinkClient
 from .sync import DataSynchronizer
@@ -12,7 +12,7 @@ __all__ = [
     "DataSynchronizer",
     "MavlinkBridge",
     "MavlinkClient",
+    "MavlinkTelemetry",
     "RaceStatus",
-    "TelemetrySample",
     "TrackGate",
 ]

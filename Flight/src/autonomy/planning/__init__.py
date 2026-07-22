@@ -1,6 +1,5 @@
 """Path planning tools."""
 
-from .hot_start import HotStartPlanner, HotStartTrajectory
-from .path_manager import PathManager
+from .pathing import PathManager, PlannedPath
 
-__all__ = ["HotStartPlanner", "HotStartTrajectory", "PathManager"]
+__all__ = ["PathManager", "PlannedPath"]

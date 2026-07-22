@@ -75,7 +75,7 @@ def _live_runs_page(live_run_options: list[dict[str, str]]) -> html.Div:
                             ),
                         ]
                     ),
-                    html.Div("Source: run.json, telemetry.json, gate_map.json, and frames.jsonl in logs/runs/", style={"color": COLORS["muted"], "fontSize": "13px", "paddingBottom": "9px"}),
+                    html.Div("Source: run.json, telemetry.json, gate_map.json, frames.jsonl, and vision_observations.jsonl in logs/runs/", style={"color": COLORS["muted"], "fontSize": "13px", "paddingBottom": "9px"}),
                 ],
             ),
             html.Div(id="live-load-error", style={"color": "#b91c1c", "marginTop": "16px"}),
@@ -114,7 +114,14 @@ def _live_runs_page(live_run_options: list[dict[str, str]]) -> html.Div:
             html.Div(
                 style={**PANEL_STYLE, "marginTop": "16px"},
                 children=[
-                    html.H3("Stored Gate Map At Frame", style={"margin": "0 0 12px"}),
+                    html.H3("Frame-Aligned Vision Observation", style={"margin": "0 0 12px"}),
+                    html.Pre(id="live-frame-observation", style=_pre_style("420px")),
+                ],
+            ),
+            html.Div(
+                style={**PANEL_STYLE, "marginTop": "16px"},
+                children=[
+                    html.H3("Vision Observation Gates At Frame", style={"margin": "0 0 12px"}),
                     dcc.Graph(id="live-gate-map-3d", style={"height": "620px"}, config={"displaylogo": False}),
                 ],
             ),

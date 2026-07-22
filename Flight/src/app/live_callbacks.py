@@ -12,12 +12,13 @@ from app.data import flatten_record, value_at
 from app.live_data import (
     LiveRun,
     discover_live_run_dirs,
-    frame_data_uri,
+    frame_image_url,
     live_run_option,
     live_run_signature,
     load_live_run_cached,
     nearest_cycle_for_frame,
     telemetry_times_s,
+    vision_observation_for_frame,
 )
 
 
@@ -33,6 +34,12 @@ AXIS_COLORS = ("#2563eb", "#dc2626", "#16a34a", "#9333ea")
 MAX_TABLE_ROWS = 500
 MAX_PLOT_POINTS = 5_000
 RAW_PREVIEW_LIMIT_BYTES = 500_000
+GATE_OUTER_M = 2.7
+GATE_INNER_M = 1.5
+GATE_DEPTH_M = 0.26
+GATE_NORMAL_INDICATOR_M = 1.2
+CAMERA_VERTICAL_FOV_DEG = 90.0
+CAMERA_ASPECT_RATIO = 16.0 / 9.0
 
 
 def register_live_callbacks(app: Dash, *, root_dir: str) -> None:
@@ -103,21 +110,23 @@ def register_live_callbacks(app: Dash, *, root_dir: str) -> None:
         Output("live-frame-image", "src"),
         Output("live-frame-caption", "children"),
         Output("live-frame-telemetry", "children"),
+        Output("live-frame-observation", "children"),
         Output("live-gate-map-3d", "figure"),
         Input("live-run-path", "value"),
         Input("live-frame-index", "value"),
     )
     def _render_frame(run_path: str | None, frame_index: int | None):
         if not run_path:
-            return "", "No captured run selected.", "", _empty_figure()
+            return "", "No captured run selected.", "", "", _empty_figure()
         try:
             run = load_live_run_cached(run_path)
             if not run.frames:
-                return "", "This run does not contain saved FPV frames.", "", _empty_figure()
+                return "", "This run does not contain saved FPV frames.", "", "", _empty_figure()
             index = min(max(frame_index or 0, 0), len(run.frames) - 1)
             frame = run.frames[index]
             sync = nearest_cycle_for_frame(run, frame)
-            gate_map_figure = _gate_map_figure(run, frame, sync.cycle, index)
+            observation = vision_observation_for_frame(run, frame)
+            gate_map_figure = _vision_observation_figure(run, frame, observation, index)
             details = {
                 "frame": {
                     "index": index,
@@ -135,13 +144,24 @@ def register_live_callbacks(app: Dash, *, root_dir: str) -> None:
                     "record": sync.cycle,
                 },
             }
+            observation_details = {
+                "frame": {
+                    "index": index,
+                    "count": len(run.frames),
+                    "frame_id": frame.frame_id,
+                    "sim_time_ns": frame.sim_time_ns,
+                },
+                "vision_observation": observation,
+            }
+            if observation is None:
+                observation_details["note"] = "No vision observation record matched this frame_id."
             caption = (
                 f"Frame {index + 1}/{len(run.frames)} | id={frame.frame_id} | cycle={frame.cycle if frame.cycle is not None else 'n/a'} | "
                 f"timestamp={frame.sim_time_ns} ns | {frame.jpeg_size:,} bytes"
             )
-            return frame_data_uri(run, frame), caption, json.dumps(details, indent=2), gate_map_figure
+            return frame_image_url(run, index), caption, json.dumps(details, indent=2), json.dumps(observation_details, indent=2), gate_map_figure
         except Exception as exc:  # noqa: BLE001
-            return "", f"Unable to render frame: {exc}", "", _empty_figure()
+            return "", f"Unable to render frame: {exc}", "", "", _empty_figure()
 
     @callback(
         Output("representative-gate-map-3d", "figure"),
@@ -169,7 +189,7 @@ def register_live_callbacks(app: Dash, *, root_dir: str) -> None:
 
 
 @lru_cache(maxsize=8)
-def _render_live_run_payload(run_path: str, _signature: tuple[int, int, int, int]):
+def _render_live_run_payload(run_path: str, _signature: tuple[int, int, int, int, int]):
     run = load_live_run_cached(run_path)
     event_rows = _rows(_recent_records(run.events, MAX_TABLE_ROWS))
     cycle_rows = _rows(_recent_records(run.cycles, MAX_TABLE_ROWS))
@@ -217,6 +237,7 @@ def _summary_cards(run: LiveRun) -> list[html.Div]:
         ("Telemetry Cycles", len(run.cycles)),
         ("Telemetry Span", f"{times[-1]:.3f} s" if times else "n/a"),
         ("FPV Frames", len(run.frames)),
+        ("Vision Observations", len(run.vision_observations)),
         ("Lifecycle Events", len(run.events)),
         ("System Modes", ", ".join(modes) or "n/a"),
         ("Displacement", f"{displacement:.3f} m" if displacement is not None else "n/a"),
@@ -351,6 +372,236 @@ def _gate_map_figure(run: LiveRun, frame: Any, cycle: dict[str, Any] | None, fra
         ],
     )
     return fig
+
+
+def _vision_observation_figure(
+    run: LiveRun,
+    frame: Any,
+    observation_record: dict[str, Any] | None,
+    frame_index: int,
+) -> go.Figure:
+    fig = go.Figure()
+    gates = _vision_observation_gates(observation_record)
+    points: list[list[float]] = [[0.0, 0.0, 0.0]]
+    fig.add_trace(
+        go.Scatter3d(
+            x=[0.0],
+            y=[0.0],
+            z=[0.0],
+            mode="markers+text",
+            name="Camera",
+            text=["camera"],
+            textposition="bottom center",
+            marker={"size": 7, "color": "#dc2626"},
+            showlegend=False,
+        )
+    )
+    max_forward_m = _max_observation_forward_m(gates)
+    for trace, trace_points in _camera_frustum_traces(max_forward_m):
+        points.extend(trace_points)
+        fig.add_trace(trace)
+    for gate in gates:
+        position = gate.get("position_xyz")
+        if not _point3(position):
+            continue
+        plot_position = _camera_observation_point_to_plot(position)
+        points.append(plot_position)
+        gate_id = str(gate.get("id", "gate"))
+        confidence = _round(gate.get("position_confidence"))
+        orientation = gate.get("orientation_xyz")
+        normal = (
+            _camera_observation_vector_to_plot(orientation)
+            if _point3(orientation)
+            else _normalize_vector(np.asarray(plot_position, dtype=float))
+        )
+        for trace, trace_points in _camera_gate_wireframe_traces(plot_position, normal, gate_id):
+            points.extend(trace_points)
+            fig.add_trace(trace)
+        fig.add_trace(
+            go.Scatter3d(
+                x=[plot_position[0]],
+                y=[plot_position[1]],
+                z=[plot_position[2]],
+                mode="markers+text",
+                name=gate_id,
+                text=[gate_id],
+                textposition="top center",
+                marker={"size": 6, "color": "#7c3aed"},
+                customdata=[[confidence]],
+                hovertemplate=(
+                    "gate=%{text}<br>"
+                    "forward=%{x:.3f} m<br>"
+                    "left=%{y:.3f} m<br>"
+                    "up=%{z:.3f} m<br>"
+                    "confidence=%{customdata[0]}<extra></extra>"
+                ),
+                showlegend=False,
+            )
+        )
+
+    title = f"Vision Observation Gates At Frame {frame_index + 1} (id={frame.frame_id})"
+    axis_ranges = _trajectory_axis_ranges(points)
+    ui_revision = f"live-vision-observation:{run.path}:{frame_index}"
+    fig.update_layout(
+        **_layout(title),
+        dragmode="orbit",
+        uirevision=ui_revision,
+        scene={
+            "xaxis": {"title": "Forward (m)", "range": axis_ranges[0]},
+            "yaxis": {"title": "Left (-Right) (m)", "range": axis_ranges[1]},
+            "zaxis": {"title": "Up (m)", "range": axis_ranges[2]},
+            "aspectmode": "cube",
+            "camera": {
+                "eye": {"x": -0.001, "y": 0.0, "z": 0.0},
+                "center": {"x": 1.0, "y": 0.0, "z": 0.0},
+                "up": {"x": 0.0, "y": 0.0, "z": 1.0},
+                "projection": {"type": "perspective"},
+            },
+            "dragmode": "orbit",
+            "uirevision": ui_revision,
+        },
+        annotations=[
+            {
+                "text": f"gates={len(gates)} | source={observation_record.get('source', 'n/a') if isinstance(observation_record, dict) else 'n/a'}",
+                "xref": "paper",
+                "yref": "paper",
+                "x": 0.01,
+                "y": 0.98,
+                "showarrow": False,
+                "font": {"size": 12, "color": "#60708a"},
+            }
+        ],
+    )
+    return fig
+
+
+def _vision_observation_gates(observation_record: dict[str, Any] | None) -> list[dict[str, Any]]:
+    observation = observation_record.get("observation") if isinstance(observation_record, dict) else None
+    gates = observation.get("gates") if isinstance(observation, dict) else None
+    return [gate for gate in gates if isinstance(gate, dict)] if isinstance(gates, list) else []
+
+
+def _camera_observation_point_to_plot(point: list[float]) -> list[float]:
+    right, up, forward = point[:3]
+    return [float(forward), -float(right), float(up)]
+
+
+def _camera_observation_vector_to_plot(vector: list[float]) -> np.ndarray:
+    right, up, forward = vector[:3]
+    return _normalize_vector(np.asarray([float(forward), -float(right), float(up)], dtype=float))
+
+
+def _camera_gate_wireframe_traces(
+    center: list[float],
+    normal: np.ndarray,
+    gate_id: str,
+    *,
+    color: str = "#7c3aed",
+) -> list[tuple[go.Scatter3d, list[list[float]]]]:
+    center_array = np.asarray(center, dtype=float)
+    normal = _normalize_vector(normal)
+    if np.linalg.norm(normal) < 1e-9:
+        normal = np.asarray([1.0, 0.0, 0.0], dtype=float)
+    horizontal, vertical = _gate_plane_axes(normal)
+    depth_offsets = (-GATE_DEPTH_M / 2.0, GATE_DEPTH_M / 2.0)
+    traces: list[tuple[go.Scatter3d, list[list[float]]]] = []
+
+    for depth in depth_offsets:
+        face_center = center_array + normal * depth
+        traces.append(_line_trace(_square_points(face_center, horizontal, vertical, GATE_OUTER_M), f"{gate_id} outer", color, width=5))
+        traces.append(_line_trace(_square_points(face_center, horizontal, vertical, GATE_INNER_M), f"{gate_id} inner", color, width=3, opacity=0.68))
+
+    for size in (GATE_OUTER_M, GATE_INNER_M):
+        half = size / 2.0
+        for h, v in ((-half, -half), (half, -half), (half, half), (-half, half)):
+            edge = np.vstack(
+                [
+                    center_array + normal * depth_offsets[0] + horizontal * h + vertical * v,
+                    center_array + normal * depth_offsets[1] + horizontal * h + vertical * v,
+                ]
+            )
+            traces.append(_line_trace(edge, f"{gate_id} depth", color, width=2, opacity=0.5))
+
+    normal_line = np.vstack([center_array, center_array + normal * GATE_NORMAL_INDICATOR_M])
+    traces.append(_line_trace(normal_line, f"{gate_id} normal", "#f59e0b", width=6))
+    up_line = np.vstack([center_array, center_array + vertical * (GATE_INNER_M / 2.0)])
+    traces.append(_line_trace(up_line, f"{gate_id} up", "#16a34a", width=5))
+    return traces
+
+
+def _camera_frustum_traces(max_forward_m: float) -> list[tuple[go.Scatter3d, list[list[float]]]]:
+    forward_m = max(3.0, float(max_forward_m))
+    half_up = np.tan(np.deg2rad(CAMERA_VERTICAL_FOV_DEG) / 2.0) * forward_m
+    half_left = half_up * CAMERA_ASPECT_RATIO
+    origin = np.asarray([0.0, 0.0, 0.0], dtype=float)
+    corners = np.asarray(
+        [
+            [forward_m, -half_left, -half_up],
+            [forward_m, half_left, -half_up],
+            [forward_m, half_left, half_up],
+            [forward_m, -half_left, half_up],
+            [forward_m, -half_left, -half_up],
+        ],
+        dtype=float,
+    )
+    traces = [_line_trace(corners, "camera frustum", "#64748b", width=2, opacity=0.5)]
+    for corner in corners[:4]:
+        traces.append(_line_trace(np.vstack([origin, corner]), "camera frustum edge", "#64748b", width=2, opacity=0.35))
+    return traces
+
+
+def _max_observation_forward_m(gates: list[dict[str, Any]]) -> float:
+    forward_values = [
+        float(position[2])
+        for gate in gates
+        if _point3(position := gate.get("position_xyz"))
+    ]
+    return max(forward_values, default=3.0)
+
+
+def _gate_plane_axes(normal: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    up_reference = np.asarray([0.0, 0.0, 1.0], dtype=float)
+    vertical = up_reference - normal * float(np.dot(up_reference, normal))
+    if np.linalg.norm(vertical) < 1e-6:
+        up_reference = np.asarray([0.0, 1.0, 0.0], dtype=float)
+        vertical = up_reference - normal * float(np.dot(up_reference, normal))
+    vertical = _normalize_vector(vertical)
+    horizontal = _normalize_vector(np.cross(vertical, normal))
+    return horizontal, vertical
+
+
+def _square_points(center: np.ndarray, horizontal: np.ndarray, vertical: np.ndarray, size: float) -> np.ndarray:
+    half = float(size) / 2.0
+    offsets = ((-half, -half), (half, -half), (half, half), (-half, half), (-half, -half))
+    return np.asarray([center + horizontal * h + vertical * v for h, v in offsets], dtype=float)
+
+
+def _line_trace(
+    points: np.ndarray,
+    name: str,
+    color: str,
+    *,
+    width: int,
+    opacity: float = 1.0,
+) -> tuple[go.Scatter3d, list[list[float]]]:
+    trace = go.Scatter3d(
+        x=points[:, 0],
+        y=points[:, 1],
+        z=points[:, 2],
+        mode="lines",
+        name=name,
+        line={"color": color, "width": width},
+        opacity=opacity,
+        showlegend=False,
+    )
+    return trace, points.tolist()
+
+
+def _normalize_vector(vector: np.ndarray) -> np.ndarray:
+    norm = float(np.linalg.norm(vector))
+    if norm < 1e-12:
+        return np.zeros(3, dtype=float)
+    return np.asarray(vector, dtype=float) / norm
 
 
 def _vector_figure(run: LiveRun, title: str, field: str, y_title: str) -> go.Figure:
@@ -637,6 +888,7 @@ def _raw_preview(run: LiveRun) -> str:
             "frames": len(run.frames),
             "gate_map_cycles": len(run.gate_map_cycles),
             "vision_frames": len(raw.get("vision_frames", [])) if isinstance(raw.get("vision_frames"), list) else 0,
+            "vision_observations": len(run.vision_observations),
             "planned_paths": len(raw.get("planned_paths", [])) if isinstance(raw.get("planned_paths"), list) else 0,
         },
         "events_tail": _recent_records(run.events, 50),

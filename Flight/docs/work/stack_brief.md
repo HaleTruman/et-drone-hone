@@ -1,5 +1,7 @@
 # Stack Brief
 
+Note: this is a historical planning brief. The current runtime does not consume MAVLink `ODOMETRY`, `LOCAL_POSITION_NED`, or `ATTITUDE` for vehicle pose. `MavlinkClient` keeps MAVLink telemetry raw, and `VehicleStateEstimator` in `src/sensing/odometry/state.py` owns the flight-facing `VehicleState` estimate.
+
 The full conceptual pipeline is:
 > Vision > Telemetry > Perception > Planning > Control > Pilot Commands > Stabilized Controller
 
@@ -8,11 +10,11 @@ This document will focus on the software stack downstream of Vision.
 ## 1. Information Sources (Raw Inputs)
 - Telemetry (MAVLink, ~100 Hz capable)
   - HEARTBEAT (connection health, system status flags)
-  - ATTITUDE (orientation, body rates)
+  - HIGHRES_IMU-derived vehicle state via `VehicleStateEstimator`
   - HIGHRES_IMU (raw accels/gyros, and per spec §4.5 also linear velocities)
   - TIMESYNC (for precise sim-time alignment)
    
-  You get attitude/orientation, body angular rates, linear velocities, and system status directly. Position is not sent explicitly, so you will maintain it via integration (see §3).\
+  Current runtime estimates attitude/orientation, body angular rates, linear velocities, and position locally from `HIGHRES_IMU` instead of reading MAVLink pose packets.\
 
 - Vision Stream (UDP port 5600, 30 Hz, 640×360 JPEG)
 
@@ -33,8 +35,8 @@ CNN output -> per visible gate: relative 3D position (in camera frame) + orienta
 
 #### Drone state update (fusion):
 
-- Attitude / angular rates: directly from ATTITUDE message (or convert quaternion if you prefer the 13-state model you already have).
-- Linear velocity: directly from telemetry (use in BODY_NED or LOCAL_NED as provided).
+- Attitude / angular rates: estimated locally from `HIGHRES_IMU` through `VehicleStateEstimator`.
+- Linear velocity: estimated locally by integrating IMU-derived acceleration.
 - Position: integrate velocity in LOCAL_NED (simple Euler or RK4). IMU acceleration can be used as a secondary check or for short-term prediction, but vision gate detections provide the absolute correction (landmark-based localization). Because the environment is deterministic, a lightweight EKF or even a simple complementary filter on gate-derived position updates will keep drift negligible.
 
 #### Store a dictionary/list of gates in global LOCAL_NED coordinates:
@@ -132,7 +134,7 @@ Store as structured logs (CSV + JSON metadata) or a lightweight database. Becaus
 - Compliance: No human intervention during a scored run (§7) — your stack must be fully autonomous once launched.
 - SITL bridge: The low-latency UDP bridge is exactly what you’re using; keep everything in one process or use shared memory if you split perception/planning.
 - Testing: Because the course is identical and deterministic, you can iterate extremely fast. Record a “perfect” run with manual control first to get ground-truth gate positions if you want a seeded map.
-- Edge cases: Vision occlusion, aggressive attitudes (camera tilt matters), high-speed drag (your nonlinear model already includes quadratic drag — use it in simulation-in-the-loop testing).
+- Edge cases: Vision occlusion, aggressive attitudes (camera tilt matters), high-speed drag, and MAVLink simulator-in-the-loop testing.
 
 This pipeline keeps the system modular, leverages the exact interfaces in the spec, and directly uses the 13-state nonlinear model you already have for both planning and control validation. It also gives you a clean separation: perception builds the world map, MPCC plans the race line, and the geometric/diff-flat controller executes it with minimal latency.
 
@@ -143,11 +145,11 @@ This pipeline keeps the system modular, leverages the exact interfaces in the sp
 This is a table of all of the planned classes and methods downstream of Vision. 
 | File/Module | Primary Class(es) | Key Methods | Description |
 |---|---|---|---|
-| `mavlink_bridge.py` | `MavlinkBridge` | `connect()`, `start_heartbeat()`, `subscribe_telemetry()`, `send_position_target()`, `send_attitude_target()`, `get_latest_telemetry()` | MAVLink UDP client. Handles connection, HEARTBEAT (≥2 Hz), all required telemetry subscriptions (`ATTITUDE`, `HIGHRES_IMU`, `TIMESYNC`), and command sending per spec §4. |
+| `mavlink_bridge.py` | `MavlinkBridge` | `connect()`, `start_heartbeat()`, `subscribe_telemetry()`, `send_position_target()`, `send_attitude_target()`, `get_latest_telemetry()` | MAVLink UDP client. Handles connection, HEARTBEAT, raw telemetry subscriptions (`HIGHRES_IMU`, `TIMESYNC`), and command sending. Vehicle pose is estimated locally, not read from MAVLink pose packets. |
 | `vision_stream.py` | `VisionStreamReceiver` | `start_listener()`, `reassemble_frame()`, `decode_jpeg()`, `get_next_frame()` | UDP listener (port 5600) that reassembles chunked packets (§4.6 header format), decodes 640×360 JPEGs, and timestamps with `sim_time_ns`. |
 | `sync.py` | `DataSynchronizer` | `align_frame_with_telemetry()`, `get_synchronized_data()` | Aligns vision frames with MAVLink telemetry using sim timestamps. Outputs clean (`frame`, `telemetry`) tuples at ~30 Hz. |
 | `gate_pose.py` | `GatePoseEstimator` | `estimate_gate_pose(body_frame)`, `camera_to_body_transform()`, `body_to_local_ned()` | Converts CNN output (ID, bbox/keypoints, relative pose) into 3D gate pose in body frame then LOCAL_NED using camera intrinsics + 20° tilt (§3.8) and known gate geometry (§3.7). |
-| `gate_map.py` | `GateMap` | `add_or_update_gate()`, `get_gate(id)`, `get_next_gates(n)`, `get_reference_path()`, `fuse_gate()` | Persistent global map of all gates in LOCAL_NED coordinates. Handles fusion, sequencing, and reference-path generation. |
+| `sensing/gates/gate_map.py` | `GateMap` | `add_or_update_gate()`, `get_gate(id)`, `get_next_gates(n)`, `get_reference_path()`, `fuse_gate()` | Persistent global map of all gates in LOCAL_NED coordinates. Handles fusion, sequencing, and reference-path generation. |
 | `state_estimator.py` | `StateEstimator` | `integrate_velocity()`, `vision_correction()`, `get_13_state()`, `reset()` | Maintains the full 13-state nonlinear quadrotor model (pos, vel, quat, rates). Velocity integration + vision-based landmark updates for drift-free pose. |
 | `path_manager.py` | `PathManager` | `update_from_gate_map()`, `generate_spline()`, `get_waypoints()` | Converts GateMap into smooth spline/waypoint sequence for the MPCC planner. Handles start → intermediate → finish sequencing. |
 | `mpcc_planner.py` | `MPCCPlanner` | `optimize()`, `warm_start()`, `set_reference_path()`, `get_reference_trajectory()` | Wrapper around your MPCC optimizer. Accepts current drone state + gate map, outputs reference trajectory with warm-start support. |
@@ -156,7 +158,7 @@ This is a table of all of the planned classes and methods downstream of Vision.
 | `command_mapper.py` | `CommandMapper` | `to_position_target()`, `to_attitude_target()`, `scale_thrust()` | Converts controller output into correct MAVLink SET_POSITION_TARGET_LOCAL_NED or SET_ATTITUDE_TARGET messages. |
 | `system_mode.py` | `SystemModeManager` | `update_mode()`, `check_gate_crossing()`, `is_racing()`, `handle_fault()` | System modes: IDLE → ARMED → RACING → FINISHED / FAULT. Includes 8-minute timer, sequential gate-crossing logic, and safety checks (§8.3, §7). |
 | `logging.py` | `Logger` | `log_telemetry()`, `log_gate_map()`, `log_mpcc_solution()`, `save_run()` | Structured logging (CSV + JSON) of sim time, 13-state, gates, reference traj, commands, vision frames, etc. Enables offline replay. |
-| `sim_harness.py` | `QuadrotorSimulatorHarness` | `step(u)`, `reset()`, `run_trajectory()` | Wraps your 13-state nonlinear dynamics model for fast offline testing of planner + controller without the full simulator. |
+| `replay.py` | run replay helpers | `load_run()`, `iter_cycles()`, `replay_commands()` | Replays recorded MAVLink telemetry and command logs for planner + controller regression tests. |
 | `main.py` | production runtime | control loop, shutdown | Main entry point. Ties everything together at 30–60 Hz: vision → perception → state_est → planner → controller → mavlink. |
 
 These files and classes must be independently testable and expose clean Python interfaces, effectively plug and play.
