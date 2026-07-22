@@ -72,7 +72,7 @@ def main() -> int:
     vehicle_state_estimator = VehicleStateEstimator()
     mavlink_client = MavlinkClient(endpoint=MAVLINK_ENDPOINT)
     vision_rx = VisionStreamReceiver(host=VISION_HOST, port=VISION_PORT, output_dir=run_dir / "vision_frames")
-    vision_perception = VisionPerceptionService(VisionPerceptionConfig(run_landmarker=False))
+    vision_perception = VisionPerceptionService(VisionPerceptionConfig(backend="deterministic_0721", run_landmarker=False))
     vision_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vision")
     obs_recorder = OBSRecorder(run_dir)
     gate_map = GateMap()
@@ -87,23 +87,23 @@ def main() -> int:
         gates=[
             VisionGateObservation(
                 gate_id="sample_gate_0",
-                position_camera_m=(0.0, 0.0, 10.0),
+                position_camera_m=(0.016962, 0.192904, 10.877844),
                 position_confidence=1.0,
-                orientation_camera=(0.0, 0.0, 0.0),
+                orientation_camera=(0.8091, 8.8576, 0.0086),
                 orientation_confidence=1.0,
             ),
             VisionGateObservation(
                 gate_id="sample_gate_1",
-                position_camera_m=(2.5, 5.4, 20.0),
+                position_camera_m=(6.632637, 1.254898, 20.464542),
                 position_confidence=1.0,
-                orientation_camera=(0.0, 0.0, 0.0),
+                orientation_camera=(24.3343, 72.4422, -21.9316),
                 orientation_confidence=1.0,
             ),
             VisionGateObservation(
                 gate_id="sample_gate_2",
-                position_camera_m=(-3.0, -0.2, 29.0),
+                position_camera_m=(-37.748457, 7.645917, 59.74704),
                 position_confidence=1.0,
-                orientation_camera=(0.0, 0.0, 0.0),
+                orientation_camera=(7.6964, -14.8676, 6.8899),
                 orientation_confidence=1.0,
             )
         ],
@@ -119,7 +119,7 @@ def main() -> int:
         )
     
     carrot_controller = CarrotController(
-        speed_mps=10,
+        speed_mps=3,
         position_gain=0.75,
         velocity_gain=1.0,
         initial_thrust=0.265
@@ -218,6 +218,19 @@ def main() -> int:
                 system_mode=system_mode_manager.system_mode.value,
             )
             raise Exception("Initialization failed.")
+
+        if latest_frame is not None:
+            observation = vision_perception.process_vision_frame(latest_frame)
+            logger.log_event(
+                "deterministic_vision_test_output",
+                frame_id=latest_frame.frame_id,
+                sim_time_ns=latest_frame.sim_time_ns,
+                gate_count=len(observation.gates),
+                observation=observation.to_controller_payload(output_dir="memory"),
+                perception=vision_perception.snapshot(),
+            )
+        else:
+            logger.log_event("deterministic_vision_test_skipped", reason="no_latest_frame")
 
         gate_map.update_from_observation(observation=TEST_OBSERVATION, vehicle_state=vehicle_state_estimator.state)
         planned_path = path_manager.plan_from_gate_map(gate_map.gates)

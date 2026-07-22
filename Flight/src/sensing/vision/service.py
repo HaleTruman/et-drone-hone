@@ -7,16 +7,18 @@ from typing import Any
 from mapping.perception import VisionGateObservation, VisionObservation
 from sensing.vision.cnn.rgb_inference import DEFAULT_CHECKPOINT, LightmaskInference
 from sensing.vision.cnn.rgb_normalizer import jpeg_bytes_to_tensor
-from sensing.vision.landmarker.landmark_output import build_controller_payload, build_passthrough_controller_payload
-from sensing.vision.landmarker.landmarker import Landmarker, new_landmarker_state
-from sensing.vision.regressor.cnn_ingress import RawLogitsFrame
-from sensing.vision.regressor.logit_inference import DEFAULT_REGRESSOR_CHECKPOINT, LogitRegressor
-from sensing.vision.regressor.regression_output import build_surveyer_payload
+from sensing.vision.cnn.landmarker.landmark_output import build_controller_payload, build_passthrough_controller_payload
+from sensing.vision.cnn.landmarker.landmarker import Landmarker, new_landmarker_state
+from sensing.vision.cnn.regressor.cnn_ingress import RawLogitsFrame
+from sensing.vision.cnn.regressor.logit_inference import DEFAULT_REGRESSOR_CHECKPOINT, LogitRegressor
+from sensing.vision.cnn.regressor.regression_output import build_surveyer_payload
+from sensing.vision.deterministic import DeterministicVisionConfig
 from sensing.vision.vision_stream import VisionFrame
 
 
 @dataclass(frozen=True)
 class VisionPerceptionConfig:
+    backend: str = "cnn_regressor"
     checkpoint: Path = DEFAULT_CHECKPOINT
     regressor_checkpoint: Path = DEFAULT_REGRESSOR_CHECKPOINT
     device: str = "auto"
@@ -27,10 +29,11 @@ class VisionPerceptionConfig:
     confidence_threshold: float = 0.50
     min_component_area: int = 3
     max_candidates: int = 32
+    deterministic: DeterministicVisionConfig = DeterministicVisionConfig()
 
 
 class VisionPerceptionService:
-    """In-memory CNN -> regressor -> optional landmarker composition for flight."""
+    """Flight-facing vision service with selectable perception backends."""
 
     def __init__(
         self,
@@ -39,13 +42,22 @@ class VisionPerceptionService:
         cnn: LightmaskInference | None = None,
         regressor: LogitRegressor | None = None,
         landmarker: Landmarker | None = None,
+        deterministic: Any | None = None,
     ) -> None:
         self.config = config or VisionPerceptionConfig()
+        if self.config.backend not in {"cnn_regressor", "deterministic_0721"}:
+            raise ValueError("VisionPerceptionConfig.backend must be 'cnn_regressor' or 'deterministic_0721'.")
         self._cnn = cnn
         self._regressor = regressor
         self._landmarker = landmarker
+        self._deterministic = deterministic
 
     def process_frame(self, *, frame_id: int, sim_time_ns: int, jpeg_bytes: bytes) -> VisionObservation:
+        if self.config.backend == "deterministic_0721":
+            return self.deterministic.process_frame(frame_id=frame_id, sim_time_ns=sim_time_ns, jpeg_bytes=jpeg_bytes)
+        return self._process_cnn_frame(frame_id=frame_id, sim_time_ns=sim_time_ns, jpeg_bytes=jpeg_bytes)
+
+    def _process_cnn_frame(self, *, frame_id: int, sim_time_ns: int, jpeg_bytes: bytes) -> VisionObservation:
         tensor = jpeg_bytes_to_tensor(jpeg_bytes)
         cnn_result = self.cnn.run_frame(tensor)
         raw_logits = RawLogitsFrame(
@@ -124,8 +136,21 @@ class VisionPerceptionService:
             self._landmarker = Landmarker(new_landmarker_state())
         return self._landmarker
 
+    @property
+    def deterministic(self) -> Any:
+        if self._deterministic is None:
+            from sensing.vision.deterministic.service import DeterministicVisionBackend
+
+            self._deterministic = DeterministicVisionBackend(self.config.deterministic)
+        return self._deterministic
+
+    def shutdown(self) -> None:
+        if self._deterministic is not None:
+            self._deterministic.shutdown()
+
     def snapshot(self) -> dict[str, Any]:
-        return {
+        snapshot = {
+            "backend": self.config.backend,
             "device": self.config.device,
             "run_landmarker": self.config.run_landmarker,
             "top_k": self.config.top_k,
@@ -134,3 +159,6 @@ class VisionPerceptionService:
             "regressor_loaded": self._regressor is not None,
             "landmarker_loaded": self._landmarker is not None,
         }
+        if self._deterministic is not None:
+            snapshot["deterministic"] = self._deterministic.snapshot()
+        return snapshot
