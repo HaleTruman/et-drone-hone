@@ -9,6 +9,7 @@ import numpy as np
 from core.coordinates import quat_wxyz, vec3
 from core.coordinates import euler_from_quaternion, normalize_quaternion, rotate_vector
 from core.schemas import MavlinkHighresImu, MavlinkTelemetry, QuatWxyz, Vec3, VehicleState
+from sensing.odometry.vio import VioCorrectionConfig, VioMeasurement, blend_vio_state, should_apply_vio_measurement
 
 
 ZERO_VEC3 = (0.0, 0.0, 0.0)
@@ -19,7 +20,12 @@ GRAVITY_LOCAL_NED_MPS2 = (0.0, 0.0, 9.80665)
 class VehicleStateEstimator:
     """Mutable owner for the latest estimated vehicle state."""
 
-    def __init__(self, vehicle_state: VehicleState | None = None):
+    def __init__(
+        self,
+        vehicle_state: VehicleState | None = None,
+        *,
+        vio_config: VioCorrectionConfig | None = None,
+    ):
         self.sim_time_ns = 0
         self.initialized = False
         self.position_local_ned_m: Vec3 = ZERO_VEC3
@@ -34,6 +40,10 @@ class VehicleStateEstimator:
         self.acceleration_local_ned_mps2: Vec3 = ZERO_VEC3
         self.gyro_bias_body_frd_rps: Vec3 = ZERO_VEC3
         self.last_imu_time_boot_us: int | None = None
+        self.vio_config = vio_config or VioCorrectionConfig()
+        self.last_vio_measurement: VioMeasurement | None = None
+        self.last_vio_residual: dict[str, object] | None = None
+        self.last_vio_status: str | None = None
         if vehicle_state is not None:
             self.update_state(vehicle_state)
 
@@ -70,6 +80,9 @@ class VehicleStateEstimator:
         self.acceleration_local_ned_mps2 = ZERO_VEC3
         self.gyro_bias_body_frd_rps = ZERO_VEC3
         self.last_imu_time_boot_us = None
+        self.last_vio_measurement = None
+        self.last_vio_residual = None
+        self.last_vio_status = None
         self.initialized = False
         if vehicle_state is not None:
             return self.update_state(vehicle_state)
@@ -82,15 +95,29 @@ class VehicleStateEstimator:
         self.attitude_quaternion = quat_wxyz(vehicle_state.attitude_quaternion)
         self.angular_velocity_body_frd_rps = vec3(vehicle_state.body_rates_frd_rps)
         self.acceleration_local_ned_mps2 = vec3(vehicle_state.acceleration_local_ned_mps2)
+        self._set_initialized()
         return self.state
 
-    def update(self, imu_data_t: MavlinkHighresImu | None) -> VehicleState | None:
-        if imu_data_t is None:
+    def update(
+        self,
+        imu_data_t: MavlinkHighresImu | None,
+        vio_measurement: VioMeasurement | None = None,
+    ) -> VehicleState | None:
+        vehicle_state = self.state if imu_data_t is None and self.initialized else None
+        if imu_data_t is not None:
+            vehicle_state = self.update_from_imu(imu_data_t)
+        if vehicle_state is None:
             return None
-        return self.update_from_imu(imu_data_t)
+        if vio_measurement is not None:
+            vehicle_state = self.update_from_vio(vio_measurement)
+        return vehicle_state
 
-    def update_telemetry(self, telemetry: MavlinkTelemetry | None) -> MavlinkTelemetry | None:
-        vehicle_state = self.update(None if telemetry is None else telemetry.imu)
+    def update_telemetry(
+        self,
+        telemetry: MavlinkTelemetry | None,
+        vio_measurement: VioMeasurement | None = None,
+    ) -> MavlinkTelemetry | None:
+        vehicle_state = self.update(None if telemetry is None else telemetry.imu, vio_measurement=vio_measurement)
         if telemetry is None or vehicle_state is None:
             return None
         return MavlinkTelemetry(
@@ -99,7 +126,14 @@ class VehicleStateEstimator:
             imu=telemetry.imu,
             system_status=telemetry.system_status,
             reset_count=telemetry.reset_count,
-            raw={**telemetry.raw, "vehicle_state_source": "vehicle_state_estimator_highres_imu"},
+            raw={
+                **telemetry.raw,
+                "vehicle_state_source": "vehicle_state_estimator_highres_imu_vio"
+                if self.last_vio_status == "accepted"
+                else "vehicle_state_estimator_highres_imu",
+                "vio_status": self.last_vio_status,
+                "vio_residual": self.last_vio_residual,
+            },
         )
 
     def wait_for_update(
@@ -247,6 +281,24 @@ class VehicleStateEstimator:
 
         self.position_local_ned_m = vec3(position + velocity * dt_s + 0.5 * acceleration * dt_s * dt_s)
         self.velocity_local_ned_mps = vec3(velocity + acceleration * dt_s)
+        return self.state
+
+    def update_from_vio(self, vio_measurement: VioMeasurement) -> VehicleState:
+        self.last_vio_measurement = vio_measurement
+        self.last_vio_residual = vio_measurement.residuals(self.state)
+        apply_measurement, status = should_apply_vio_measurement(
+            self.state,
+            vio_measurement,
+            config=self.vio_config,
+        )
+        self.last_vio_status = status
+        if not apply_measurement:
+            return self.state
+
+        corrected = blend_vio_state(self.state, vio_measurement, config=self.vio_config)
+        self.update_state(corrected)
+        self.attitude_euler_frd_deg = self.attitude_euler_local_ned(unit="deg")
+        self.attitude_euler_frd_rad = self.attitude_euler_local_ned(unit="rad")
         return self.state
 
     def _adjusted_gyro(self, gyro_body_frd_rps: Vec3) -> Vec3:

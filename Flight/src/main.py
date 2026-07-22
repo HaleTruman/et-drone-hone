@@ -12,6 +12,7 @@ from core.control.carrot import CarrotController
 from core.logging import Logger, generate_mp4
 from core.logging.obs import OBSRecorder
 from core.schemas import MavlinkHighresImu, MavlinkTelemetry
+from core.modes.system_mode import SystemModeManager
 from mapping.gates import GateMap
 from mapping.perception import VisionGateObservation, VisionObservation
 from sensing.telemetry import MavlinkClient
@@ -76,6 +77,8 @@ def main() -> int:
     obs_recorder = OBSRecorder(run_dir)
     gate_map = GateMap()
     path_manager = PathManager()
+    system_mode_manager = SystemModeManager()
+    logger.log_event("system_mode_initialized", system_mode=system_mode_manager.system_mode.value)
 
     ## TEST
     TEST_OBSERVATION = VisionObservation(
@@ -208,7 +211,12 @@ def main() -> int:
             logger.log_event("stationary_imu_calibration_skipped", reason="no_imu_samples")
 
         if vehicle_state_estimator.initialized is False:
-            logger.log_event("initialization_failed", reason="no_stationary_imu_samples_or_other_failure")
+            system_mode_manager.handle_fault("no_stationary_imu_samples_or_other_failure")
+            logger.log_event(
+                "initialization_failed",
+                reason=system_mode_manager.fault_reason,
+                system_mode=system_mode_manager.system_mode.value,
+            )
             raise Exception("Initialization failed.")
 
         gate_map.update_from_observation(observation=TEST_OBSERVATION, vehicle_state=vehicle_state_estimator.state)
@@ -221,7 +229,18 @@ def main() -> int:
 
         # arm drone
         mavlink_client.arm_and_wait(timeout_s=ARM_TIMEOUT_S)
-        logger.log_event("armed", bridge=mavlink_client.snapshot())
+        system_mode_manager.update_mode("arm")
+        logger.log_event("armed", bridge=mavlink_client.snapshot(), system_mode=system_mode_manager.system_mode.value)
+
+        if not system_mode_manager.is_armed():
+            system_mode_manager.handle_fault("system_not_armed_after_arm_command")
+            logger.log_event(
+                "arm_mode_check_failed",
+                bridge=mavlink_client.snapshot(),
+                reason=system_mode_manager.fault_reason,
+                system_mode=system_mode_manager.system_mode.value,
+            )
+            raise Exception("System mode failed to enter ARMED.")
         
         # DELAY BUFFER POST RESET
         if POST_RESET_DELAY_S > 0.0:
@@ -232,7 +251,23 @@ def main() -> int:
         next_inner_cycle_s = control_started_s
         next_outer_cycle_s = control_started_s
 
-        logger.log_event("flight_began", flight_began_s=control_started_s)
+        system_mode_manager.update_mode("start")
+        if not system_mode_manager.is_racing():
+            system_mode_manager.handle_fault("system_not_racing_before_flight")
+            logger.log_event(
+                "flight_start_mode_check_failed",
+                flight_began_s=control_started_s,
+                reason=system_mode_manager.fault_reason,
+                system_mode=system_mode_manager.system_mode.value,
+            )
+            raise Exception("System mode failed to enter RACING.")
+
+        logger.log_event(
+            "flight_began",
+            flight_began_s=control_started_s,
+            system_mode=system_mode_manager.system_mode.value,
+        )
+        
         carrot_target = None
         vision_pending = None
 
@@ -310,19 +345,19 @@ def main() -> int:
                         outer_cycle,
                     )
 
+            control_target = {}
+
             if imu_data_t is None:
                 command_result = {
                     "emitted": False,
-                    "sim_time_ns": telemetry.sim_time_ns,
+                    "sim_time_ns": telemetry.sim_time_ns if telemetry else None,
                     "reason": "missing_highres_imu"
                 }
 
             else:
                 command_result = None
-                control_target = {}
 
-                # Send flight commands for one second
-                if ALLOW_FLIGHT:
+                if ALLOW_FLIGHT and system_mode_manager.is_racing():
                     # carrot target
                     if carrot_target is None:
                         carrot = path_manager.carrot_point(
@@ -342,13 +377,6 @@ def main() -> int:
                             thrust=carrot_target["thrust"]
                         )
                     
-                    ## TESTING ##
-                    # control_target = attitude_controller.compute_control(
-                    #     vehicle_state,
-                    #     desired_attitude_quaternion=TARGET_QUATERNION,
-                    #     thrust=TARGET_THRUST
-                    # )
-
                     mavlink_client.send_attitude_target(control_target)
 
                     command_result = {
@@ -360,11 +388,10 @@ def main() -> int:
                         "outer_loop_cycle": outer_cycle,
                     }
                 else:
-                    # mavlink_client.send_motor_target(motor_commands=(0.0, 0.0, 0.0, 0.0))
                     command_result = {
                             "emitted": False,
-                            "sim_time_ns": telemetry.sim_time_ns,
-                            "reason": "carrot_path_following",
+                            "sim_time_ns": telemetry.sim_time_ns if telemetry else None,
+                            "reason": "flight_disabled" if not ALLOW_FLIGHT else "system_mode_not_racing",
                             "attitude_target": control_target,
                             "inner_loop_cycle": inner_cycle,
                             "outer_loop_cycle": outer_cycle,
@@ -379,8 +406,8 @@ def main() -> int:
             if inner_cycle % int(INNER_LOOP_HZ/2) == 0:
                 print(
                     f"inner_cycle={inner_cycle} - outer_cycle={outer_cycle} - loop_ms={loop_elapsed_ms:.2f}\n"
-                    # f"State position (local NED) - {tuple(round(x, 2) for x in vehicle_state.position_local_ned_m) if telemetry else 'No Telemetry yet'}  |  " 
-                    f"State attitude euler (local NED) - {tuple(round(x, 2) for x in vehicle_state_estimator.attitude_euler_frd_deg)}  |  ",
+                    f"Position (local_ned_m) - {tuple(round(x, 2) for x in vehicle_state.position_local_ned_m) if telemetry else 'No Telemetry yet'}  |  " 
+                    # f"State attitude euler (local NED) - {tuple(round(x, 2) for x in vehicle_state_estimator.attitude_euler_frd_deg)}  |  ",
                     f"Attitude control command (body FRD rps) - {tuple(round(x, 4) for x in control_target["body_rates_rps"]) if "body_rates_rps" in control_target else "NO COMMAND YET"}  |  ",
                     f"Body angle error (body FRD euler) - {tuple(round(x, 4) for x in control_target["body_angle_error"]) if "body_angle_error" in control_target else "NO COMMAND YET"}  |  ",
                     f"State acceleration (local NED) - {tuple(round(x,4) for x in vehicle_state_estimator.state.acceleration_local_ned_mps2)}\n",
@@ -398,6 +425,10 @@ def main() -> int:
                 deadline_lateness_ms=max(0.0, loop_started_s - scheduled_s) * 1000.0,
                 sleep_ms=sleep_s * 1000.0,
                 telemetry=telemetry,
+                system_mode=system_mode_manager.system_mode.value,
+                modes={
+                    "system": system_mode_manager.system_mode.value,
+                },
                 vision_frame_id=latest_frame.frame_id if latest_frame else None,
                 bridge=mavlink_client.snapshot(),
                 command=command_result,
@@ -427,10 +458,17 @@ def main() -> int:
             if sleep_s > 0.0:
                 time.sleep(sleep_s)
 
+        system_mode_manager.update_mode("finish")
+        logger.log_event("flight_finished", system_mode=system_mode_manager.system_mode.value)
+
     except KeyboardInterrupt:
+        system_mode_manager.handle_fault("keyboard_interrupt")
         logger.log_event("interrupted")
 
     except Exception as error:
+        if system_mode_manager.system_mode.value != "FAULT":
+            system_mode_manager.handle_fault(str(error))
+        logger.log_exception("flight_exception", error, system_mode=system_mode_manager.system_mode.value)
         print("Error occured: ", error)
         traceback.format_exc()
 
@@ -453,6 +491,7 @@ def main() -> int:
         mavlink_client.shutdown()
         logger.log_event(
             "shutdown",
+            system_mode=system_mode_manager.system_mode.value,
             bridge=mavlink_client.snapshot(),
             vision=vision_rx.snapshot(),
             perception=vision_perception.snapshot(),
