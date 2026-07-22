@@ -1,0 +1,1394 @@
+:root {
+  color-scheme: dark;
+  --bg: #080a0c;
+  --panel: #101419;
+  --panel2: #151b21;
+  --line: #2a333c;
+  --text: #e9eef3;
+  --muted: #9ba8b4;
+  --accent: #ff5c43;
+  --topbar-height: 50px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  letter-spacing: 0;
+}
+
+button, input, select {
+  font: inherit;
+  accent-color: var(--accent);
+}
+
+button {
+  border: 1px solid var(--line);
+  background: #1a222a;
+  color: var(--text);
+  padding: 7px 10px;
+  cursor: pointer;
+}
+
+button:hover { border-color: #55626f; }
+button.active { border-color: var(--accent); background: #2a1c19; }
+button:disabled { opacity: .55; cursor: default; }
+
+#app {
+  display: block;
+  min-height: 100vh;
+  padding-top: var(--topbar-height);
+  overflow: visible;
+}
+
+#topbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) auto minmax(180px, 1fr) auto minmax(260px, 36vw);
+  gap: 10px;
+  align-items: center;
+  height: var(--topbar-height);
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  background: #0f1317;
+}
+
+.workspaceMark {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.workspaceMark strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 700 14px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.workspaceMark span, .sectionHead span, #statusbar, #stageFooter {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sourceModeToggle {
+  display: grid;
+  grid-template-columns: repeat(2, 72px);
+  height: 32px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: #080a0c;
+}
+
+.sourceModeButton {
+  min-width: 0;
+  height: 100%;
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sourceModeButton:last-child { border-right: 0; }
+
+.sourceModeButton.active {
+  background: #2a1c19;
+  color: var(--text);
+}
+
+.sourcePicker {
+  min-width: 0;
+}
+
+.sourcePicker select,
+.sourcePicker input {
+  width: 100%;
+  height: 32px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  background: #080a0c;
+  color: var(--text);
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.pipelineControls {
+  display: grid;
+  grid-template-columns: repeat(2, 54px);
+  grid-template-rows: 24px 12px;
+  gap: 2px 6px;
+  align-items: center;
+}
+
+.pipelineControls button {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+#pipelineReadinessText {
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pipelineControls.ready #pipelineReadinessText { color: #99ff95; }
+.pipelineControls.warning #pipelineReadinessText { color: #ffd166; }
+.pipelineControls.error #pipelineReadinessText { color: #ff8d7f; }
+
+.sourcePicker input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.sourcePicker [hidden] {
+  display: none;
+}
+
+.frameControl {
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+#frameSlider { width: 100%; }
+.actions,
+.footerActions { display: flex; gap: 8px; align-items: center; }
+
+#newSystemWorkspace {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  border-bottom: 1px solid var(--line);
+  background: #070b0f;
+}
+
+#frameCompareStrip {
+  min-width: 0;
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+  background: #090d11;
+}
+
+.frameCompareGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
+
+.frameModule {
+  display: grid;
+  grid-template-rows: auto minmax(0, auto) auto;
+  gap: 6px;
+  min-width: 0;
+}
+
+.frameModuleHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.frameModuleHead strong {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.frameModuleHead span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.frameModuleSurface {
+  position: relative;
+  justify-self: center;
+  width: 100%;
+  max-width: calc(500px * 16 / 9);
+  max-height: 500px;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .1);
+  background: #000;
+}
+
+.frameModuleSurface canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+.frameModuleEmpty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  color: var(--muted);
+  background: rgba(0, 0, 0, .72);
+  font-size: 12px;
+  text-align: center;
+}
+
+.frameModuleEmpty[hidden] {
+  display: none;
+}
+
+.frameModulePath {
+  min-width: 0;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.frameModulePlaceholder .frameModuleHead strong {
+  color: #dce4eb;
+}
+
+.frameModuleStep {
+  padding: 2px 6px;
+  border: 1px solid rgba(155, 168, 180, .28);
+  color: #b7c4cf;
+  background: rgba(21, 27, 33, .72);
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.pipelinePlaceholderSurface {
+  border-style: dashed;
+  border-color: rgba(155, 168, 180, .34);
+  background:
+    linear-gradient(rgba(255, 255, 255, .035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, .035) 1px, transparent 1px),
+    #05080b;
+  background-size: 40px 40px;
+}
+
+.pipelinePlaceholderFrame {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  color: #9ba8b4;
+  font-size: 12px;
+  text-align: center;
+}
+
+.pipelinePlaceholderFrame::before {
+  content: "";
+  position: absolute;
+  inset: 12px;
+  border: 1px dashed rgba(183, 196, 207, .28);
+}
+
+.pipelinePlaceholderFrame span {
+  position: relative;
+  padding: 5px 8px;
+  border: 1px solid rgba(183, 196, 207, .2);
+  background: rgba(5, 8, 11, .78);
+}
+
+#instanceOutputScaffold {
+  min-width: 0;
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+  background: #070b0f;
+}
+
+.instanceScaffoldGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(280px, 2fr);
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
+
+.instanceScaffoldPane {
+  display: grid;
+  grid-template-rows: auto minmax(260px, 1fr) auto;
+  gap: 6px;
+  min-width: 0;
+}
+
+.instanceVolumeSurface,
+.instanceJsonSurface {
+  position: relative;
+  height: clamp(260px, 30vw, 500px);
+  min-height: 260px;
+  overflow: hidden;
+  border: 1px dashed rgba(155, 168, 180, .34);
+  background: #030609;
+}
+
+.instanceVolumeSurface {
+  background:
+    linear-gradient(135deg, rgba(85, 247, 255, .07), transparent 48%),
+    linear-gradient(rgba(85, 247, 255, .08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(85, 247, 255, .08) 1px, transparent 1px),
+    #030609;
+  background-size: auto, 48px 48px, 48px 48px, auto;
+}
+
+.instanceVolumeSurface canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.instanceVolumeGrid {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  perspective: 720px;
+  color: #a9b9c6;
+  font-size: 12px;
+  text-align: center;
+}
+
+.instanceVolumeGrid::before {
+  content: "";
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  bottom: 12%;
+  height: 46%;
+  border: 1px solid rgba(85, 247, 255, .2);
+  transform: rotateX(62deg);
+  transform-origin: bottom;
+  background:
+    linear-gradient(rgba(85, 247, 255, .16) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(85, 247, 255, .16) 1px, transparent 1px);
+  background-size: 36px 36px;
+}
+
+.instanceVolumeGrid::after {
+  content: "";
+  position: absolute;
+  inset: 18%;
+  border: 1px dashed rgba(183, 196, 207, .22);
+}
+
+.instanceVolumeGrid span {
+  position: relative;
+  z-index: 1;
+  padding: 6px 9px;
+  border: 1px solid rgba(183, 196, 207, .22);
+  background: rgba(3, 6, 9, .82);
+}
+
+.instanceJsonSurface {
+  overflow: auto;
+  padding: 12px;
+  background:
+    linear-gradient(rgba(255, 255, 255, .025) 1px, transparent 1px),
+    #04070a;
+  background-size: 100% 28px;
+}
+
+#instanceTrackingJsonScaffold {
+  margin: 0;
+  min-height: 100%;
+  color: #c8d6df;
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+#workspace {
+  display: grid;
+  grid-template-columns: 330px minmax(360px, 1fr) 360px;
+  height: calc(100vh - var(--topbar-height));
+  min-height: 0;
+}
+
+#leftPanel,
+#rightPanel {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px;
+  background: var(--panel);
+}
+
+#leftPanel { border-right: 1px solid var(--line); }
+#rightPanel { border-left: 1px solid var(--line); }
+
+.panelSection {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.flexPanel { min-height: 220px; }
+
+.sectionHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sectionHead strong {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+#classList,
+#frameLayerList {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-height: 0;
+}
+
+.classRow {
+  display: grid;
+  gap: 6px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel2);
+}
+
+.classRow.active { border-color: var(--accent); background: #211b18; }
+.classRow.disabled { opacity: .62; }
+
+.classTop {
+  display: grid;
+  grid-template-columns: 18px 28px 16px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.classPick {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  min-width: 0;
+}
+
+.classPick:hover { border-color: transparent; }
+.layerEnabledInput { width: 16px; height: 16px; margin: 0; }
+
+.layerColorInput {
+  width: 28px;
+  height: 24px;
+  min-width: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  background: transparent;
+}
+
+.className {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.classMeta {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.opacityControl,
+.layerOpacityControl,
+.layerConfidenceControl {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(72px, 110px) 42px;
+  gap: 8px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.opacityControl > span:first-child,
+.layerOpacityControl > span:first-child,
+.layerConfidenceControl > span:first-child,
+.layerGroupControl > span:first-child,
+.flowControl > span:first-child,
+.flowSlider > span:first-child,
+.toggleRow > span:first-child,
+.footerControl > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.optionInfoButton {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  min-width: 15px;
+  padding: 0;
+  border-radius: 50%;
+  border-color: #3b4651;
+  background: #0b0f13;
+  color: var(--muted);
+  font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  text-transform: lowercase;
+}
+
+.optionInfoButton:hover,
+.optionInfoButton:focus-visible,
+.optionInfoButton.active {
+  border-color: var(--accent);
+  color: var(--text);
+  background: #241a17;
+}
+
+.layerTopInfoButton {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+}
+
+.optionInfoPopover {
+  position: fixed;
+  z-index: 100;
+  display: grid;
+  gap: 6px;
+  width: min(320px, calc(100vw - 24px));
+  max-height: min(280px, calc(100vh - 24px));
+  overflow: auto;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  background: #0b0f13;
+  color: var(--text);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, .48);
+  user-select: text;
+}
+
+.optionInfoPopover[hidden] { display: none; }
+
+.optionInfoTitle {
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.optionInfoText {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  user-select: text;
+}
+
+.opacityControl input,
+.layerOpacityControl input,
+.layerConfidenceControl input {
+  width: 100%;
+  min-width: 0;
+}
+
+.opacityControl output,
+.layerOpacityControl output,
+.layerConfidenceControl output {
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  text-align: right;
+}
+
+.layerGroupControl {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 194px);
+  gap: 8px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.layerGroupSelects {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.layerGroupSelect {
+  width: 100%;
+  min-width: 0;
+  padding: 4px 3px;
+  border: 1px solid var(--line);
+  background: #080a0c;
+  color: var(--text);
+  font-size: 10px;
+}
+
+.helperText {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+#stagePanel {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
+  padding: 10px;
+  background: #050607;
+}
+
+#canvasWrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
+  background: #000;
+  overflow: hidden;
+  touch-action: none;
+}
+
+#viewStack {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  display: grid;
+  gap: 10px;
+  z-index: 1;
+}
+
+.viewPane {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #000;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .08);
+}
+
+.reviewSurface {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.reviewSurface canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+#squarePoseCanvas,
+#instance3dCanvas {
+  image-rendering: auto;
+}
+
+#squarePoseCanvas,
+#instance3dCanvas {
+  background: #030507;
+}
+
+#bboxOverlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 4;
+}
+
+#squarePoseLabelOverlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.poseLabelAnchor {
+  fill: #fff02a;
+  stroke: rgba(0, 0, 0, .82);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.poseLabelLeader {
+  fill: none;
+  stroke: rgba(255, 240, 42, .78);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.poseLabelBox {
+  fill: rgba(4, 8, 12, .82);
+  stroke: rgba(255, 240, 42, .72);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.poseLabelText {
+  fill: #f7fbff;
+  font: 8px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  letter-spacing: 0;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, .72);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.bboxRect {
+  fill: none;
+  stroke: #55f7ff;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.bboxRect.maskbits {
+  stroke: #ff4dff;
+  stroke-dasharray: 4 3;
+}
+
+.fovClipMargin {
+  fill: rgba(255, 179, 56, .08);
+  stroke: none;
+}
+
+.fovClipSide {
+  stroke-width: 3;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.fovClipSide.clipped {
+  stroke: rgba(255, 58, 42, .95);
+}
+
+.fovClipSide.near {
+  stroke: rgba(255, 179, 56, .88);
+  stroke-dasharray: 4 3;
+}
+
+.fovClipLabel {
+  font: 8px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  letter-spacing: 0;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, .82);
+  stroke-width: 2.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.fovClipLabel.clipped {
+  fill: #ff4a36;
+}
+
+.fovClipLabel.near {
+  fill: #ffbf47;
+}
+
+.instanceTrail,
+.instanceLink,
+.instanceCandidateLink {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.instanceTrail {
+  stroke-width: 1;
+  opacity: .34;
+}
+
+.instanceLink {
+  stroke-width: 1.5;
+  opacity: .82;
+}
+
+.instanceCandidateLink {
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  opacity: .42;
+}
+
+.instancePoint {
+  stroke: rgba(0, 0, 0, .82);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.instanceLabel {
+  font: 9px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  letter-spacing: 0;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, .82);
+  stroke-width: 2.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.instanceLabel.new {
+  fill: #fff;
+}
+
+.instanceLabel.split,
+.instanceLabel.merge {
+  fill: #fff02a;
+}
+
+.quadBand {
+  fill: none;
+  stroke: #ff371f;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: .18;
+}
+
+.quadBand.rejected {
+  stroke: #ffb338;
+  opacity: .12;
+}
+
+.quadBand.maskbits {
+  stroke: #ff4dff;
+  opacity: .16;
+}
+
+.quadLine {
+  fill: none;
+  stroke: #ff371f;
+  stroke-width: 1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.quadLine.rejected {
+  stroke: #ffb338;
+  stroke-dasharray: 5 3;
+}
+
+.quadLine.maskbits {
+  stroke: #ff4dff;
+  stroke-dasharray: 4 3;
+}
+
+.overlapRect,
+.overlapQuad {
+  fill: none;
+  stroke: #246cff;
+  stroke-width: 1.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.overlapQuad {
+  stroke-width: 1.5;
+}
+
+.contourPath {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.contourPath.outer {
+  stroke: #28ff72;
+}
+
+.contourPath.outer.secondary {
+  stroke: #95ffbd;
+  stroke-dasharray: 4 3;
+}
+
+.contourPath.void {
+  stroke: #00d7ff;
+}
+
+.contourPath.nested {
+  stroke: #ffb338;
+  stroke-dasharray: 3 2;
+}
+
+.contourPath.notch {
+  stroke: #ff42d7;
+  stroke-width: 2;
+}
+
+.contourLabel {
+  fill: #eafcff;
+  stroke: rgba(0, 0, 0, .75);
+  stroke-width: 2;
+  paint-order: stroke;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 7px;
+  letter-spacing: 0;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.cornerDot {
+  stroke-width: 1.25;
+  vector-effect: non-scaling-stroke;
+}
+
+.cornerDot.void {
+  stroke-width: 1.25;
+}
+
+.cornerDot.ambiguous {
+  stroke-dasharray: 2 2;
+}
+
+.cornerRay {
+  stroke-width: 1;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.cornerAgreementLine {
+  stroke: #ffef00;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.cornerAgreementLine.complete {
+  stroke: #fff36a;
+  filter: drop-shadow(0 0 2px rgba(255, 239, 0, .75));
+}
+
+.layer002Quad {
+  fill: none;
+  stroke: #ff40ff;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.layer002Quad.closed {
+  stroke: #ff72ff;
+  filter: drop-shadow(0 0 2px rgba(255, 64, 255, .65));
+}
+
+.layer002Quad.rejected {
+  stroke: #b468ff;
+  stroke-dasharray: 5 3;
+  filter: none;
+}
+
+.layer002QuadCorner {
+  fill: #ff72ff;
+  stroke: rgba(15, 5, 22, .95);
+  stroke-width: 1.25;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.layer002QuadCorner.rejected {
+  fill: #b468ff;
+}
+
+.subSectionLabel {
+  margin-top: 10px;
+  color: #f4f7fb;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.cornerTypeSection {
+  display: grid;
+  gap: 7px;
+  padding: 8px 0 10px;
+  border-top: 1px solid var(--line);
+}
+
+.cornerTypeTitle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.cornerLegendDot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, .32);
+  display: inline-block;
+}
+
+.cornerLegendDot.whiteDot {
+  background: #fff;
+  border-color: #101820;
+}
+
+.cornerLegendDot.blackDot {
+  background: #050505;
+  border-color: #f4f7fb;
+}
+
+.cornerLegendDot.orangeDot {
+  background: #ff9f1c;
+}
+
+.cornerLegendDot.greenDot {
+  background: #20c65a;
+}
+
+.bboxLabel {
+  fill: #f4fbff;
+  font: 10px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, .78);
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.bboxLabel.maskbits {
+  fill: #ffb8ff;
+}
+
+#overlayCanvas,
+#squarePoseCanvas,
+#instance3dCanvas { cursor: crosshair; }
+#canvasWrap.panning #overlayCanvas,
+#canvasWrap.panning #squarePoseCanvas { cursor: grabbing; }
+
+#auxViewRail {
+  position: absolute;
+  top: 0;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  z-index: 2;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.auxPane {
+  position: relative;
+  width: 100%;
+  box-sizing: border-box;
+  background: #000;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .08);
+}
+
+#instanceReadoutSurface {
+  overflow: auto;
+  background: #050708;
+}
+
+#instanceReadout {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  padding: 8px;
+  color: #d7e4ee;
+  font: 9px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.auxSurface {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.auxSurface canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.auxHud {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  max-width: calc(100% - 14px);
+  padding: 3px 6px;
+  border: 1px solid rgba(255, 255, 255, .14);
+  background: rgba(0, 0, 0, .58);
+  color: #d7e4ee;
+  font: 9px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  line-height: 1.25;
+  pointer-events: none;
+  text-align: right;
+}
+
+.paneTag {
+  position: absolute;
+  left: 7px;
+  top: 7px;
+  padding: 3px 6px;
+  border: 1px solid rgba(255, 255, 255, .16);
+  background: rgba(0, 0, 0, .58);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+  pointer-events: none;
+}
+
+#stageFooter {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 2px 0;
+}
+
+.flowControl,
+.flowSlider {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.flowSlider {
+  grid-template-columns: 82px minmax(0, 1fr) 52px;
+}
+
+.pointLimitControl {
+  grid-template-columns: 82px minmax(0, 1fr) 58px 38px;
+}
+
+.flowControl select,
+.flowSlider input {
+  width: 100%;
+  min-width: 0;
+}
+
+.flowControl select {
+  border: 1px solid var(--line);
+  background: #080a0c;
+  color: var(--text);
+  padding: 5px 6px;
+}
+
+.pointLimitNumber {
+  border: 1px solid var(--line);
+  background: #080a0c;
+  color: var(--text);
+  padding: 4px 4px;
+  font: 11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.flowSlider output {
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  text-align: right;
+}
+
+.toggleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.toggleRow input {
+  width: 16px;
+  height: 16px;
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.summaryGrid > div {
+  display: grid;
+  gap: 2px;
+  padding: 7px;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+}
+
+.summaryGrid span { color: var(--muted); font-size: 11px; }
+.summaryGrid strong { font: 650 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+
+.frameLayerRow {
+  display: grid;
+  grid-template-columns: 14px 54px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel2);
+  text-align: left;
+}
+
+.frameLayerRow.active { border-color: var(--accent); }
+.frameLayerRow.disabled { opacity: .58; }
+.frameLayerRow strong {
+  text-align: right;
+  font: 650 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.swatch {
+  width: 12px;
+  height: 12px;
+  border: 1px solid rgba(255,255,255,.45);
+}
+
+#inspector,
+#assetSummary {
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.kv span:first-child { color: var(--muted); }
+.kv span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspectorEmpty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+#statusbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--line);
+  background: #0f1317;
+}
+
+#statusText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.footerActions {
+  flex: 0 0 auto;
+}
+
+.footerControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#statusbar input {
+  width: 82px;
+  margin-left: 0;
+  border: 1px solid var(--line);
+  background: #080a0c;
+  color: var(--text);
+}
+
+@media (max-width: 1100px) {
+  #workspace {
+    grid-template-columns: 280px minmax(320px, 1fr);
+  }
+
+  #rightPanel {
+    grid-column: 1 / -1;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+}
+
+@media (max-width: 780px) {
+  #topbar {
+    grid-template-columns: minmax(112px, 128px) auto minmax(128px, 1fr) minmax(170px, 38vw);
+    gap: 6px;
+    overflow-x: auto;
+  }
+
+  .workspaceMark span { display: none; }
+  .sourceModeToggle { grid-template-columns: repeat(2, 54px); }
+  .sourceModeButton { padding: 0 6px; font-size: 11px; }
+  .frameControl { grid-template-columns: 72px minmax(96px, 1fr); gap: 6px; }
+
+  .frameCompareGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .instanceScaffoldGrid {
+    grid-template-columns: 1fr;
+  }
+
+  #workspace {
+    grid-template-columns: 1fr;
+  }
+
+  #leftPanel,
+  #rightPanel {
+    border: 0;
+    border-top: 1px solid var(--line);
+  }
+
+  #canvasWrap { min-height: 260px; }
+}

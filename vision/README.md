@@ -1,226 +1,251 @@
-# Vision Compatibility Package
-`Flight/src/sensing/vision/` owns production inference for the unified flight stack.
-The root `vision/` package is kept for compatibility with existing replay, review, and sample-data tooling while the merge settles.
+# 0721Vision
 
-Historically, `vision/src/` owned inference.
-`vision/tools/` owns replay, review, and sample data
+0721Vision is a deterministic frame-by-frame vision pipeline with a small UI
+for launching local runs and inspecting the outputs.
 
-## Layout
+The product path is:
 
 ```text
-vision/
-  vision_entrypoint.py          # thin CLI/composition script
-  src/
-    pipeline.py                 # live end-to-end orchestration
-    io/                         # UDP packet protocol and ingress
-    cnn/                        # RGB normalization, CNN inference, logits output
-    regressor/                  # raw logits to camera-local gate JSON
-    landmarker/                 # landmark fusion and controller JSON
-  tools/
-    udp_spoof/                  # sample/replay UDP sender
-    review/                     # optional capture and overlay tooling
-    sample_runs/                # replay inputs and truth metadata
-  tests/
+source JPEG frame
+  -> deterministic RGB LUT maskbits
+  -> mask-derived bboxes
+  -> bbox-local clipping diagnostics
+  -> bbox-local contours
+  -> 3D square pose fit
+  -> frame-to-frame instance mapping
+  -> UI visualization and JSON review
 ```
 
-## Data Flow
+The UI is not the core inference engine. It starts or stops a local pipeline run
+through a small launcher API, then watches the manifests written by `pipeline.py`.
 
-Live UDP input is configured in vision_entrypoint.py then enters through `vision.src.io`, then every stage writes to configured `--output-root`.
+## Setup
 
-```text
-external UDP sender
-  -> vision.src.io UDP ingress
-  -> vision.src.cnn
-       output_root/lightmask_logits/frame_000001.bin
-  -> optional vision.src.regressor
-       output_root/regressor_json/frame_000001.json
-       output_root/regressor_json/regressor_frames.jsonl
-  -> optional vision.src.landmarker
-       output_root/landmarker_controller_json/frame_000001_controller.json
-       output_root/landmarker_controller_json/controller_frames.jsonl
-       output_root/landmarker_state.json
-  -> optional vision.tools.review
-       review_output/review_manifest.json
-       review_output/frames/frame_000001/rgb.jpg
-       review_output/frames/frame_000001/landmarker_overlay.jpg
-```
-
-`vision_entrypoint.py` only parses CLI options, builds the config, attaches review if requested, and prints a summary. `vision/src/pipeline.py` orchestrates the execution.
-
-## CNN Model Source
-
-The production checkpoint and architecture are both kept with the runtime package:
-
-```text
-vision/src/cnn/cnn_last.pt
-vision/src/cnn/lightmask_model.py
-```
-
-`lightmask_model.py` is the standalone inference copy of the stable lightmask architecture. It contains only the runtime contract:
-
-```text
-schema_version: gate_non_gate_lightmask_v1
-input image:    640x360 RGB
-output stride:  4
-mask logits:    2 x 90 x 160
-depth logits:   1 x 90 x 160
-backbone:       mobilenet_v3_small
-```
-
-`vision/src/cnn/rgb_inference.py` imports the local runtime model directly:
-
-```python
-from vision.src.cnn.lightmask_model import MASK_CHANNELS, SCHEMA_VERSION
-from vision.src.cnn.lightmask_model import build_model, load_compatible_state_dict
-```
-
-The runtime no longer imports `Convolutional_Neural_Network/training_pipeline` to construct the CNN. Training code may still use its own research/training modules, but production inference depends on the local `vision/src/cnn` model contract.
-
-## UDP Input Contract
-
-The live receiver binds a UDP socket with:
+Use Python 3.10 or newer. From this directory:
 
 ```bash
-python -m vision.vision_entrypoint live \
-  --bind-host 127.0.0.1 \
-  --port 5600 \
-  --output-root vision/output \
-  --device auto
+pip install -r requirements.txt
+python tools/check_deps.py
 ```
 
-Use `--bind-host 0.0.0.0` when the sender is on another machine or interface and the host firewall allows it. Defaults are:
+## Entrypoint
 
-```text
-bind host: 127.0.0.1
-port:      5600
-```
+All commands below are run from inside `vision/`.
 
-Each UDP datagram uses the `4.6 Vision Stream` JPEG chunk format:
-
-```text
-header: little-endian struct "<IHHIIQ" (24 bytes)
-
-uint32 frame_id
-uint16 chunk_id          # zero-based
-uint16 total_chunks
-uint32 jpeg_size         # full frame byte size
-uint32 payload_size      # bytes in this datagram payload
-uint64 sim_time_ns
-bytes  payload           # JPEG chunk bytes
-```
-
-The receiver reassembles all chunks with the same `frame_id`, validates chunk counts and payload sizes, decodes the JPEG, and passes the frame to CNN inference. `--timeout-seconds` stops the receiver after socket inactivity. `--max-frames 0` means keep receiving until timeout or process exit.
-
-## Live Runs
-
-cnn + regressor + landmarker:
+Run a finite directory or source manifest in production mode:
 
 ```bash
-python -m vision.vision_entrypoint live \
-  --bind-host 127.0.0.1 \
-  --port 5600 \
-  --output-root vision/output/live_001 \
-  --run-landmarker \
-  --top-k 5 \
-  --device auto
+python main.py --source-dir path/to/frames --mode batch --no-debug
 ```
 
-`--run-landmarker` automatically runs the regressor first because landmarker consumes regressor JSONL.
+Run a watched directory without dropping accepted frames:
 
-## Landmarker Egress
+```bash
+python main.py --source-dir path/to/frames --mode watch
+```
 
-In a live full-stage run, landmarker output paths are derived from `--output-root`:
+Run the UI and the pipeline launcher API:
 
-`--top-k` controls how many current-frame official gates are emitted for the controller. The landmarker still persists fused official IDs across frames, but controller output uses the current frame's matched regressor `position_xyz`, sorts those camera-relative XYZ values by distance, and emits the nearest targets. `gates[0]` is the nearest current-frame regression target.
+```bash
+python main.py --serve-ui
+```
 
-Per-frame controller JSON shape:
+Start the UI with a pipeline already running:
+
+```bash
+python main.py --source-dir path/to/frames --mode watch --serve-ui
+```
+
+The UI is served by default at:
+
+```text
+http://127.0.0.1:8772/0721Vision/index.html
+```
+
+## Runtime Shape
+
+`main.py` is the public wrapper. It parses source mode, source location, output
+roots, optional frame caps, and UI hosting options.
+
+`pipeline.py` is the ordered executor. It accepts each frame, snapshots it into
+the run folder, runs every enabled stage, records latency, and atomically
+publishes compact per-frame outputs plus status.
+
+The core pipeline types are:
+
+```text
+PipelineConfig
+SourceAdapter
+FramePacket
+VisionPipeline
+```
+
+The current v1 runtime is ordered and lossless. If it falls behind a live source,
+it reports backlog instead of skipping frames. Instance tracking remains ordered
+because it carries state across frames.
+
+## Frame Contract
+
+V1 expects source JPEG frames at 640x360.
+
+Frames can come from:
+
+```text
+directory of .jpg/.jpeg files
+source manifest JSON
+watched directory receiving new .jpg/.jpeg files
+```
+
+Watched-directory files are accepted only after their size and mtime are stable.
+Accepted frames are copied into the pipeline run so history remains inspectable
+even if the original live source overwrites files later.
+
+In v1, `live` mode is a watched server-visible path. HTTP live points are
+reserved for a future adapter.
+
+## Outputs
+
+In production mode, each pipeline run writes compact per-frame instance output:
+
+```text
+assets/pipeline_runs/<run_id>/
+  status.json
+  run_manifest.json
+  latest.json
+  frames/
+    frame_XXXXXX.json
+```
+
+Each frame JSON is the final product output for that frame:
+
+```text
+schema: 0721vision-instance-frame.v1
+kind: instance-frame-mapping-v1
+frameOrdinal
+frameId
+instances[]
+```
+
+Debug and compatibility outputs are opt in. Use `--debug-artifacts` for
+per-frame stage debug JSON and `--aggregate-debug-manifests` for legacy
+cumulative manifests in the stage roots:
+
+```text
+assets/mask_bboxes_maskbits/<run_id>/bbox_manifest.json
+assets/bbox_clipping/<run_id>/clipping_manifest.json
+assets/bbox_contours/<run_id>/contours_manifest.json
+assets/pose_estimation/<run_id>/3d_pose_fit.json
+assets/instance_tracking/<run_id>/instance_mapping.json
+```
+
+The aggregate instance mapping preserves the legacy UI review shape:
+
+```text
+instances[]
+frames[].observations[]
+observation.instanceId
+observation.instanceColor
+observation.bboxPx
+observation.centroidPx
+observation.pose
+observation.status
+observation.candidates
+```
+
+## Flight Observation Bridge
+
+The Flight-facing adapter lives inside this vision module at:
+
+```text
+src/flight_bridge/vision_observation.py
+tools/emit_flight_observation.py
+```
+
+It intentionally does not import from `Flight`. The Flight module remains the
+consumer contract, while vision owns the conversion from
+`0721vision-instance-frame.v1` into a controller payload with:
+
+```text
+run.cycle
+run.frame_id
+run.sim_time_ns
+gates[].id
+gates[].position_xyz
+gates[].position_confidence
+gates[].orientation_xyz
+gates[].orientation_confidence
+obstacles[]
+```
+
+The current conversion assumes the camera is the local origin for each frame:
+
+```text
+camera position = 0,0,0
+camera orientation = 0,0,0
+instance position = camera-local meters
+```
+
+Vision pose positions are produced in OpenCV camera coordinates
+`+x right, +y down, +z forward`. The bridge flips the y axis once so the Flight
+payload receives `+x right, +y up, +z forward`. Orientation is passed through as
+camera-relative RPY degrees for v1 and is marked in code as a handedness item to
+validate before high-authority control use.
+
+## UI Launcher API
+
+The local server exposes:
+
+```text
+GET  /api/pipeline/status
+GET  /api/pipeline/runs
+POST /api/pipeline/start
+POST /api/pipeline/stop
+```
+
+`POST /api/pipeline/start` accepts:
 
 ```json
 {
-  "run": {
-    "output_dir": "vision/output/live_001/landmarker_controller_json",
-    "cycle": 1,
-    "frame_id": "frame_000001",
-    "sim_time_ns": 0
-  },
-  "gates": [
-    {
-      "id": "gate-001w",
-      "position_xyz": [12.33, 1.72, 15.99],
-      "position_confidence": 0.18,
-      "orientation_xyz": [0.28, 0.84, -0.46],
-      "orientation_confidence": 0.18
-    }
-  ],
-  "obstacles": []
+  "mode": "batch | watch | live",
+  "sourceDir": "server-visible path",
+  "livePoint": null,
+  "maxFrames": null
 }
 ```
 
-Notes:
+Relative paths are resolved from the `/0721Vision` app directory. UI-style paths
+such as `/src/...` and `/assets/...` are also resolved inside the app directory.
 
-- `position_xyz` is the current frame's camera-local regressor output in meters.
-- `orientation_xyz` is either a 3-value direction vector or `null` when unavailable.
-- `orientation_confidence` is always present.
-- `obstacles` is currently an empty list.
-- `controller_frames.jsonl` contains the same per-frame payloads, one JSON object per line.
-- `landmarker_state.json` persists fused official landmark IDs across frames/runs.
+## Stage Boundaries
 
-## Review Capture
+The `/src` modules own algorithms, not orchestration.
 
-Review is optional and observes the same production path. It does not create a separate inference flow.
-
-```bash
-python -m vision.vision_entrypoint live \
-  --bind-host 127.0.0.1 \
-  --port 5600 \
-  --output-root vision/output/live_001 \
-  --run-landmarker \
-  --review \
-  --review-output vision/output/reviews/live_001
-```
-
-## Replay And Spoofing
-
-Replay is a review tool. 
-
-Start the live receiver first:
-```bash
-python -m vision.vision_entrypoint live \
-  --bind-host 127.0.0.1 \
-  --port 5600 \
-  --max-frames 20 \
-  --timeout-seconds 10 \
-  --output-root vision/output/replay_001 \
-  --run-landmarker \
-  --review \
-  --review-output vision/output/reviews/replay_001
-```
-
-Then send sample frames over the same UDP wire contract:
-```bash
-python -m vision.tools.udp_spoof.replay \
-  vision/tools/sample_runs/universe_75m75g50d_nearest_front_facing_75gates_fullrun_retry720_20260605 \
-  --host 127.0.0.1 \
-  --port 5600 \
-  --fps 0 \
-  --max-frames 20
-```
-
-Replay options:
 ```text
---host        UDP receiver host
---port        UDP receiver port
---fps         pacing; 0 sends as fast as possible
---chunk-size  JPEG payload bytes per UDP packet, default 1200
---max-frames  0 sends all available sample frames
+src/color_masks       exact RGB -> maskbits
+src/mask_bbox         maskbits -> bboxes
+src/bbox_clipping     bboxes + maskbits -> FOV clipping diagnostics
+src/bbox_contours     bboxes + maskbits -> bbox-local contour hierarchy
+src/pose_estimation   contours + clipping -> 3D pose fit
+src/instance_tracking bboxes + pose -> stable instance IDs
 ```
 
-This keeps live and replay behavior comparable: both enter the system as UDP packets and both pass through `vision.src.io`.
+Batch builders remain available for review and comparison, but the production
+wrapper calls frame-level stage functions through `pipeline.py`.
 
-## Tests
+## Performance
 
-```bash
-PYTHONDONTWRITEBYTECODE=1 python3 -m pytest vision/tests -q
+The production pass is ordered and deterministic. BBox clipping and bbox
+contours are independent after bbox generation, so they overlap on a small
+stateless worker pool by default. Instance tracking remains ordered.
+
+Every frame status records per-stage latency in `status.json`:
+
+```text
+stageLatencyMs
+meanFrameLatencyMs
+behindByFrames
+latestAcceptedFrame
+latestCompletedFrame
 ```
 
-The UDP integration test opens a local UDP socket on `127.0.0.1`.
+Use `--no-parallel` only when debugging the strictly sequential path.
