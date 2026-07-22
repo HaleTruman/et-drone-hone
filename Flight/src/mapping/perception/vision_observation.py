@@ -4,7 +4,11 @@ from typing import Any
 
 @dataclass(frozen=True)
 class VisionGateObservation:
-    """A gate observation in camera optical coordinates: [right, up, forward]."""
+    """A gate observation in camera optical coordinates: [right, up, forward].
+
+    orientation_camera is roll-right, pitch-up, yaw-right in degrees from the
+    camera frame to the gate frame.
+    """
 
     gate_id: str
     position_camera_m: tuple[float, float, float]
@@ -44,7 +48,7 @@ class VisionGateObservation:
 class VisionObservation:
     frame_id: int
     sim_time_ns: int
-    gates: tuple[VisionGateObservation, ...]
+    gates: list[VisionGateObservation]
     source: str = "vision"
 
     @classmethod
@@ -52,11 +56,11 @@ class VisionObservation:
         run = payload.get("run") if isinstance(payload.get("run"), dict) else {}
         cycle = int(run.get("cycle", 0))
         sim_time_ns = int(run.get("sim_time_ns", 0))
-        gates = tuple(
+        gates = [
             VisionGateObservation.from_payload(gate)
             for gate in payload.get("gates", [])
             if isinstance(gate, dict)
-        )
+        ]
         return cls(frame_id=cycle, sim_time_ns=sim_time_ns, gates=gates, source=source)
 
     def to_controller_payload(self, *, output_dir: str = "memory") -> dict[str, Any]:

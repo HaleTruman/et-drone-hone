@@ -2,7 +2,7 @@ from enum import Enum
 
 import numpy as np
 
-from sensing.gates import GateRecord
+from mapping.gates import GateRecord
 
 
 class SystemMode(str, Enum):

@@ -1,18 +1,19 @@
-"""Minimal live MAVLink and vision stream entry point."""
-
 from pathlib import Path
+import math
 import time
+import traceback
+from concurrent.futures import ThreadPoolExecutor
 
 from core.control.hover.controller import HoverController
 from core.coordinates import quaternion_from_roll_pitch_yaw_deg
-from autonomy.planning import HotStartPlanner, PathManager
+from autonomy.planning import PathManager
 from core.control.attitude import AttitudeController
 from core.control.carrot import CarrotController
 from core.logging import Logger, generate_mp4
 from core.logging.obs import OBSRecorder
 from core.schemas import MavlinkHighresImu, MavlinkTelemetry
-from sensing.gates import GateMap
-from sensing.perception import GatePoseEstimator
+from mapping.gates import GateMap
+from mapping.perception import VisionGateObservation, VisionObservation
 from sensing.telemetry import MavlinkClient
 from sensing.vision import VisionStreamReceiver
 from sensing.odometry import VehicleStateEstimator
@@ -40,7 +41,7 @@ GATE_MIN_OBSERVATIONS = 2
 CARROT_LOOKAHEAD_M = 3.0
 ALLOW_FLIGHT = True
 CREATE_VIDEO = False
-RECORD_SCREEN = True
+RECORD_SCREEN = False
 
 # Test
 TARGET_QUATERNION = quaternion_from_roll_pitch_yaw_deg(0.0, -0.8, 0)
@@ -64,34 +65,46 @@ def main() -> int:
             "control_method": CONTROL_METHOD,
         }
     )
-
     print(f"Starting run at {run_dir}...")
-    print(f">> Inner loop rate {INNER_LOOP_HZ}")
-    print(f">> Outer loop rate {OUTER_LOOP_HZ}")
 
     # clients and managers
     vehicle_state_estimator = VehicleStateEstimator()
     mavlink_client = MavlinkClient(endpoint=MAVLINK_ENDPOINT)
     vision_rx = VisionStreamReceiver(host=VISION_HOST, port=VISION_PORT, output_dir=run_dir / "vision_frames")
     vision_perception = VisionPerceptionService(VisionPerceptionConfig(run_landmarker=False))
-    gate_pose_estimator = GatePoseEstimator()
+    vision_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vision")
+    obs_recorder = OBSRecorder(run_dir)
     gate_map = GateMap()
-    hot_start_planner = HotStartPlanner() # TODO: create new hot start path schema that contains a control state rather than just a raw path. i.e we need position (local NED) and also a control state (quat/thrust)
     path_manager = PathManager()
 
-    # path_manager.build_test_path(
-    #     length_m=70,
-    #     width_m=20,
-    #     height_m=2.0,
-    #     point_count=150
-    # )
-    path_manager.build_straight_line(
-        length_m=100,
-        up_down_angle_deg=4.5,
-        left_right_angle_deg=17,
-        point_count=200
+    ## TEST
+    TEST_OBSERVATION = VisionObservation(
+        frame_id=42,
+        sim_time_ns=123_456_789,
+        gates=[
+            VisionGateObservation(
+                gate_id="sample_gate_0",
+                position_camera_m=(0.0, 0.0, 10.0),
+                position_confidence=1.0,
+                orientation_camera=(0.0, 0.0, 0.0),
+                orientation_confidence=1.0,
+            ),
+            VisionGateObservation(
+                gate_id="sample_gate_1",
+                position_camera_m=(2.5, 5.4, 20.0),
+                position_confidence=1.0,
+                orientation_camera=(0.0, 0.0, 0.0),
+                orientation_confidence=1.0,
+            ),
+            VisionGateObservation(
+                gate_id="sample_gate_2",
+                position_camera_m=(-3.0, -0.2, 29.0),
+                position_confidence=1.0,
+                orientation_camera=(0.0, 0.0, 0.0),
+                orientation_confidence=1.0,
+            )
+        ],
     )
-    obs_recorder = OBSRecorder(run_dir)
 
     # controllers
     attitude_controller = AttitudeController(
@@ -103,7 +116,7 @@ def main() -> int:
         )
     
     carrot_controller = CarrotController(
-        speed_mps=1,
+        speed_mps=10,
         position_gain=0.75,
         velocity_gain=1.0,
         initial_thrust=0.265
@@ -151,7 +164,6 @@ def main() -> int:
 
         # clear states, buffers, and maps
         vision_rx.clear_buffer()
-        gate_map.clear()
         
         reset_countdown_deadline_s = time.perf_counter() + RESET_WAIT_S
         stationary_imu_samples: list[MavlinkHighresImu] = []
@@ -167,39 +179,9 @@ def main() -> int:
                 stationary_imu_samples.append(imu_data_t)
                 last_calibration_imu_time_boot_us = imu_data_t.time_boot_us
 
-            # initialize vehicle state
-            if not vehicle_state_estimator.initialized and imu_data_t:
-                vehicle_state = vehicle_state_estimator.initialize_from_imu(imu_data_t)
-        
-            # init gate map
+            # init gate map and path plan
             if latest_frame is not None:
-                observation = vision_perception.process_vision_frame(frame=latest_frame)
-                logger.log_vision_observation(
-                    observation,
-                    frame_id=latest_frame.frame_id,
-                    sim_time_ns=latest_frame.sim_time_ns,
-                    gate_count=len(observation.gates),
-                    source=observation.source,
-                    phase="reset_countdown",
-                )
-
-                # try:
-                #     # init hot start path plan
-                #     gate_pose_estimator.update_gate_map_from_observation(
-                #         observation,
-                #         vehicle_state=vehicle_state,
-                #         gate_map=gate_map,
-                #     )
-                #     hot_start_path = hot_start_planner.plan_from_gate_map(gate_map)
-
-                #     logger.log_planned_path(
-                #         hot_start_path.to_log_dict(origin_local_ned_m=vehicle_state.position_local_ned_m),
-                #         cycle=inner_cycle,
-                #         planner="hot_start_reset",
-                #     )
-
-                # except Exception as error:
-                #     print(">> Initializing hot-start failed due to: ", error)
+                observation = vision_perception.process_vision_frame(latest_frame)
 
             # timing
             next_inner_cycle_s += inner_period_s
@@ -225,17 +207,26 @@ def main() -> int:
         else:
             logger.log_event("stationary_imu_calibration_skipped", reason="no_imu_samples")
 
-        # DELAY BUFFER POST RESET
-        if POST_RESET_DELAY_S > 0.0:
-            time.sleep(POST_RESET_DELAY_S)
+        if vehicle_state_estimator.initialized is False:
+            logger.log_event("initialization_failed", reason="no_stationary_imu_samples_or_other_failure")
+            raise Exception("Initialization failed.")
+
+        gate_map.update_from_observation(observation=TEST_OBSERVATION, vehicle_state=vehicle_state_estimator.state)
+        planned_path = path_manager.plan_from_gate_map(gate_map.gates)
+        logger.log_planned_path(
+            planned_path.to_log_dict(origin_local_ned_m=vehicle_state.position_local_ned_m),
+            cycle=inner_cycle,
+            planner="test_gate_map_spline",
+        )
 
         # arm drone
         mavlink_client.arm_and_wait(timeout_s=ARM_TIMEOUT_S)
         logger.log_event("armed", bridge=mavlink_client.snapshot())
         
-        # TODO: work on path_manager and allow it to update the remainder of the path from the current position of the drone (i.e reset origin and "initial" velocity and have the drone continue from there)
-        print("LATEST OBSERVATION: ", observation)
-        
+        # DELAY BUFFER POST RESET
+        if POST_RESET_DELAY_S > 0.0:
+            time.sleep(POST_RESET_DELAY_S)
+
         ## MAIN LOOP
         control_started_s = time.perf_counter()
         next_inner_cycle_s = control_started_s
@@ -243,6 +234,7 @@ def main() -> int:
 
         logger.log_event("flight_began", flight_began_s=control_started_s)
         carrot_target = None
+        vision_pending = None
 
         while RUN_S is None or time.perf_counter() - control_started_s < RUN_S:
             # inner loop timing
@@ -272,8 +264,21 @@ def main() -> int:
             # outer loop: update vision, map, planner, and target selection
             if outer_loop_ran:
                 next_outer_cycle_s += outer_period_s
-                latest_frame = vision_rx.get_next_frame()
                 outer_cycle += 1
+
+                if vision_pending is not None and vision_pending[0].done():
+                    vision_future, frame_log, frame_outer_cycle = vision_pending
+                    try:
+                        observation = vision_future.result()
+                        frame_log["gate_count"] = len(observation.gates)
+                        frame_log["observation"] = observation.to_controller_payload(output_dir="memory")
+                        logger.log_vision_frame(frame_log, cycle=frame_outer_cycle, status="processed")
+                    except Exception as error:  # noqa: BLE001
+                        logger.log_vision_frame(frame_log, cycle=frame_outer_cycle, status="failed", error=str(error))
+                        print(f"vision frame={frame_log['frame_id']} failed: {error}", flush=True)
+                    vision_pending = None
+
+                latest_frame = None if vision_pending is not None else vision_rx.get_next_frame()
 
                 # compute attitude target for path-following test
                 carrot = path_manager.carrot_point(
@@ -298,73 +303,12 @@ def main() -> int:
                         "jpeg_size": len(latest_frame.jpeg_bytes),
                     }
 
-                    # analyze frame with CNN, update gate maps, and generate hot start path
-                    try:
-                        pass
-                        # observation = vision_perception.process_vision_frame(latest_frame)
-                        # frame_log["gate_count"] = len(observation.gates)
-                        # frame_log["observation"] = observation.to_controller_payload(output_dir="memory")
-
-                        # if latest_imu is not None and vehicle_state is not None and vehicle_state.position_local_ned_m is not None:
-                        #     mapped_gates = gate_pose_estimator.update_gate_map_from_observation(
-                        #         observation,
-                        #         vehicle_state=vehicle_state,
-                        #         gate_map=gate_map,
-                        #         allow_new_gates=not gate_map.has_authoritative_gates(),
-                        #     )
-                        #     hot_start_path = hot_start_planner.plan_from_gate_map(gate_map)
-                        #     hot_start_log = hot_start_path.to_log_dict(
-                        #         origin_local_ned_m=vehicle_state.position_local_ned_m,
-                        #     )
-                        #     frame_log["hot_start_path"] = hot_start_log
-                        #     logger.log_planned_path(
-                        #         hot_start_log,
-                        #         cycle=inner_cycle,
-                        #         frame_id=latest_frame.frame_id,
-                        #         sim_time_ns=telemetry.sim_time_ns,
-                        #         planner="hot_start",
-                        #     )
-                        #     selected_gate = select_guidance_gate(
-                        #         mapped_gates,
-                        #         telemetry=telemetry,
-                        #         min_confidence=MIN_GATE_CONFIDENCE,
-                        #     )
-
-                        #     if selected_gate is not None:
-                        #         gate_target_tracker.update(selected_gate, now_s=loop_started_s, frame_id=latest_frame.frame_id)
-                        #         frame_log["selected_guidance_gate"] = {
-                        #             "id": selected_gate.gate_id,
-                        #             "position_local_ned_m": [float(value) for value in selected_gate.position_local_ned_m],
-                        #             "position_relative_ned_m": None
-                        #             if selected_gate.position_relative_ned_m is None
-                        #             else [float(value) for value in selected_gate.position_relative_ned_m],
-                        #             "confidence": float(selected_gate.confidence),
-                        #             "sequence": selected_gate.sequence,
-                        #         }
-                        #     frame_log["mapped_gates"] = [
-                        #         {
-                        #             "id": gate.gate_id,
-                        #             "position_local_ned_m": [float(value) for value in gate.position_local_ned_m],
-                        #             "position_relative_ned_m": None
-                        #             if gate.position_relative_ned_m is None
-                        #             else [float(value) for value in gate.position_relative_ned_m],
-                        #             "quaternion": [float(value) for value in gate.quaternion],
-                        #             "confidence": float(gate.confidence),
-                        #             "sequence": gate.sequence,
-                        #             "observation_count": gate.observation_count,
-                        #             "last_observed_cycle": gate.last_observed_cycle,
-                        #         }
-                        #         for gate in mapped_gates
-                        #     ]
-
-                        # else:
-                        #     frame_log["mapping_status"] = "skipped_no_telemetry"
-                        
-                        # logger.log_vision_frame(frame_log, cycle=outer_cycle, status="processed")
-                    except Exception as error:  # noqa: BLE001
-                        pass
-                        # logger.log_vision_frame(frame_log, cycle=inner_cycle, status="failed", error=str(error))
-                        # print(f"vision frame={latest_frame.frame_id} failed: {error}", flush=True)
+                    # analyze frame with CNN, update gate maps, and generate path
+                    vision_pending = (
+                        vision_executor.submit(vision_perception.process_vision_frame, latest_frame),
+                        frame_log,
+                        outer_cycle,
+                    )
 
             if imu_data_t is None:
                 command_result = {
@@ -472,15 +416,10 @@ def main() -> int:
                 # },
                 vision={
                     **vision_rx.snapshot(),
-                    "perception": vision_perception.snapshot(),
-                    # "gate_count": len(gate_map.get_next_gates(10_000)),
+                    "perception": vision_perception.snapshot()
                 },
             )
-            logger.log_gate_map(
-                gate_map.get_next_gates(10_000),
-                inner_cycle=inner_cycle,
-                sim_time_ns=telemetry.sim_time_ns if telemetry else None,
-            )
+     
 
             inner_cycle += 1
 
@@ -493,12 +432,14 @@ def main() -> int:
 
     except Exception as error:
         print("Error occured: ", error)
+        traceback.format_exc()
 
     # SHUTDOWN
     finally:
         if RECORD_SCREEN:
             obs_recorder.stop_recording()
 
+        vision_executor.shutdown(wait=False, cancel_futures=True)
         vision_rx.shutdown()
         if getattr(mavlink_client, "connected", False):
             try:

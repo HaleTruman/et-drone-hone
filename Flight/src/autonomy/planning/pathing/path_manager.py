@@ -1,23 +1,78 @@
 from collections.abc import Callable, Iterable
+from dataclasses import asdict, dataclass
+from time import perf_counter
 from typing import Any
 
 import numpy as np
 
 from core.schemas import Vec3
-from sensing.gates import GateMap
+from mapping.gates import GateRecord
+
+
+@dataclass(frozen=True)
+class PlannedPath:
+    points_relative_ned_m: list[list[float]]
+    anchors_relative_ned_m: list[list[float]]
+    gate_ids: list[str]
+    spacing_m: float
+    computation_ms: float
+    source: str = "path_manager"
+
+    def to_log_dict(self, *, origin_local_ned_m: Any | None = None) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["origin_local_ned_m"] = (
+            None if origin_local_ned_m is None else [float(value) for value in origin_local_ned_m]
+        )
+        return payload
 
 
 class PathManager:
-    def __init__(self, spline_generator: Callable[[np.ndarray], object] | None = None):
+    def __init__(
+        self,
+        spline_generator: Callable[[np.ndarray], object] | None = None,
+        *,
+        spacing_m: float = 0.75,
+        gate_axis_offset_m: float = 1.5,
+        max_points: int = 240,
+        max_gates: int = 8,
+    ):
         self.spline_generator = spline_generator
+        self.spacing_m = max(0.1, float(spacing_m))
+        self.gate_axis_offset_m = max(0.0, float(gate_axis_offset_m))
+        self.max_points = max(2, int(max_points))
+        self.max_gates = max(1, int(max_gates))
         self._waypoints = np.empty((0, 3))
         self._segment_lengths = np.empty((0,))
         self._cumulative_lengths = np.array([0.0], dtype=float)
 
-    def update_from_gate_map(self, gate_map: GateMap, limit: int = 3) -> np.ndarray:
+    def update_from_gate_map(self, gates: Iterable[GateRecord], limit: int = 3) -> np.ndarray:
         return self.set_waypoints(
-            [gate.position_relative_ned_m or gate.position_local_ned_m for gate in gate_map.get_next_gates(limit)],
+            [gate.position_local_ned_m for gate in list(gates)[:limit]],
         )
+
+    def plan_from_gate_map(self, gates: Iterable[GateRecord]) -> PlannedPath:
+        started = perf_counter()
+        planned_gates = self._planning_gates(gates)
+        anchors = self._anchors_for_gates(planned_gates)
+        points = self._sample_spline(anchors)
+        self.set_waypoints(points)
+        return PlannedPath(
+            points_relative_ned_m=points,
+            anchors_relative_ned_m=anchors.astype(float).tolist(),
+            gate_ids=[gate.gate_id for gate in planned_gates],
+            spacing_m=float(self.spacing_m),
+            computation_ms=(perf_counter() - started) * 1000.0,
+        )
+
+    def _planning_gates(self, gates: Iterable[GateRecord]) -> list[GateRecord]:
+        return sorted(
+            [
+                gate
+                for gate in gates
+                if not gate.crossed
+            ],
+            key=lambda gate: (gate.sequence is None, gate.sequence, gate.gate_id),
+        )[: self.max_gates]
 
     def set_waypoints(self, waypoints: Iterable[Vec3]) -> np.ndarray:
         self._waypoints = _waypoint_array(waypoints)
@@ -169,6 +224,63 @@ class PathManager:
         if len(self._waypoints) < 2 or float(self._cumulative_lengths[-1]) <= 1e-12:
             raise ValueError("PathManager requires at least two distinct waypoints.")
 
+    def _anchors_for_gates(self, gates: list[GateRecord]) -> np.ndarray:
+        anchors = [np.zeros(3, dtype=float)]
+        for gate in gates:
+            anchors.append(np.asarray(gate.position_local_ned_m, dtype=float))
+        return self._dedupe_points(np.asarray(anchors, dtype=float))
+
+    def _sample_spline(self, anchors: np.ndarray) -> list[list[float]]:
+        if len(anchors) < 3:
+            return self._sample_polyline(anchors)
+
+        samples = [anchors[0]]
+        for index in range(len(anchors) - 1):
+            p0 = anchors[max(index - 1, 0)]
+            p1 = anchors[index]
+            p2 = anchors[index + 1]
+            p3 = anchors[min(index + 2, len(anchors) - 1)]
+            distance = float(np.linalg.norm(p2 - p1))
+            steps = max(1, int(np.ceil(distance / self.spacing_m)))
+            for step in range(1, steps + 1):
+                t = step / steps
+                point = 0.5 * (
+                    (2.0 * p1)
+                    + (-p0 + p2) * t
+                    + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t * t
+                    + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t * t * t
+                )
+                samples.append(point)
+                if len(samples) >= self.max_points:
+                    return np.asarray(samples, dtype=float).tolist()
+        return np.asarray(samples, dtype=float).tolist()
+
+    def _sample_polyline(self, anchors: np.ndarray) -> list[list[float]]:
+        if len(anchors) <= 1:
+            return anchors.astype(float).tolist()
+        samples = [anchors[0]]
+        for start, end in zip(anchors[:-1], anchors[1:]):
+            delta = end - start
+            distance = float(np.linalg.norm(delta))
+            if distance <= 1e-9:
+                continue
+            steps = max(1, int(np.ceil(distance / self.spacing_m)))
+            for step in range(1, steps + 1):
+                samples.append(start + delta * (step / steps))
+                if len(samples) >= self.max_points:
+                    return np.asarray(samples, dtype=float).tolist()
+        return np.asarray(samples, dtype=float).tolist()
+
+    @staticmethod
+    def _dedupe_points(points: np.ndarray) -> np.ndarray:
+        if len(points) <= 1:
+            return points
+        deduped = [points[0]]
+        for point in points[1:]:
+            if float(np.linalg.norm(point - deduped[-1])) > 1e-6:
+                deduped.append(point)
+        return np.asarray(deduped, dtype=float)
+
 
 def _waypoint_array(waypoints: Iterable[Vec3]) -> np.ndarray:
     array = np.asarray(tuple(waypoints), dtype=float)
@@ -182,3 +294,4 @@ def _vec3(value: Vec3, name: str) -> np.ndarray:
     if array.shape != (3,):
         raise ValueError(f"{name} must contain exactly three values")
     return array
+

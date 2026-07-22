@@ -61,11 +61,15 @@ src/
     telemetry/                    # MAVLink client, bridge alias, telemetry sync
     odometry/                     # VehicleStateEstimator and state integration
     vision/                       # UDP frame receiver, CNN/regressor/landmarker pipeline
-    perception/                   # Vision observations, gate map, gate targeting, gate pose
+
+  mapping/
+    gates/                        # Persistent gate map state
+    perception/                   # Vision observations
 
   autonomy/
     planning/
-      hot_start.py                # Gate-map-derived path helper used by live loop/logs
+      pathing/
+        path_manager.py           # Gate-map-derived path helper used by live loop/logs
       mpcc/                       # MPCC planner workbench
 
   app/
@@ -94,9 +98,7 @@ External simulator
         -> VisionStreamReceiver
         -> VisionPerceptionService
         -> VisionObservation
-        -> GatePoseEstimator
         -> GateMap
-        -> GateTargetTracker
         -> BodyRateGuidanceController
         -> MAVLink attitude target command
 ```
@@ -352,38 +354,20 @@ VisionPerceptionService(VisionPerceptionConfig(run_landmarker=False))
 
 That means the live loop currently runs CNN + regressor and returns `VisionObservation` directly from regressor output, without landmarker state/matching.
 
-## Gate Mapping and Target Selection
+## Gate Mapping
 
-Gate perception code lives under `src/sensing/perception/`; persistent gate map state lives under `src/sensing/gates/`.
+Gate perception code lives under `src/mapping/perception/`; persistent gate map state lives under `src/mapping/gates/`.
 
 Key pieces:
 
 - `VisionObservation`
   - Typed representation of gates detected in a vision frame.
-- `GatePoseEstimator`
-  - Converts camera-local gate observations into local NED gate records.
-  - Uses vehicle position and attitude from `telemetry.vehicle_state`.
-  - Applies camera optical-to-body and body-to-NED transforms.
-- `GateMap` (`src/sensing/gates/gate_map.py`)
-  - Maintains known gates.
-  - Can be seeded from authoritative simulator track gates.
-  - Can merge vision observations into existing gate records.
-- `GateTargetTracker`
-  - Holds the most recent usable target across short vision gaps.
-- `select_guidance_gate`
-  - Selects the nearest confident, not-yet-crossed gate.
-  - Prefers `position_relative_ned_m` when available.
+- `GateMap` (`src/mapping/gates/gate_map.py`)
+  - Placeholder storage while gate mapping is rebuilt.
+- `GateRecord`
+  - Placeholder record shape used by current planning/control interfaces.
 
-The simulator can send authoritative track gates through MAVLink encapsulated data. `GateMap.seed_from_track_gates()` converts those `TrackGate` records into `GateRecord` entries and reseeds the map when track-gate data changes.
-
-When vision frames are processed, `GatePoseEstimator.update_gate_map_from_observation()` maps observed gates into local NED using:
-
-```text
-telemetry.vehicle_state.position_local_ned_m
-telemetry.vehicle_state.attitude_quaternion
-```
-
-The hot-start planner then creates a path from the gate map for logging/inspection.
+Simulator track-gate seeding, camera-local pose mapping, and vision fusion have been cleared out for rebuild.
 
 ## Guidance and Control
 
@@ -398,7 +382,6 @@ The controller consumes:
 - Current position from `telemetry.vehicle_state.position_local_ned_m`.
 - Current velocity from `telemetry.vehicle_state.velocity_local_ned_mps`.
 - Current attitude from `telemetry.vehicle_state.attitude_quaternion`.
-- A selected or held gate target from `GateTargetTracker`.
 
 It outputs a command payload shaped for MAVLink attitude target commands:
 
@@ -429,7 +412,7 @@ Planning code lives under `src/autonomy/planning/`.
 
 Currently active in the live loop:
 
-- `HotStartPlanner`
+- `PathManager`
   - Uses the gate map to generate a simple path representation.
   - Logged as `planned_paths` and used for inspection.
 

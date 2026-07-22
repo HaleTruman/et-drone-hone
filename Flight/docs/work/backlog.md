@@ -1,74 +1,90 @@
-# Flight Production Readiness Backlog
+# Flight Improvement Backlog
 
-Treat the domain packages under `src/` as the future live product, `src/autonomy/planning/mpcc/` as the planning core, and route simulator work through the external MAVLink simulator.
+This backlog focuses on improvements beyond the known temporary test observation for path planning and the unfinished full vision/planning integration in the main flight loop.
 
-## P0: Establish The Production Shape
+## P0: Safety And Runtime Control
 
-- [ ] Define the canonical live runtime in `src/main.py`.
-- [ ] Define one canonical replay entrypoint for recorded MAVLink runs.
-- [x] Retire the stale local simulator package.
-- [ ] Define explicit schemas for state, telemetry, gate observations, reference paths, planner results, controller outputs, and logs.
-- [ ] Centralize LOCAL_NED, Unreal coordinates, units, quaternion order, and gate through-axis conventions.
-- [x] Treat MAVLink UDP as the authoritative simulator interface.
+- [ ] Route every outbound command through a centralized safety supervisor.
+- [ ] Wire `SystemModeManager` or a replacement state machine into the live loop.
+- [ ] Gate command emission on heartbeat freshness, IMU freshness, estimator health, arming state, collision events, run timeout, and command saturation.
+- [ ] Add explicit stale-data rejection for MAVLink telemetry, IMU samples, and vision frames.
+- [ ] Add a deliberate safe-stop shutdown path that sends zero or neutral commands, then disarms when connected.
+- [ ] Log full exception tracebacks during runtime failures instead of only printing the exception message.
+- [ ] Replace `ALLOW_FLIGHT = True` with an explicit config or CLI opt-in for live command emission.
 
-## P0: Make MPCC Release-Capable
+## P0: State Estimation
 
-- [ ] Extend `src/autonomy/planning/mpcc/planner.py` from exactly one gate to the next 1-3 visible gates.
-- [ ] Replace placeholder `theta=1.0` with real optimized progress.
-- [ ] Shift warm-start trajectories forward between planning cycles instead of simply reusing the previous solve.
-- [ ] Replace piecewise-linear references with smooth multi-gate splines.
-- [ ] Enforce gate aperture, depth, sequential crossing, and through-axis alignment constraints.
-- [ ] Add obstacle and free-space constraints when the simulator interface exposes them.
-- [ ] Add solver timeout, infeasibility handling, degraded fallback, and last-known-good trajectory behavior.
-- [ ] Set and measure a real-time solve budget for the intended planning frequency.
-- [ ] Remove parameter drift: MPCC currently uses a hardcoded `0.75 kg` model while `src/core/quadrotor/params.yaml` uses `1.2 kg`.
-- [ ] Add numerical parity tests between CasADi dynamics and the NumPy `Quadrotor` model.
+- [ ] Stop treating pure IMU dead reckoning as authoritative position truth beyond short propagation windows.
+- [ ] Add a fused estimator boundary that supports IMU propagation plus external corrections.
+- [ ] Define supported correction sources, such as simulator pose, gate observations, optical flow, VIO, or another measured state input.
+- [ ] Add estimator health outputs: initialized, stale, divergent, high drift, max `dt` exceeded, and correction residual too large.
+- [ ] Add monotonic timestamp validation and maximum integration `dt` limits in `VehicleStateEstimator`.
+- [ ] Validate gravity sign, accelerometer convention, gyro sign correction, and quaternion integration against known motion fixtures.
 
-## P0: Implement The Live Loop
+## P0: Runtime Configuration
 
-- [ ] Implement the production control loop in `src/main.py`.
-- [ ] Replace the transport-neutral `MavlinkBridge` with the selected MAVLink client.
-- [ ] Implement connect, reconnect, heartbeat, subscription, command masks, system/component IDs, and clean shutdown.
-- [ ] Verify the external telemetry contract. Standard `HIGHRES_IMU` does not normally carry velocity; the current simulator adds a custom extension.
-- [ ] Implement UDP vision frame parsing, chunk reassembly, bounded buffering, packet-loss handling, and JPEG decoding.
-- [ ] Implement TIMESYNC alignment, telemetry interpolation, stale-data rejection, and monotonic timestamp validation.
-- [ ] Add bounded queues and backpressure so delayed perception cannot destabilize control timing.
+- [ ] Move live constants from `src/main.py` into a typed runtime config.
+- [ ] Include MAVLink endpoint, vision host/port, loop rates, reset behavior, arming behavior, thrust limits, controller gains, lookahead, and safety thresholds in config.
+- [ ] Log the exact resolved config at run start.
+- [ ] Add separate profiles for offline replay, simulator bench, props-off bench, and live flight.
+- [ ] Reject unsafe config combinations unless explicitly acknowledged by the operator.
 
-## P0: Perception, Estimation, And Safety
+## P0: Main Loop Structure
 
-- [ ] Define the CNN output schema and implement gate pose estimation via PnP or validated relative pose.
-- [ ] Validate the camera tilt sign, camera-to-body transform, and NED conversion against simulator imagery.
-- [ ] Upgrade weighted position correction to a complementary filter or EKF with uncertainty tracking.
-- [ ] Add landmark association, confidence decay, occlusion handling, and optional seeded course maps.
-- [ ] Implement differential-flatness control; keep the existing hover controller as a tested fallback.
-- [ ] Add SE(3) control only after the baseline controller is reliable.
-- [ ] Expand the system mode manager with arming checks, stale telemetry, heartbeat loss, vision loss, low-speed timeout, collision, geofence, saturation, solver failure, maximum run time, and emergency shutdown.
+- [ ] Split `src/main.py` into composable runtime pieces.
+- [ ] Extract startup/reset/calibration into a startup sequence module.
+- [ ] Extract inner and outer loop scheduling into a flight-loop module.
+- [ ] Extract command publishing into a MAVLink command publisher with validation.
+- [ ] Keep logging calls close to runtime events, but avoid making the logger the only source of runtime state.
+- [ ] Make the same planner, controller, estimator, and safety interfaces usable from replay tests.
 
-## P1: Strengthen MAVLink Replay
+## P0: MAVLink Command And Telemetry Contracts
 
-- [ ] Add recorded-log replay.
-- [ ] Run the same planner, controller, estimator, and safety interfaces against MAVLink telemetry and live runs.
-- [ ] Add latency, jitter, packet loss, dropped frames, bad detections, actuator saturation, and restart replay fixtures.
-- [ ] Add multi-gate racing replay fixtures, not only hover and single-gate traversal.
-- [ ] Capture planner references, controls, gate estimates, safety flags, timing, and optional downsampled frames in logs.
-- [ ] Keep the saved-run viewer in `src/app/` focused on MAVLink run logs and frame captures.
+- [ ] Add contract tests for `SET_ATTITUDE_TARGET` type masks.
+- [ ] Verify quaternion order, body-rate axes, thrust range, target system/component IDs, and simulator expectations.
+- [ ] Add tests for heartbeat parsing, armed-state parsing, `HIGHRES_IMU` parsing, collision parsing, and race-status parsing.
+- [ ] Use `TIMESYNC` data to align simulator and local timing or explicitly document why it is informational only.
+- [ ] Add reconnect or controlled-fault behavior for MAVLink receive-loop failures.
+- [ ] Track and log message rates, dropped updates, and latest message age.
 
-## P1: Testing And Release Infrastructure
+## P1: Gate Mapping
 
-- [ ] Repair the local Python environment; the checked-in `.venv` points to an inaccessible Windows Store Python executable.
-- [ ] Fix stale tests: course-loader tests expect 16 gates, while the checked-in course contains 2 gates plus origin; the legacy fixture is also missing.
-- [ ] Add unit tests for every live-stack module and every safety transition.
-- [ ] Add MPCC regression tests for multi-gate paths, infeasibility, timeout, and warm starts.
-- [ ] Add full replay integration tests from telemetry and detections through emitted MAVLink commands.
-- [ ] Add MAVLink simulator-in-the-loop smoke tests.
-- [ ] Add staged real-world testing: props-off bench, restrained hover, low-speed gate pass, multi-gate run, and fault injection.
-- [ ] Add `pyproject.toml`, pinned runtime/dev dependencies, supported Python version, linting, type checks, and CI.
+- [ ] Replace ID-based record overwrites with tracked gate estimates.
+- [ ] Add nearest-neighbor or geometry-based gate association for repeated observations.
+- [ ] Maintain observation count, last-observed time, confidence accumulation, confidence decay, and frozen high-confidence records.
+- [ ] Reject implausible gate jumps using distance, orientation, and residual thresholds.
+- [ ] Track duplicate detections and reordered detections explicitly.
+- [ ] Validate camera optical, body FRD, local NED, camera tilt, and gate through-axis conventions with fixtures.
 
-## P2: Cleanup And Documentation
+## P1: Planning And Path Following Robustness
 
-- [ ] Update `README.md`; it describes an older tree and commands that no longer exist.
-- [x] Retire the legacy `src/main.py` implementation and preserve it as the canonical production entry point.
-- [ ] Remove or archive `notebooks/planner_copy.py` and stale notebook experiments.
-- [ ] Decide whether tracked instance-pose review images are fixtures, documentation examples, or disposable artifacts.
-- [ ] Expand `.gitignore` for `.venv/`, `__pycache__/`, `.ipynb_checkpoints/`, `.DS_Store`, run logs, generated artifacts, and test logs.
-- [ ] Document canonical commands, config ownership, interface contracts, simulator setup, live setup, log schema, and the release checklist.
+- [ ] Add path-manager behavior for empty paths, one-gate paths, repeated gates, crossed gates, and end-of-path hold.
+- [ ] Add bounds on lookahead, commanded acceleration, tilt, body rates, thrust, and cross-track correction.
+- [ ] Add fallback behavior when path generation fails or returns too few valid points.
+- [ ] Log planner input gates, selected path, carrot point, cross-track error, and controller command limits every cycle.
+- [ ] Add regression tests for path projection and carrot-point selection.
+
+## P1: Control
+
+- [ ] Add command envelope validation before sending MAVLink targets.
+- [ ] Add controller unit tests for attitude error direction, body-rate damping, saturation, and thrust clamping.
+- [ ] Validate carrot-controller thrust sign and tilt compensation against simple hover and forward-flight cases.
+- [ ] Add configurable controller gains and thrust limits through runtime config.
+- [ ] Keep hover or neutral command behavior as a tested fallback mode.
+
+## P1: Replay And Test Infrastructure
+
+- [ ] Add a `Flight/tests` directory with focused unit tests for live-stack modules.
+- [ ] Add recorded-log replay that runs estimator, planner, controller, safety, and command publishing without a simulator.
+- [ ] Add replay fixtures for latency, jitter, packet loss, repeated IMU timestamps, stale telemetry, bad detections, collisions, and actuator saturation.
+- [ ] Add simulator-in-the-loop smoke tests for startup, reset, arming, telemetry receipt, command emission, and shutdown.
+- [ ] Add CI commands for tests, linting, formatting, and type checks.
+
+## P2: Packaging And Repository Hygiene
+
+- [ ] Add `pyproject.toml` with supported Python version, package metadata, lint configuration, and test configuration.
+- [ ] Split dependencies into runtime, vision, dashboard, training, and dev/test groups.
+- [ ] Reduce `requirements.txt` to the minimum needed for the selected environment or generate it from managed dependency groups.
+- [ ] Keep model checkpoints, generated run logs, videos, cache files, and disposable review artifacts out of normal source churn.
+- [ ] Document canonical commands for app viewer, live simulator run, replay, tests, and validation utilities.
+

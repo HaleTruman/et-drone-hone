@@ -128,12 +128,16 @@ def quaternion_from_roll_pitch_yaw_deg(roll_deg: float, pitch_deg: float, yaw_de
     return (qw, qx, qy, qz)
 
 
-def euler_from_quaternion(quaternion: Iterable[float]) -> tuple[float, float, float]:
+def euler_from_quaternion(quaternion: Iterable[float], units: str = "rad") -> tuple[float, float, float]:
     qw, qx, qy, qz = normalize_quaternion(quaternion)
     roll = math.atan2(2.0 * (qw * qx + qy * qz), 1.0 - 2.0 * (qx * qx + qy * qy))
     sin_pitch = 2.0 * (qw * qy - qz * qx)
     pitch = math.asin(max(-1.0, min(1.0, sin_pitch)))
     yaw = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
+    if units == "deg":
+        return float(math.degrees(roll)), float(math.degrees(pitch)), float(math.degrees(yaw))
+    if units != "rad":
+        raise ValueError("units must be 'rad' or 'deg'")
     return float(roll), float(pitch), float(yaw)
 
 
