@@ -30,6 +30,7 @@ class RunBundle:
     observations: list[dict[str, Any]]
     gate_map_cycles: list[dict[str, Any]]
     planned_paths: list[dict[str, Any]]
+    test_paths: list[dict[str, Any]]
     raw_counts: dict[str, int]
 
     @property
@@ -108,6 +109,7 @@ def run_summary(run: RunBundle) -> dict[str, Any]:
             "observations": len(run.observations),
             "gate_map_cycles": len(run.gate_map_cycles),
             "planned_paths": len(run.planned_paths),
+            "test_paths": len(run.test_paths),
         },
         "telemetry_span_s": span_s,
         "system_modes": modes,
@@ -157,7 +159,16 @@ def scene_payload(run: RunBundle, frame: FrameRecord, cycle: dict[str, Any] | No
         "attitude_quaternion": _quat4_or_none(telemetry.get("attitude_quaternion") or telemetry.get("attitude")),
     }
     planned_path = _planned_path_for_cycle(run, cycle_number)
-    gate_map = _gate_map_for_cycle(run, cycle_number)
+    test_path = _test_path_for_cycle(run, cycle_number)
+    planned_path_is_test_path = False
+    if test_path is None and _looks_like_legacy_test_path(planned_path):
+        test_path = planned_path
+        planned_path = None
+    planned_path_payload_source = planned_path
+    if planned_path_payload_source is None and test_path is not None:
+        planned_path_payload_source = test_path
+        planned_path_is_test_path = True
+    gate_map = _gate_map_for_frame(run, frame, cycle_number)
     return {
         "coordinate_system": {
             "world": "local_ned",
@@ -168,7 +179,9 @@ def scene_payload(run: RunBundle, frame: FrameRecord, cycle: dict[str, Any] | No
         "drone": drone,
         "observation_gates": _observation_gates(observation_for_frame(run, frame)),
         "gate_map": gate_map,
-        "planned_path": _planned_path_payload(planned_path),
+        "test_path": _planned_path_payload(test_path),
+        "planned_path": _planned_path_payload(planned_path_payload_source),
+        "planned_path_is_test_path": planned_path_is_test_path,
     }
 
 
@@ -235,22 +248,45 @@ def timeline_payload(run: RunBundle, selected_frame_index: int) -> dict[str, Any
 
 
 def nearest_cycle_for_frame(run: RunBundle, frame: FrameRecord) -> dict[str, Any]:
+    candidates: list[dict[str, Any]] = []
     for index, cycle in enumerate(run.cycles):
         if cycle.get("vision_frame_id") == frame.frame_id:
-            return _sync_payload(run, frame, cycle, index)
+            payload = _sync_payload(run, frame, cycle, index)
+            payload["match_source"] = "vision_frame_id"
+            candidates.append(payload)
     if frame.cycle is not None:
         for index, cycle in enumerate(run.cycles):
             if cycle.get("cycle") == frame.cycle or cycle.get("inner_cycle") == frame.cycle:
-                return _sync_payload(run, frame, cycle, index)
+                payload = _sync_payload(run, frame, cycle, index)
+                payload["match_source"] = "frame_cycle"
+                candidates.append(payload)
     target_ns = _frame_target_sim_time_ns(run, frame)
     if target_ns is None:
-        return {"cycle": None, "cycle_index": None, "target_sim_time_ns": None, "alignment_error_ms": None}
-    candidates = [(index, cycle, _telemetry_sim_time_ns(cycle)) for index, cycle in enumerate(run.cycles)]
-    candidates = [(index, cycle, sim_ns) for index, cycle, sim_ns in candidates if sim_ns is not None]
+        if candidates:
+            return candidates[0]
+        return {"cycle": None, "cycle_index": None, "target_sim_time_ns": None, "alignment_error_ms": None, "match_source": None}
+    timestamp_candidates = [(index, cycle, _telemetry_sim_time_ns(cycle)) for index, cycle in enumerate(run.cycles)]
+    timestamp_candidates = [(index, cycle, sim_ns) for index, cycle, sim_ns in timestamp_candidates if sim_ns is not None]
+    if timestamp_candidates:
+        index, cycle, sim_ns = min(timestamp_candidates, key=lambda item: abs(item[2] - target_ns))
+        candidates.append(
+            {
+                "cycle": cycle,
+                "cycle_index": index,
+                "target_sim_time_ns": target_ns,
+                "alignment_error_ms": abs(sim_ns - target_ns) / 1_000_000,
+                "match_source": "timestamp",
+            }
+        )
     if not candidates:
-        return {"cycle": None, "cycle_index": None, "target_sim_time_ns": target_ns, "alignment_error_ms": None}
-    index, cycle, sim_ns = min(candidates, key=lambda item: abs(item[2] - target_ns))
-    return {"cycle": cycle, "cycle_index": index, "target_sim_time_ns": target_ns, "alignment_error_ms": abs(sim_ns - target_ns) / 1_000_000}
+        return {"cycle": None, "cycle_index": None, "target_sim_time_ns": target_ns, "alignment_error_ms": None, "match_source": None}
+    return min(
+        candidates,
+        key=lambda item: (
+            float("inf") if item.get("alignment_error_ms") is None else float(item["alignment_error_ms"]),
+            item.get("cycle_index") if isinstance(item.get("cycle_index"), int) else 10**12,
+        ),
+    )
 
 
 def observation_for_frame(run: RunBundle, frame: FrameRecord) -> dict[str, Any] | None:
@@ -270,6 +306,7 @@ def _load_run_cached(
     gate_map_mtime_ns: int,
     obs_mtime_ns: int,
     vf_mtime_ns: int,
+    test_paths_mtime_ns: int,
 ) -> RunBundle:
     return load_run(Path(resolved_path))
 
@@ -283,6 +320,7 @@ def load_run(run_dir: Path) -> RunBundle:
     gate_map_cycles = _load_sidecar_cycles(run_dir / "gate_map.json", run_dir / "lists" / "gate_map.jsonl")
     observations = _load_observations(run_dir, raw)
     planned_paths = _load_records(raw, "planned_paths", run_dir / "lists" / "planned_paths.jsonl")
+    test_paths = _load_records(raw, "test_paths", run_dir / "lists" / "test_paths.jsonl")
     return RunBundle(
         path=str(run_dir.resolve()),
         name=run_dir.name,
@@ -294,11 +332,13 @@ def load_run(run_dir: Path) -> RunBundle:
         observations=observations,
         gate_map_cycles=gate_map_cycles,
         planned_paths=planned_paths,
+        test_paths=test_paths,
         raw_counts={
             "events": len(raw.get("events", [])) if isinstance(raw.get("events"), list) else 0,
             "cycles": len(raw.get("cycles", [])) if isinstance(raw.get("cycles"), list) else 0,
             "vision_frames": len(raw.get("vision_frames", [])) if isinstance(raw.get("vision_frames"), list) else 0,
             "vision_observations": len(raw.get("vision_observations", [])) if isinstance(raw.get("vision_observations"), list) else 0,
+            "test_paths": len(raw.get("test_paths", [])) if isinstance(raw.get("test_paths"), list) else 0,
         },
     )
 
@@ -450,6 +490,18 @@ def _cycle_number(frame: FrameRecord, cycle: dict[str, Any] | None) -> int | Non
     return frame.cycle
 
 
+def _gate_map_for_frame(run: RunBundle, frame: FrameRecord, cycle_number: int | None) -> list[dict[str, Any]]:
+    for record in run.gate_map_cycles:
+        try:
+            frame_id = int(record.get("frame_id"))
+        except (TypeError, ValueError):
+            continue
+        if frame_id == frame.frame_id:
+            gates = record.get("gate_map")
+            return [_gate_payload(gate) for gate in gates if isinstance(gate, dict)] if isinstance(gates, list) else []
+    return _gate_map_for_cycle(run, cycle_number)
+
+
 def _gate_map_for_cycle(run: RunBundle, cycle_number: int | None) -> list[dict[str, Any]]:
     selected: dict[str, Any] | None = None
     if cycle_number is not None:
@@ -464,14 +516,22 @@ def _gate_map_for_cycle(run: RunBundle, cycle_number: int | None) -> list[dict[s
 
 
 def _planned_path_for_cycle(run: RunBundle, cycle_number: int | None) -> dict[str, Any] | None:
+    return _path_for_cycle(run.planned_paths, "planned_path", cycle_number)
+
+
+def _test_path_for_cycle(run: RunBundle, cycle_number: int | None) -> dict[str, Any] | None:
+    return _path_for_cycle(run.test_paths, "test_path", cycle_number)
+
+
+def _path_for_cycle(records: list[dict[str, Any]], key: str, cycle_number: int | None) -> dict[str, Any] | None:
     selected: dict[str, Any] | None = None
-    for record in run.planned_paths:
+    for record in records:
         if not isinstance(record, dict):
             continue
         record_cycle = record.get("cycle")
         if cycle_number is not None and isinstance(record_cycle, int) and record_cycle > cycle_number:
             continue
-        planned_path = record.get("planned_path")
+        planned_path = record.get(key)
         if isinstance(planned_path, dict):
             selected = planned_path
     return selected
@@ -497,6 +557,13 @@ def _planned_path_payload(planned_path: dict[str, Any] | None) -> dict[str, Any]
         "gate_ids": planned_path.get("gate_ids") if isinstance(planned_path.get("gate_ids"), list) else [],
         "source": planned_path.get("source"),
     }
+
+
+def _looks_like_legacy_test_path(path: dict[str, Any] | None) -> bool:
+    if not isinstance(path, dict):
+        return False
+    source = str(path.get("source") or "")
+    return source in {"straight_line", "test_path"}
 
 
 def _gate_payload(gate: dict[str, Any]) -> dict[str, Any]:
@@ -584,6 +651,7 @@ def _signature(run_dir: Path) -> tuple[int, int, int, int, int, int, int]:
         _mtime_ns(run_dir / "gate_map.json"),
         _mtime_ns(run_dir / "lists" / "vision_observations.jsonl"),
         _mtime_ns(run_dir / "lists" / "vision_frames.jsonl"),
+        _mtime_ns(run_dir / "lists" / "test_paths.jsonl"),
     )
 
 

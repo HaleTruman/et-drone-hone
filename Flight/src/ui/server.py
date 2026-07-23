@@ -18,6 +18,11 @@ def create_app(root_dir: str | Path = ROOT_DIR) -> Flask:
     root = Path(root_dir).resolve()
     app = Flask(__name__, static_folder=None)
 
+    @app.after_request
+    def prevent_viewer_cache(response):
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
+
     @app.get("/")
     def index():
         return send_from_directory(STATIC_DIR, "index.html")

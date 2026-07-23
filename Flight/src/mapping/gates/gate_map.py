@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
@@ -35,11 +35,36 @@ class GateRecord:
 
 
 class GateMap:
-    """Placeholder gate map storage while mapping is rebuilt from scratch."""
+    """Gate map with a candidate stage for raw vision observations.
 
-    def __init__(self, *args: Any, camera_tilt_deg: float = 20.0, **kwargs: Any):
+    Raw observed gates are accumulated in ``_candidate_gates`` until they are
+    observed enough times to be promoted into ``_gates``. Planner callers that
+    read ``gates`` only see confirmed records.
+    """
+
+    def __init__(
+        self,
+        *args: Any,
+        camera_tilt_deg: float = 20.0,
+        confirmation_observations: int = 3,
+        merge_radius_m: float = 1.0,
+        candidate_timeout_cycles: int = 30,
+        min_candidate_position_confidence: float = 0.85,
+        min_candidate_orientation_confidence: float = 0.85,
+        min_promotion_position_confidence: float = 0.95,
+        min_promotion_orientation_confidence: float = 0.95,
+        **kwargs: Any,
+    ):
         self._gates: dict[str, GateRecord] = {}
+        self._candidate_gates: dict[str, GateRecord] = {}
         self.camera_tilt_deg = float(camera_tilt_deg)
+        self.confirmation_observations = max(1, int(confirmation_observations))
+        self.merge_radius_m = max(0.0, float(merge_radius_m))
+        self.candidate_timeout_cycles = max(0, int(candidate_timeout_cycles))
+        self.min_candidate_position_confidence = self._clamp_confidence(min_candidate_position_confidence)
+        self.min_candidate_orientation_confidence = self._clamp_confidence(min_candidate_orientation_confidence)
+        self.min_promotion_position_confidence = self._clamp_confidence(min_promotion_position_confidence)
+        self.min_promotion_orientation_confidence = self._clamp_confidence(min_promotion_orientation_confidence)
 
     def add_or_update_gate(self, gate: GateRecord, *, allow_new: bool = True) -> GateRecord | None:
         if not allow_new and gate.gate_id not in self._gates:
@@ -49,6 +74,7 @@ class GateMap:
 
     def clear(self) -> None:
         self._gates.clear()
+        self._candidate_gates.clear()
 
     def get_gate(self, gate_id: str) -> GateRecord | None:
         return self._gates.get(gate_id)
@@ -57,8 +83,30 @@ class GateMap:
     def gates(self) -> list[GateRecord]:
         return list(self._gates.values())
 
+    @property
+    def candidate_gates(self) -> list[GateRecord]:
+        return list(self._candidate_gates.values())
+
     def mark_crossed(self, gate_id: str) -> None:
         self._gates[gate_id].crossed = True
+
+    def mark_passed_near_position(
+        self,
+        position_local_ned_m: tuple[float, float, float],
+        *,
+        distance_m: float = 2.0,
+    ) -> list[GateRecord]:
+        position = np.asarray(position_local_ned_m, dtype=float)
+        threshold_m = max(0.0, float(distance_m))
+        passed: list[GateRecord] = []
+        for gate in self._gates.values():
+            if gate.crossed:
+                continue
+            gate_position = np.asarray(gate.position_local_ned_m, dtype=float)
+            if float(np.linalg.norm(gate_position - position)) <= threshold_m:
+                gate.crossed = True
+                passed.append(gate)
+        return passed
 
     def update_from_observation(
         self,
@@ -66,6 +114,7 @@ class GateMap:
         vehicle_state: VehicleState,
         allow_new_gates: bool = True,
     ) -> list[GateRecord]:
+        self._cleanup_candidates(observation.frame_id)
         records: list[GateRecord] = []
         for sequence, observed_gate in enumerate(observation.gates):
             record = self.gate_record_from_observation(
@@ -74,10 +123,109 @@ class GateMap:
                 sequence=sequence,
                 observed_cycle=observation.frame_id,
             )
-            mapped = self.add_or_update_gate(record, allow_new=allow_new_gates)
+            mapped = self._update_from_candidate(record, allow_new=allow_new_gates)
             if mapped is not None:
                 records.append(mapped)
         return records
+
+    def _update_from_candidate(self, observed: GateRecord, *, allow_new: bool = True) -> GateRecord | None:
+        if not self._meets_candidate_confidence(observed):
+            return None
+
+        confirmed_id = self._matching_gate_id(self._gates, observed)
+        if confirmed_id is not None:
+            merged = self._merge_records(self._gates[confirmed_id], observed)
+            if confirmed_id != merged.gate_id:
+                self._gates.pop(confirmed_id)
+            self._gates[merged.gate_id] = merged
+            return merged
+
+        if not allow_new:
+            return None
+
+        candidate_id = self._matching_gate_id(self._candidate_gates, observed)
+        if candidate_id is None:
+            self._candidate_gates[observed.gate_id] = observed
+            return None
+
+        candidate = self._merge_records(self._candidate_gates[candidate_id], observed)
+        if candidate_id != candidate.gate_id:
+            self._candidate_gates.pop(candidate_id)
+        self._candidate_gates[candidate.gate_id] = candidate
+
+        if candidate.observation_count < self.confirmation_observations or not self._meets_promotion_confidence(observed):
+            return None
+
+        self._candidate_gates.pop(candidate.gate_id, None)
+        self._gates[candidate.gate_id] = candidate
+        return candidate
+
+    def _cleanup_candidates(self, observed_cycle: int | None) -> None:
+        if observed_cycle is None or self.candidate_timeout_cycles <= 0:
+            return
+        self._candidate_gates = {
+            gate_id: gate
+            for gate_id, gate in self._candidate_gates.items()
+            if gate.last_observed_cycle is None
+            or int(observed_cycle) - int(gate.last_observed_cycle) <= self.candidate_timeout_cycles
+        }
+
+    @staticmethod
+    def _clamp_confidence(value: float) -> float:
+        return float(np.clip(float(value), 0.0, 1.0))
+
+    def _meets_candidate_confidence(self, gate: GateRecord) -> bool:
+        return (
+            float(gate.position_confidence) >= self.min_candidate_position_confidence
+            and float(gate.quaternion_confidence) >= self.min_candidate_orientation_confidence
+        )
+
+    def _meets_promotion_confidence(self, gate: GateRecord) -> bool:
+        return (
+            float(gate.position_confidence) >= self.min_promotion_position_confidence
+            and float(gate.quaternion_confidence) >= self.min_promotion_orientation_confidence
+        )
+
+    def _matching_gate_id(self, gates: dict[str, GateRecord], observed: GateRecord) -> str | None:
+        if observed.gate_id in gates:
+            return observed.gate_id
+        if self.merge_radius_m <= 0.0:
+            return None
+
+        observed_position = np.asarray(observed.position_local_ned_m, dtype=float)
+        closest_id: str | None = None
+        closest_distance = self.merge_radius_m
+        for gate_id, gate in gates.items():
+            distance = float(np.linalg.norm(np.asarray(gate.position_local_ned_m, dtype=float) - observed_position))
+            if distance <= closest_distance:
+                closest_id = gate_id
+                closest_distance = distance
+        return closest_id
+
+    def _merge_records(self, current: GateRecord, observed: GateRecord) -> GateRecord:
+        current_count = max(0, int(current.observation_count))
+        observed_count = max(1, int(observed.observation_count))
+        total_count = current_count + observed_count
+        position = (
+            (
+                np.asarray(current.position_local_ned_m, dtype=float) * current_count
+                + np.asarray(observed.position_local_ned_m, dtype=float) * observed_count
+            )
+            / total_count
+        )
+        use_observed_quaternion = observed.quaternion_confidence >= current.quaternion_confidence
+        return replace(
+            current,
+            gate_id=current.gate_id or observed.gate_id,
+            position_local_ned_m=vec3(position),
+            quaternion=observed.quaternion if use_observed_quaternion else current.quaternion,
+            position_confidence=max(float(current.position_confidence), float(observed.position_confidence)),
+            quaternion_confidence=max(float(current.quaternion_confidence), float(observed.quaternion_confidence)),
+            sequence=current.sequence if current.sequence is not None else observed.sequence,
+            observation_count=total_count,
+            last_observed_cycle=observed.last_observed_cycle,
+            source=observed.source or current.source,
+        )
 
     def gate_record_from_observation(
         self,

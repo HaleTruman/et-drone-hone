@@ -87,7 +87,8 @@
           <div class="map3dToggles" role="group" aria-label="3D map layers">
             <label class="compactToggle"><span>Observations</span><input id="show3dObservations" type="checkbox" checked></label>
             <label class="compactToggle"><span>Gate map</span><input id="show3dGateMap" type="checkbox" checked></label>
-            <label class="compactToggle"><span>Path</span><input id="show3dPath" type="checkbox" checked></label>
+            <label class="compactToggle"><span>Test path</span><input id="show3dTestPath" type="checkbox" checked></label>
+            <label class="compactToggle"><span>Planned path</span><input id="show3dPlannedPath" type="checkbox" checked></label>
             <label class="compactToggle"><span>Trail</span><input id="show3dTrail" type="checkbox" checked></label>
           </div>
           <div class="zoomControls compact" role="group" aria-label="3D camera">
@@ -103,12 +104,13 @@
             <span><i class="legendSwatch down"></i>D</span>
             <span><i class="legendSwatch drone"></i>drone FRD</span>
             <span><i class="legendSwatch gate"></i>gate frame</span>
-            <span><i class="legendSwatch path"></i>planned path</span>
+            <span><i class="legendSwatch path"></i>test path</span>
+            <span><i class="legendSwatch plannedPath"></i>planned path</span>
           </div>
         </div>
         <div id="map3dFooter">
           <span id="map3dReadout">orbit: drag | pan: right drag | zoom: wheel</span>
-          <span id="map3dCounts">0 observation gates | 0 path points</span>
+          <span id="map3dCounts">0 observation gates | 0 test path points | 0 planned path points</span>
         </div>
       </section>
 

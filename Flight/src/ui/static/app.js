@@ -38,7 +38,8 @@ const state = {
     zoom: 1,
     show3dObservations: true,
     show3dGateMap: true,
-    show3dPath: true,
+    show3dTestPath: true,
+    show3dPlannedPath: true,
     show3dTrail: true
   }
 };
@@ -118,7 +119,8 @@ const els = {
   map3dCounts: document.getElementById('map3dCounts'),
   show3dObservations: document.getElementById('show3dObservations'),
   show3dGateMap: document.getElementById('show3dGateMap'),
-  show3dPath: document.getElementById('show3dPath'),
+  show3dTestPath: document.getElementById('show3dTestPath'),
+  show3dPlannedPath: document.getElementById('show3dPlannedPath'),
   show3dTrail: document.getElementById('show3dTrail'),
   controlsHelp: document.getElementById('controlsHelp'),
   controlsHelpClose: document.getElementById('controlsHelpClose')
@@ -541,21 +543,33 @@ function renderMap3d({ resetCamera = false } = {}) {
   const droneQuaternion = quat4(drone.attitude_quaternion) || [1, 0, 0, 0];
   const points = [dronePosition];
   addTrail(scene, points);
-  addPlannedPath(scene.planned_path, points);
-  addObservationGates(scene, dronePosition, droneQuaternion, points);
+  addPathLayer(scene.test_path, points, {
+    enabled: state.settings.show3dTestPath,
+    color: 0xffffff,
+    tubeRadius: 0.045
+  });
+  if (!scene.planned_path_is_test_path) {
+    addPathLayer(scene.planned_path, points, {
+      enabled: state.settings.show3dPlannedPath,
+      color: 0xff2f2f,
+      tubeRadius: 0.04
+    });
+  }
   addGateMap(scene.gate_map || [], dronePosition, points);
+  addObservationGates(scene, dronePosition, droneQuaternion, points);
   addDrone(dronePosition, droneQuaternion);
   fitCameraToPoints(points, resetCamera);
   const obsCount = Array.isArray(scene.observation_gates) ? scene.observation_gates.length : 0;
   const mapCount = Array.isArray(scene.gate_map) ? scene.gate_map.length : 0;
-  const pathCount = scene.planned_path?.points_local_ned_m?.length || 0;
-  const hasSceneContent = Boolean(point3(drone.position_local_ned_m) || obsCount || mapCount || pathCount);
+  const testPathCount = scene.test_path?.points_local_ned_m?.length || 0;
+  const plannedPathCount = scene.planned_path_is_test_path ? 0 : (scene.planned_path?.points_local_ned_m?.length || 0);
+  const hasSceneContent = Boolean(point3(drone.position_local_ned_m) || obsCount || mapCount || testPathCount || plannedPathCount);
   els.map3dEmpty.hidden = Boolean(state.frame);
   els.map3dEmpty.textContent = hasSceneContent
     ? ''
     : 'No aligned telemetry, gates, or path data for this frame.';
   els.map3dMeta.textContent = `frame ${state.frame.index + 1}/${state.frame.count} | cycle ${scene.cycle ?? 'n/a'} | local NED / body FRD`;
-  els.map3dCounts.textContent = `${obsCount} observation gates | ${mapCount} mapped gates | ${pathCount} path points`;
+  els.map3dCounts.textContent = `${obsCount} observation gates | ${mapCount} mapped gates | ${testPathCount} test path points | ${plannedPathCount} planned path points`;
   resizeMap3d();
 }
 
@@ -568,15 +582,15 @@ function addTrail(scene, points) {
   map3d.root.add(makeLine(positions, 0x64748b, 0.55));
 }
 
-function addPlannedPath(plannedPath, points) {
-  if (!state.settings.show3dPath) return;
+function addPathLayer(plannedPath, points, { enabled, color, tubeRadius }) {
+  if (!enabled) return;
   const pathPoints = Array.isArray(plannedPath?.points_local_ned_m)
     ? plannedPath.points_local_ned_m.map(point3).filter(Boolean)
     : [];
   if (pathPoints.length < 2) return;
   points.push(...pathPoints);
-  map3d.root.add(makeLine(pathPoints, 0xffffff, 1));
-  const tube = makeTube(pathPoints, 0xffffff, 0.045);
+  map3d.root.add(makeLine(pathPoints, color, 1));
+  const tube = makeTube(pathPoints, color, tubeRadius);
   if (tube) map3d.root.add(tube);
 }
 
@@ -621,7 +635,7 @@ function addGateMap(gates, dronePosition, points) {
     const normal = rotation ? normalizeVec3(column3(rotation, 0)) : [1, 0, 0];
     const horizontal = rotation ? normalizeVec3(column3(rotation, 1)) : null;
     const vertical = rotation ? normalizeVec3(scaleVec3(column3(rotation, 2), -1)) : null;
-    addGateFrame(position, normal, gateColor(index + 2), gate.id || `map-${index + 1}`, gate.outer_width_m || 2.7, gate.inner_width_m || 1.5, horizontal, vertical);
+    addGateFrame(position, normal, '#ffffff', gate.id || `map-${index + 1}`, gate.outer_width_m || 2.7, gate.inner_width_m || 1.5, horizontal, vertical);
   });
 }
 
@@ -1112,7 +1126,8 @@ function installEvents() {
   for (const [element, key] of [
     [els.show3dObservations, 'show3dObservations'],
     [els.show3dGateMap, 'show3dGateMap'],
-    [els.show3dPath, 'show3dPath'],
+    [els.show3dTestPath, 'show3dTestPath'],
+    [els.show3dPlannedPath, 'show3dPlannedPath'],
     [els.show3dTrail, 'show3dTrail']
   ]) {
     element.addEventListener('change', () => {

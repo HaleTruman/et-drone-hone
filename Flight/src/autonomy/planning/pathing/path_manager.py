@@ -14,15 +14,25 @@ class PlannedPath:
     points_relative_ned_m: list[list[float]]
     anchors_relative_ned_m: list[list[float]]
     gate_ids: list[str]
+    gate_center_errors_m: dict[str, float]
+    gate_center_tolerance_m: float
+    spline_corner_tightness: float
     spacing_m: float
     computation_ms: float
     source: str = "path_manager"
 
     def to_log_dict(self, *, origin_local_ned_m: Any | None = None) -> dict[str, Any]:
         payload = asdict(self)
-        payload["origin_local_ned_m"] = (
-            None if origin_local_ned_m is None else [float(value) for value in origin_local_ned_m]
-        )
+        local_points = [list(point) for point in self.points_relative_ned_m]
+        payload["points_local_ned_m"] = local_points
+        payload["origin_local_ned_m"] = None
+        if origin_local_ned_m is not None:
+            origin = [float(value) for value in origin_local_ned_m]
+            payload["origin_local_ned_m"] = origin
+            payload["points_relative_ned_m"] = [
+                [float(point[index]) - origin[index] for index in range(3)]
+                for point in local_points
+            ]
         return payload
 
 
@@ -36,6 +46,9 @@ class PathManager:
         max_points: int = 240,
         max_gates: int = 8,
         exclusion_distance_m: float = 0.0,
+        passed_gate_distance_m: float = 2.0,
+        gate_center_tolerance_m: float = 0.5,
+        spline_corner_tightness: float = 0.5,
     ):
         self.spline_generator = spline_generator
         self.spacing_m = max(0.1, float(spacing_m))
@@ -43,6 +56,9 @@ class PathManager:
         self.max_points = max(2, int(max_points))
         self.max_gates = max(1, int(max_gates))
         self.exclusion_distance_m = max(0.0, float(exclusion_distance_m))
+        self.passed_gate_distance_m = max(0.0, float(passed_gate_distance_m))
+        self.gate_center_tolerance_m = max(0.0, float(gate_center_tolerance_m))
+        self.spline_corner_tightness = float(np.clip(float(spline_corner_tightness), 0.0, 1.0))
         self._waypoints = np.empty((0, 3))
         self._segment_lengths = np.empty((0,))
         self._cumulative_lengths = np.array([0.0], dtype=float)
@@ -57,16 +73,24 @@ class PathManager:
         gates: Iterable[GateRecord],
         *,
         position_local_ned_m: Vec3 | None = None,
+        activate: bool = True,
     ) -> PlannedPath:
         started = perf_counter()
+        start_position = None if position_local_ned_m is None else _vec3(position_local_ned_m, "position_local_ned_m")
         planned_gates = self._planning_gates(gates, position_local_ned_m=position_local_ned_m)
-        anchors = self._anchors_for_gates(planned_gates)
+        anchors = self._anchors_for_gates(planned_gates, start_position_local_ned_m=start_position)
         points = self._sample_spline(anchors)
-        self.set_waypoints(points)
+        points = self._constrain_gate_centers(points, planned_gates)
+        gate_center_errors = self._gate_center_errors(points, planned_gates)
+        if activate and len(points) >= 2:
+            self.set_waypoints(points)
         return PlannedPath(
             points_relative_ned_m=points,
             anchors_relative_ned_m=anchors.astype(float).tolist(),
             gate_ids=[gate.gate_id for gate in planned_gates],
+            gate_center_errors_m=gate_center_errors,
+            gate_center_tolerance_m=float(self.gate_center_tolerance_m),
+            spline_corner_tightness=float(self.spline_corner_tightness),
             spacing_m=float(self.spacing_m),
             computation_ms=(perf_counter() - started) * 1000.0,
         )
@@ -89,7 +113,13 @@ class PathManager:
                 gate
                 for gate in gates
                 if not gate.crossed
-                and (position is None or distance_m(gate) >= self.exclusion_distance_m)
+                and (
+                    position is None
+                    or (
+                        distance_m(gate) > self.passed_gate_distance_m
+                        and distance_m(gate) >= self.exclusion_distance_m
+                    )
+                )
             ],
             key=lambda gate: (
                 distance_m(gate),
@@ -111,6 +141,7 @@ class PathManager:
         width_m: float = 8.0,
         height_m: float = 1.0,
         point_count: int = 31,
+        activate: bool = True,
     ) -> PlannedPath:
         started = perf_counter()
         length = float(length_m)
@@ -127,11 +158,17 @@ class PathManager:
         down = -1.5 * height + 0.5 * height * np.sin(2.0 * np.pi * north / length)
         waypoints = np.column_stack((north, east, down))
         waypoints = waypoints - waypoints[0]
-        points = self.set_waypoints(waypoints).astype(float).tolist()
+        if activate:
+            points = self.set_waypoints(waypoints).astype(float).tolist()
+        else:
+            points = _waypoint_array(waypoints).astype(float).tolist()
         return PlannedPath(
             points_relative_ned_m=points,
             anchors_relative_ned_m=points,
             gate_ids=[],
+            gate_center_errors_m={},
+            gate_center_tolerance_m=float(self.gate_center_tolerance_m),
+            spline_corner_tightness=float(self.spline_corner_tightness),
             spacing_m=float(self.spacing_m),
             computation_ms=(perf_counter() - started) * 1000.0,
             source="test_path",
@@ -144,6 +181,7 @@ class PathManager:
         point_count: int = 30,
         up_down_angle_deg: float = 0.0,
         left_right_angle_deg: float = 0.0,
+        activate: bool = True,
     ) -> PlannedPath:
         """Build a straight local-NED path from the origin.
 
@@ -166,11 +204,18 @@ class PathManager:
         east = distance * horizontal_scale * np.sin(left_right_rad)
         down = -distance * np.sin(up_down_rad)
 
-        points = self.set_waypoints(zip(north, east, down)).astype(float).tolist()
+        waypoints = np.column_stack((north, east, down))
+        if activate:
+            points = self.set_waypoints(waypoints).astype(float).tolist()
+        else:
+            points = _waypoint_array(waypoints).astype(float).tolist()
         return PlannedPath(
             points_relative_ned_m=points,
             anchors_relative_ned_m=points,
             gate_ids=[],
+            gate_center_errors_m={},
+            gate_center_tolerance_m=float(self.gate_center_tolerance_m),
+            spline_corner_tightness=float(self.spline_corner_tightness),
             spacing_m=float(self.spacing_m),
             computation_ms=(perf_counter() - started) * 1000.0,
             source="straight_line",
@@ -269,8 +314,18 @@ class PathManager:
         if len(self._waypoints) < 2 or float(self._cumulative_lengths[-1]) <= 1e-12:
             raise ValueError("PathManager requires at least two distinct waypoints.")
 
-    def _anchors_for_gates(self, gates: list[GateRecord]) -> np.ndarray:
-        anchors = [np.zeros(3, dtype=float)]
+    def _anchors_for_gates(
+        self,
+        gates: list[GateRecord],
+        *,
+        start_position_local_ned_m: np.ndarray | None = None,
+    ) -> np.ndarray:
+        start_position = (
+            np.zeros(3, dtype=float)
+            if start_position_local_ned_m is None
+            else np.asarray(start_position_local_ned_m, dtype=float)
+        )
+        anchors = [start_position]
         for gate in gates:
             anchors.append(np.asarray(gate.position_local_ned_m, dtype=float))
         return self._dedupe_points(np.asarray(anchors, dtype=float))
@@ -295,10 +350,71 @@ class PathManager:
                     + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t * t
                     + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t * t * t
                 )
+                line_point = p1 + (p2 - p1) * t
+                point = (1.0 - self.spline_corner_tightness) * point + self.spline_corner_tightness * line_point
                 samples.append(point)
                 if len(samples) >= self.max_points:
                     return np.asarray(samples, dtype=float).tolist()
         return np.asarray(samples, dtype=float).tolist()
+
+    def _constrain_gate_centers(self, points: list[list[float]], gates: list[GateRecord]) -> list[list[float]]:
+        if not gates:
+            return points
+
+        constrained = _waypoint_array(points).tolist()
+        for gate in gates:
+            center = np.asarray(gate.position_local_ned_m, dtype=float)
+            if self._minimum_distance(constrained, center) <= self.gate_center_tolerance_m:
+                continue
+
+            insert_at = self._nearest_path_index(constrained, center)
+            constrained.insert(insert_at, center.astype(float).tolist())
+
+        if len(constrained) <= self.max_points:
+            return constrained
+
+        required = {
+            tuple(float(value) for value in gate.position_local_ned_m)
+            for gate in gates
+        }
+        return self._trim_preserving_required_points(constrained, required)
+
+    def _gate_center_errors(self, points: list[list[float]], gates: list[GateRecord]) -> dict[str, float]:
+        return {
+            gate.gate_id: self._minimum_distance(points, np.asarray(gate.position_local_ned_m, dtype=float))
+            for gate in gates
+        }
+
+    @staticmethod
+    def _minimum_distance(points: list[list[float]], target: np.ndarray) -> float:
+        if not points:
+            return float("inf")
+        return float(np.min(np.linalg.norm(_waypoint_array(points) - target, axis=1)))
+
+    @staticmethod
+    def _nearest_path_index(points: list[list[float]], target: np.ndarray) -> int:
+        if not points:
+            return 0
+        distances = np.linalg.norm(_waypoint_array(points) - target, axis=1)
+        return int(np.argmin(distances)) + 1
+
+    def _trim_preserving_required_points(
+        self,
+        points: list[list[float]],
+        required: set[tuple[float, float, float]],
+    ) -> list[list[float]]:
+        keep_indices = {
+            index
+            for index, point in enumerate(points)
+            if tuple(float(value) for value in point) in required
+        }
+        keep_indices.add(0)
+        keep_indices.add(len(points) - 1)
+
+        removable = [index for index in range(len(points)) if index not in keep_indices]
+        overflow = len(points) - self.max_points
+        remove_indices = set(removable[-overflow:]) if overflow > 0 else set()
+        return [point for index, point in enumerate(points) if index not in remove_indices]
 
     def _sample_polyline(self, anchors: np.ndarray) -> list[list[float]]:
         if len(anchors) <= 1:

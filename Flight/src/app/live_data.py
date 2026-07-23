@@ -74,7 +74,7 @@ def load_live_run_cached(path: str) -> LiveRun:
     return _load_live_run_cached(str(run_dir), *live_run_signature(str(run_dir)))
 
 
-def live_run_signature(path: str) -> tuple[int, int, int, int, int]:
+def live_run_signature(path: str) -> tuple[int, int, int, int, int, int, int]:
     return _run_signature(Path(path).resolve())
 
 
@@ -98,6 +98,9 @@ def load_live_run(path: str) -> LiveRun:
     cycles = _normalized_cycles(cycles, _load_telemetry_sidecar(run_dir / "run.json"))
     gate_map_cycles = _load_gate_map_sidecar(run_dir / "run.json")
     vision_observations = _load_vision_observations(run_dir, raw)
+    raw = dict(raw)
+    raw["planned_paths"] = _load_path_records(run_dir, raw, "planned_paths")
+    raw["test_paths"] = _load_path_records(run_dir, raw, "test_paths")
 
     return LiveRun(
         path=str(run_dir),
@@ -134,37 +137,62 @@ def frame_image_path(run: LiveRun, frame: LiveFrame) -> Path:
 
 
 def nearest_cycle_for_frame(run: LiveRun, frame: LiveFrame) -> FrameSync:
+    candidates: list[FrameSync] = []
+    offset_ns = _timesync_offset_ns(run.events)
+    target_sim_time_ns = frame.sim_time_ns - offset_ns if offset_ns is not None else None
+
+    for index, cycle in enumerate(run.cycles):
+        if cycle.get("vision_frame_id") != frame.frame_id:
+            continue
+        cycle_sim_time_ns = _telemetry_sim_time_ns(cycle)
+        candidates.append(
+            FrameSync(
+                cycle=cycle,
+                cycle_index=index,
+                target_sim_time_ns=target_sim_time_ns,
+                error_ms=abs(cycle_sim_time_ns - target_sim_time_ns) / 1_000_000
+                if cycle_sim_time_ns is not None and target_sim_time_ns is not None
+                else None,
+            )
+        )
+
     if frame.cycle is not None:
-        offset_ns = _timesync_offset_ns(run.events)
-        target_sim_time_ns = frame.sim_time_ns - offset_ns if offset_ns is not None else None
         for index, cycle in enumerate(run.cycles):
             if cycle.get("cycle") == frame.cycle:
                 cycle_sim_time_ns = _telemetry_sim_time_ns(cycle)
-                return FrameSync(
-                    cycle=cycle,
-                    cycle_index=index,
-                    target_sim_time_ns=target_sim_time_ns,
-                    error_ms=abs(cycle_sim_time_ns - target_sim_time_ns) / 1_000_000
-                    if cycle_sim_time_ns is not None and target_sim_time_ns is not None
-                    else None,
+                candidates.append(
+                    FrameSync(
+                        cycle=cycle,
+                        cycle_index=index,
+                        target_sim_time_ns=target_sim_time_ns,
+                        error_ms=abs(cycle_sim_time_ns - target_sim_time_ns) / 1_000_000
+                        if cycle_sim_time_ns is not None and target_sim_time_ns is not None
+                        else None,
+                    )
                 )
 
-    offset_ns = _timesync_offset_ns(run.events)
-    if offset_ns is None:
-        return FrameSync(cycle=None, cycle_index=None, target_sim_time_ns=None, error_ms=None)
+    if target_sim_time_ns is not None:
+        timestamp_candidates = [(index, cycle, _telemetry_sim_time_ns(cycle)) for index, cycle in enumerate(run.cycles)]
+        timestamp_candidates = [(index, cycle, sim_time_ns) for index, cycle, sim_time_ns in timestamp_candidates if sim_time_ns is not None]
+        if timestamp_candidates:
+            cycle_index, cycle, cycle_sim_time_ns = min(timestamp_candidates, key=lambda item: abs(item[2] - target_sim_time_ns))
+            candidates.append(
+                FrameSync(
+                    cycle=cycle,
+                    cycle_index=cycle_index,
+                    target_sim_time_ns=target_sim_time_ns,
+                    error_ms=abs(cycle_sim_time_ns - target_sim_time_ns) / 1_000_000,
+                )
+            )
 
-    target_sim_time_ns = frame.sim_time_ns - offset_ns
-    candidates = [(index, cycle, _telemetry_sim_time_ns(cycle)) for index, cycle in enumerate(run.cycles)]
-    candidates = [(index, cycle, sim_time_ns) for index, cycle, sim_time_ns in candidates if sim_time_ns is not None]
     if not candidates:
         return FrameSync(cycle=None, cycle_index=None, target_sim_time_ns=target_sim_time_ns, error_ms=None)
-
-    cycle_index, cycle, cycle_sim_time_ns = min(candidates, key=lambda item: abs(item[2] - target_sim_time_ns))
-    return FrameSync(
-        cycle=cycle,
-        cycle_index=cycle_index,
-        target_sim_time_ns=target_sim_time_ns,
-        error_ms=abs(cycle_sim_time_ns - target_sim_time_ns) / 1_000_000,
+    return min(
+        candidates,
+        key=lambda item: (
+            float("inf") if item.error_ms is None else float(item.error_ms),
+            item.cycle_index if item.cycle_index is not None else 10**12,
+        ),
     )
 
 
@@ -225,22 +253,28 @@ def _load_live_run_cached(
     frames_mtime_ns: int,
     gate_map_mtime_ns: int,
     vision_observations_mtime_ns: int,
+    planned_paths_mtime_ns: int,
+    test_paths_mtime_ns: int,
 ) -> LiveRun:
     return load_live_run(resolved_path)
 
 
-def _run_signature(run_dir: Path) -> tuple[int, int, int, int, int]:
+def _run_signature(run_dir: Path) -> tuple[int, int, int, int, int, int, int]:
     run_path = run_dir / "run.json"
     telemetry_path = run_dir / "telemetry.json"
     frames_path = _frames_manifest_path(run_dir)
     gate_map_path = run_dir / "gate_map.json"
     observations_path = _vision_observations_path(run_dir)
+    planned_paths_path = run_dir / "lists" / "planned_paths.jsonl"
+    test_paths_path = run_dir / "lists" / "test_paths.jsonl"
     return (
         _mtime_ns(run_path),
         _mtime_ns(telemetry_path),
         _mtime_ns(frames_path),
         _mtime_ns(gate_map_path),
         _mtime_ns(observations_path),
+        _mtime_ns(planned_paths_path),
+        _mtime_ns(test_paths_path),
     )
 
 
@@ -264,6 +298,14 @@ def _load_vision_observations(run_dir: Path, raw: dict[str, Any]) -> list[dict[s
     if observations_path.is_file():
         return _load_jsonl_records(observations_path)
     records = raw.get("vision_observations")
+    return [record for record in records if isinstance(record, dict)] if isinstance(records, list) else []
+
+
+def _load_path_records(run_dir: Path, raw: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    jsonl_path = run_dir / "lists" / f"{key}.jsonl"
+    if jsonl_path.is_file():
+        return _load_jsonl_records(jsonl_path)
+    records = raw.get(key)
     return [record for record in records if isinstance(record, dict)] if isinstance(records, list) else []
 
 

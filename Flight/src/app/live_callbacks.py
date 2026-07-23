@@ -294,18 +294,22 @@ def _gate_map_figure(run: LiveRun, frame: Any, cycle: dict[str, Any] | None, fra
         gates = _cycle_gates(cycle)
 
     points: list[list[float]] = []
-    planned_path = _planned_path_for_cycle(run, cycle_number)
-    planned_plot_points = _planned_path_plot_points(planned_path)
-    if planned_plot_points:
-        points.extend(planned_plot_points)
+    for path_record, name, color in (
+        (_path_for_cycle(run, "test_paths", "test_path", cycle_number), "Test path", "#ffffff"),
+        (_path_for_cycle(run, "planned_paths", "planned_path", cycle_number), "Planned path", "#dc2626"),
+    ):
+        plot_points = _planned_path_plot_points(path_record)
+        if not plot_points:
+            continue
+        points.extend(plot_points)
         fig.add_trace(
             go.Scatter3d(
-                x=[point[0] for point in planned_plot_points],
-                y=[point[1] for point in planned_plot_points],
-                z=[point[2] for point in planned_plot_points],
+                x=[point[0] for point in plot_points],
+                y=[point[1] for point in plot_points],
+                z=[point[2] for point in plot_points],
                 mode="lines",
-                name="Hot-start path",
-                line={"color": "#0f766e", "width": 7},
+                name=name,
+                line={"color": color, "width": 7},
                 showlegend=True,
             )
         )
@@ -696,19 +700,27 @@ def _gate_map_records_for_cycle(run: LiveRun, cycle_number: int | None) -> list[
 
 
 def _planned_path_for_cycle(run: LiveRun, cycle_number: int | None) -> dict[str, Any] | None:
+    return _path_for_cycle(run, "planned_paths", "planned_path", cycle_number)
+
+
+def _test_path_for_cycle(run: LiveRun, cycle_number: int | None) -> dict[str, Any] | None:
+    return _path_for_cycle(run, "test_paths", "test_path", cycle_number)
+
+
+def _path_for_cycle(run: LiveRun, collection_key: str, path_key: str, cycle_number: int | None) -> dict[str, Any] | None:
     if cycle_number is None:
         return None
-    planned_paths = run.raw.get("planned_paths")
-    if not isinstance(planned_paths, list):
+    path_records = run.raw.get(collection_key)
+    if not isinstance(path_records, list):
         return None
     selected: dict[str, Any] | None = None
-    for record in planned_paths:
+    for record in path_records:
         if not isinstance(record, dict):
             continue
         record_cycle = record.get("cycle")
         if not isinstance(record_cycle, int) or record_cycle > cycle_number:
             continue
-        planned_path = record.get("planned_path")
+        planned_path = record.get(path_key)
         if isinstance(planned_path, dict):
             selected = planned_path
     return selected
@@ -890,6 +902,7 @@ def _raw_preview(run: LiveRun) -> str:
             "vision_frames": len(raw.get("vision_frames", [])) if isinstance(raw.get("vision_frames"), list) else 0,
             "vision_observations": len(run.vision_observations),
             "planned_paths": len(raw.get("planned_paths", [])) if isinstance(raw.get("planned_paths"), list) else 0,
+            "test_paths": len(raw.get("test_paths", [])) if isinstance(raw.get("test_paths"), list) else 0,
         },
         "events_tail": _recent_records(run.events, 50),
         "cycles_tail": _recent_records(run.cycles, 20),

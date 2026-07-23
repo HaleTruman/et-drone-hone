@@ -13,6 +13,7 @@ from core.logging import Logger, generate_mp4
 from core.logging.obs import OBSRecorder
 from core.schemas import MavlinkHighresImu, MavlinkTelemetry
 from core.modes.system_mode import SystemModeManager
+from core.utils import time_since
 from mapping.gates import GateMap
 from mapping.perception import VisionGateObservation, VisionObservation
 from sensing.telemetry import MavlinkClient
@@ -28,7 +29,8 @@ OUTER_LOOP_HZ = 30.0
 HEARTBEAT_TIMEOUT_S = 120.0
 STARTUP_DATA_TIMEOUT_S = 5.0
 RUN_S: float | None = None
-RESET_WAIT_S = 3.0
+RESET_WAIT_S = 1.5
+GATE_MAP_RESET_WAIT_S = 1.5
 RESET_READY_TIMEOUT_S = 20.0
 RESET_STABLE_S = 0.5
 RESET_STABLE_MAX_SPEED_MPS = 0.03
@@ -42,9 +44,13 @@ GATE_MIN_OBSERVATIONS = 2
 CARROT_LOOKAHEAD_M = 3.0
 PLANNING_GATE_COUNT = 2
 EXCLUSION_DISTANCE = 2.0
+GATE_PASSED_DISTANCE_M = 2.0
+GATE_CENTER_TOLERANCE_M = 0.25
+SPLINE_CORNER_TIGHTNESS = 0.75
 ALLOW_FLIGHT = True
 CREATE_VIDEO = False
 RECORD_SCREEN = False
+ACTIVATE_PLANNED_PATH = False
 
 # Test
 TARGET_QUATERNION = quaternion_from_roll_pitch_yaw_deg(0.0, -0.8, 0)
@@ -77,53 +83,39 @@ def main() -> int:
     vision_perception = VisionPerceptionService(VisionPerceptionConfig(backend="deterministic_0721", run_landmarker=False))
     vision_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vision")
     obs_recorder = OBSRecorder(run_dir)
-    gate_map = GateMap()
-    path_manager = PathManager(max_gates=PLANNING_GATE_COUNT, exclusion_distance_m=EXCLUSION_DISTANCE)
+    gate_map = GateMap(
+        confirmation_observations=2,
+        merge_radius_m=2,
+        min_candidate_orientation_confidence=0.8,
+        min_candidate_position_confidence=0.9,
+        min_promotion_orientation_confidence=0.8,
+        min_promotion_position_confidence=0.9
+    )
+    path_manager = PathManager(
+        max_gates=PLANNING_GATE_COUNT,
+        exclusion_distance_m=EXCLUSION_DISTANCE,
+        passed_gate_distance_m=GATE_PASSED_DISTANCE_M,
+        gate_center_tolerance_m=GATE_CENTER_TOLERANCE_M,
+        spline_corner_tightness=SPLINE_CORNER_TIGHTNESS,
+    )
     system_mode_manager = SystemModeManager()
     logger.log_event("system_mode_initialized", system_mode=system_mode_manager.system_mode.value)
 
-    ## TEST
-    TEST_OBSERVATION = VisionObservation(
-        frame_id=42,
-        sim_time_ns=123_456_789,
-        gates=[
-            VisionGateObservation(
-                gate_id="sample_gate_0",
-                position_camera_m=(0.016962, 0.192904, 10.877844),
-                position_confidence=1.0,
-                orientation_camera=(0.8091, 8.8576, 0.0086),
-                orientation_confidence=1.0,
-            ),
-            VisionGateObservation(
-                gate_id="sample_gate_1",
-                position_camera_m=(6.632637, 1.254898, 20.464542),
-                position_confidence=1.0,
-                orientation_camera=(24.3343, 72.4422, -21.9316),
-                orientation_confidence=1.0,
-            ),
-            VisionGateObservation(
-                gate_id="sample_gate_2",
-                position_camera_m=(-37.748457, 7.645917, 59.74704),
-                position_confidence=1.0,
-                orientation_camera=(7.6964, -14.8676, 6.8899),
-                orientation_confidence=1.0,
-            )
-        ],
-    )
-
-    planned_path = path_manager.build_straight_line(
+    test_path = path_manager.build_straight_line(
         length_m=100.0,
         point_count=200,
         up_down_angle_deg=2.5,
         left_right_angle_deg=0.0
     )
 
-    # planned_path = path_manager.build_test_path(
+    # test_path = path_manager.build_test_path(
     #     length_m=120,
     #     width_m=10,
     #     height_m=0,
     #     point_count=200
     # )
+
+    planned_path = None
 
     # controllers
     attitude_controller = AttitudeController(
@@ -135,8 +127,8 @@ def main() -> int:
         )
     
     carrot_controller = CarrotController(
-        speed_mps=5,
-        position_gain=1.5,
+        speed_mps=0.5,
+        position_gain=2.0,
         velocity_gain=0.75,
         initial_thrust=0.265
         )
@@ -175,7 +167,10 @@ def main() -> int:
     try:
         ## RESET SIM AFTER START
         mavlink_client.send_sim_reset_command()
+        time_sim_reset_s = time.perf_counter()
         logger.log_event("simulator_reset_sent", sim_time_ns=telemetry.sim_time_ns)
+
+        ## TODO add a short post-reset delay to let the sim settle before beginning any recording
 
         # start screen recording
         if RECORD_SCREEN:
@@ -184,11 +179,11 @@ def main() -> int:
         # clear states, buffers, and maps
         vision_rx.clear_buffer()
         
-        reset_countdown_deadline_s = time.perf_counter() + RESET_WAIT_S
         stationary_imu_samples: list[MavlinkHighresImu] = []
         last_calibration_imu_time_boot_us: int | None = None
 
-        # before the countdown deadline has been reached
+        reset_countdown_deadline_s = time.perf_counter() + RESET_WAIT_S
+        
         while time.perf_counter() < reset_countdown_deadline_s: # TODO: change to montoring the start lights rather than a countdown
             imu_data_t = mavlink_client.latest_imu
             latest_frame = vision_rx.get_next_frame()
@@ -201,6 +196,7 @@ def main() -> int:
             # init gate map and path plan
             if latest_frame is not None:
                 observation = vision_perception.process_vision_frame(latest_frame)
+        
 
             # timing
             next_inner_cycle_s += inner_period_s
@@ -235,31 +231,93 @@ def main() -> int:
             )
             raise Exception("Initialization failed.")
 
-        if latest_frame is not None:
-            observation = vision_perception.process_vision_frame(latest_frame)
-            logger.log_event(
-                "deterministic_vision_test_output",
-                frame_id=latest_frame.frame_id,
-                sim_time_ns=latest_frame.sim_time_ns,
-                gate_count=len(observation.gates),
-                observation=observation.to_controller_payload(output_dir="memory"),
-                perception=vision_perception.snapshot(),
-            )
-        else:
-            logger.log_event("deterministic_vision_test_skipped", reason="no_latest_frame")
+        # if latest_frame is not None:
+        #     observation = vision_perception.process_vision_frame(latest_frame)
+        #     logger.log_event(
+        #         "deterministic_vision_test_output",
+        #         frame_id=latest_frame.frame_id,
+        #         sim_time_ns=latest_frame.sim_time_ns,
+        #         gate_count=len(observation.gates),
+        #         observation=observation.to_controller_payload(output_dir="memory"),
+        #         perception=vision_perception.snapshot(),
+        #     )
+        # else:
+        #     logger.log_event("deterministic_vision_test_skipped", reason="no_latest_frame")
 
-        gate_map.update_from_observation(observation=observation, vehicle_state=vehicle_state_estimator.state)
-
-        # planned_path = path_manager.plan_from_gate_map(
+        # gate_map.update_from_observation(observation=observation, vehicle_state=vehicle_state_estimator.state)
+        # gate_map.mark_passed_near_position(
+        #     vehicle_state.position_local_ned_m,
+        #     distance_m=GATE_PASSED_DISTANCE_M,
+        # )
+        # logger.log_gate_map(
         #     gate_map.gates,
-        #     position_local_ned_m=vehicle_state.position_local_ned_m,
+        #     cycle=inner_cycle,
+        #     inner_cycle=inner_cycle,
+        #     outer_cycle=outer_cycle,
+        #     frame_id=latest_frame.frame_id if latest_frame else None,
+        #     frame_sim_time_ns=latest_frame.sim_time_ns if latest_frame else None,
+        #     source="deterministic_vision_test_output",
         # )
 
-        logger.log_planned_path(
-            planned_path.to_log_dict(origin_local_ned_m=vehicle_state.position_local_ned_m),
-            cycle=inner_cycle,
-            planner="test_gate_map_spline",
+        gate_map_reset_countdown_deadline_s = time.perf_counter() + GATE_MAP_RESET_WAIT_S
+                
+        while time.perf_counter() < gate_map_reset_countdown_deadline_s: # TODO: change to montoring the start lights rather than a countdown
+            imu_data_t = mavlink_client.latest_imu
+            latest_frame = vision_rx.get_next_frame()
+
+            # init gate map and path plan
+            if latest_frame is not None:
+                observation = vision_perception.process_vision_frame(latest_frame)
+                logger.log_event(
+                    "deterministic_vision_test_output",
+                    frame_id=latest_frame.frame_id,
+                    sim_time_ns=latest_frame.sim_time_ns,
+                    gate_count=len(observation.gates),
+                    observation=observation.to_controller_payload(output_dir="memory"),
+                    perception=vision_perception.snapshot(),
+                )
+
+                gate_map.update_from_observation(observation=observation, vehicle_state=vehicle_state_estimator.state)
+                gate_map.mark_passed_near_position(
+                    vehicle_state.position_local_ned_m,
+                    distance_m=GATE_PASSED_DISTANCE_M,
+                )
+                logger.log_gate_map(
+                    gate_map.gates,
+                    cycle=inner_cycle,
+                    inner_cycle=inner_cycle,
+                    outer_cycle=outer_cycle,
+                    frame_id=latest_frame.frame_id if latest_frame else None,
+                    frame_sim_time_ns=latest_frame.sim_time_ns if latest_frame else None,
+                    source="deterministic_vision_test_output",
+                )
+            else:
+                logger.log_event("deterministic_vision_test_skipped", reason="no_latest_frame")
+
+            # timing
+            next_inner_cycle_s += inner_period_s
+            sleep_s = max(0.0, next_inner_cycle_s - time.perf_counter())
+
+            if sleep_s > 0.0:
+                time.sleep(sleep_s)
+
+        planned_path = path_manager.plan_from_gate_map(
+            gate_map.gates,
+            position_local_ned_m=vehicle_state.position_local_ned_m,
+            activate=ACTIVATE_PLANNED_PATH,
         )
+
+        logger.log_test_path(
+            test_path.to_log_dict(origin_local_ned_m=vehicle_state.position_local_ned_m),
+            cycle=inner_cycle,
+            planner="straight_line_test_path",
+        )
+        if planned_path is not None:
+            logger.log_planned_path(
+                planned_path.to_log_dict(origin_local_ned_m=vehicle_state.position_local_ned_m),
+                cycle=inner_cycle,
+                planner="gate_map_spline",
+            )
 
         # arm drone
         mavlink_client.arm_and_wait(timeout_s=ARM_TIMEOUT_S)
@@ -305,6 +363,8 @@ def main() -> int:
         carrot_target = None
         vision_pending = None
 
+        time_began_flight = time.perf_counter()
+
         while RUN_S is None or time.perf_counter() - control_started_s < RUN_S:
             # inner loop timing
             loop_started_s = time.perf_counter()
@@ -346,17 +406,31 @@ def main() -> int:
                             observation=observation,
                             vehicle_state=frame_vehicle_state,
                         )
-                        # planned_path = path_manager.plan_from_gate_map(
-                        #     gate_map.gates,
-                        #     position_local_ned_m=frame_vehicle_state.position_local_ned_m,
-                        # )
-                        # logger.log_test_planned_path(
-                        #     planned_path.to_log_dict(origin_local_ned_m=frame_vehicle_state.position_local_ned_m),
-                        #     cycle=inner_cycle,
-                        #     outer_cycle=outer_cycle,
-                        #     frame_id=frame_log["frame_id"],
-                        #     planner="vision_gate_map_spline",
-                        # )
+                        gate_map.mark_passed_near_position(
+                            frame_vehicle_state.position_local_ned_m,
+                            distance_m=GATE_PASSED_DISTANCE_M,
+                        )
+                        logger.log_gate_map(
+                            gate_map.gates,
+                            cycle=frame_log["inner_cycle"],
+                            inner_cycle=frame_log["inner_cycle"],
+                            outer_cycle=frame_outer_cycle,
+                            frame_id=frame_log["frame_id"],
+                            frame_sim_time_ns=frame_log["sim_time_ns"],
+                            source="vision_frame_processed",
+                        )
+                        planned_path = path_manager.plan_from_gate_map(
+                            gate_map.gates,
+                            position_local_ned_m=frame_vehicle_state.position_local_ned_m,
+                            activate=ACTIVATE_PLANNED_PATH,
+                        )
+                        logger.log_planned_path(
+                            planned_path.to_log_dict(origin_local_ned_m=frame_vehicle_state.position_local_ned_m),
+                            cycle=inner_cycle,
+                            outer_cycle=outer_cycle,
+                            frame_id=frame_log["frame_id"],
+                            planner="vision_gate_map_spline",
+                        )
                     except Exception as error:  # noqa: BLE001
                         logger.log_vision_frame(frame_log, cycle=frame_outer_cycle, status="failed", error=str(error))
                         print(f"vision frame={frame_log['frame_id']} failed: {error}", flush=True)
@@ -374,7 +448,6 @@ def main() -> int:
                     carrot=carrot,
                     lookahead_m=CARROT_LOOKAHEAD_M,
                 )
-                # hover_target = hover_controller.compute_control(vehicle_state=vehicle_state)
            
                 if latest_frame is not None:
                     vision_rx.record_frame_cycle(latest_frame.frame_id, inner_cycle)
