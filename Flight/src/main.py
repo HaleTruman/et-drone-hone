@@ -40,18 +40,20 @@ ARM_TIMEOUT_S = 5.0
 TARGET_HOLD_S = 0.75
 MIN_GATE_CONFIDENCE = 0.10
 CONTROL_METHOD = "carrot_motor_test"
+PLANNING_MODE = "observed_next_two"
 GATE_ASSOCIATION_DISTANCE_M = 6.0
 GATE_MIN_OBSERVATIONS = 2
-CARROT_LOOKAHEAD_M = 3.0
+CARROT_LOOKAHEAD_M = 1.5
 PLANNING_GATE_COUNT = 2
 EXCLUSION_DISTANCE = 2.0
+GATE_MAX_PLANNING_DISTANCE_M = 25.0
 GATE_PASSED_DISTANCE_M = 2.0
-GATE_CENTER_TOLERANCE_M = 0.25
+GATE_CENTER_TOLERANCE_M = 0.05
 SPLINE_CORNER_TIGHTNESS = 0.75
 ALLOW_FLIGHT = True
 CREATE_VIDEO = False
 RECORD_SCREEN = False
-ACTIVATE_PLANNED_PATH = False
+ACTIVATE_PLANNED_PATH = True
 ENABLE_VIO = False
 VIO_CAMERA_HORIZONTAL_FOV_DEG = 90.0
 VIO_CAMERA_TILT_DEG = 20.0
@@ -60,6 +62,30 @@ VIO_BODY_TO_CAMERA_TRANSLATION_BODY_FRD_M = (0.0, 0.0, 0.0)
 # Test
 TARGET_QUATERNION = quaternion_from_roll_pitch_yaw_deg(0.0, -0.8, 0)
 TARGET_THRUST = 0.265
+
+
+def _observed_gate_records_for_planning(
+    observation: VisionObservation,
+    *,
+    gate_map: GateMap,
+    vehicle_state,
+) -> list:
+    records = []
+    for sequence, observed_gate in enumerate(observation.gates):
+        if float(observed_gate.position_confidence) < MIN_GATE_CONFIDENCE:
+            continue
+        if float(observed_gate.position_camera_m[2]) <= 0.0:
+            continue
+        records.append(
+            gate_map.gate_record_from_observation(
+                observed_gate,
+                vehicle_state=vehicle_state,
+                sequence=sequence,
+                observed_cycle=observation.frame_id,
+            )
+        )
+    return records
+
 
 def main() -> int:
     inner_period_s = 1.0 / INNER_LOOP_HZ
@@ -78,6 +104,7 @@ def main() -> int:
             "inner_loop_hz": INNER_LOOP_HZ,
             "outer_loop_hz": OUTER_LOOP_HZ,
             "control_method": CONTROL_METHOD,
+            "planning_mode": PLANNING_MODE,
         }
     )
     print(f"Starting run at {run_dir}...")
@@ -111,9 +138,13 @@ def main() -> int:
     path_manager = PathManager(
         max_gates=PLANNING_GATE_COUNT,
         exclusion_distance_m=EXCLUSION_DISTANCE,
+        max_gate_distance_m=GATE_MAX_PLANNING_DISTANCE_M,
         passed_gate_distance_m=GATE_PASSED_DISTANCE_M,
         gate_center_tolerance_m=GATE_CENTER_TOLERANCE_M,
         spline_corner_tightness=SPLINE_CORNER_TIGHTNESS,
+        planning_mode=PLANNING_MODE,
+        gate_association_distance_m=GATE_ASSOCIATION_DISTANCE_M,
+        gate_min_observations=GATE_MIN_OBSERVATIONS,
     )
     system_mode_manager = SystemModeManager()
     logger.log_event("system_mode_initialized", system_mode=system_mode_manager.system_mode.value)
@@ -136,17 +167,18 @@ def main() -> int:
 
     # controllers
     attitude_controller = AttitudeController(
-        roll_gain=1.0,
-        pitch_gain=1.0,
+        roll_gain=1.2,
+        pitch_gain=1.2,
         yaw_gain=0.5,
         damping=0.15,
-        max_body_rate_rps=1.0
+        max_body_rate_rps=2.0
         )
     
     carrot_controller = CarrotController(
-        speed_mps=0.5,
-        position_gain=2.0,
-        velocity_gain=0.75,
+        speed_mps=3,
+        lookahead_m=CARROT_LOOKAHEAD_M,
+        position_gain=5.5,
+        velocity_gain=1.5,
         initial_thrust=0.265
         )
     
@@ -329,6 +361,17 @@ def main() -> int:
                     frame_sim_time_ns=latest_frame.sim_time_ns if latest_frame else None,
                     source="deterministic_vision_test_output",
                 )
+                if path_manager.planning_mode == "observed_next_two":
+                    observed_planning_gates = _observed_gate_records_for_planning(
+                        observation,
+                        gate_map=gate_map,
+                        vehicle_state=vehicle_state,
+                    )
+                    planned_path = path_manager.plan_from_observed_gates(
+                        observed_planning_gates,
+                        position_local_ned_m=vehicle_state.position_local_ned_m,
+                        activate=ACTIVATE_PLANNED_PATH,
+                    )
             else:
                 logger.log_event("deterministic_vision_test_skipped", reason="no_latest_frame")
 
@@ -339,11 +382,24 @@ def main() -> int:
             if sleep_s > 0.0:
                 time.sleep(sleep_s)
 
-        planned_path = path_manager.plan_from_gate_map(
-            gate_map.gates,
-            position_local_ned_m=vehicle_state.position_local_ned_m,
-            activate=ACTIVATE_PLANNED_PATH,
-        )
+        if path_manager.planning_mode == "observed_next_two":
+            if planned_path is None and observation is not None:
+                observed_planning_gates = _observed_gate_records_for_planning(
+                    observation,
+                    gate_map=gate_map,
+                    vehicle_state=vehicle_state,
+                )
+                planned_path = path_manager.plan_from_observed_gates(
+                    observed_planning_gates,
+                    position_local_ned_m=vehicle_state.position_local_ned_m,
+                    activate=ACTIVATE_PLANNED_PATH,
+                )
+        else:
+            planned_path = path_manager.plan_from_gate_map(
+                gate_map.gates,
+                position_local_ned_m=vehicle_state.position_local_ned_m,
+                activate=ACTIVATE_PLANNED_PATH,
+            )
 
         logger.log_test_path(
             test_path.to_log_dict(origin_local_ned_m=vehicle_state.position_local_ned_m),
@@ -354,7 +410,7 @@ def main() -> int:
             logger.log_planned_path(
                 planned_path.to_log_dict(origin_local_ned_m=vehicle_state.position_local_ned_m),
                 cycle=inner_cycle,
-                planner="gate_map_spline",
+                planner=path_manager.planning_mode,
             )
 
         # arm drone
@@ -470,17 +526,29 @@ def main() -> int:
                             frame_sim_time_ns=frame_log["sim_time_ns"],
                             source="vision_frame_processed",
                         )
-                        planned_path = path_manager.plan_from_gate_map(
-                            gate_map.gates,
-                            position_local_ned_m=frame_vehicle_state.position_local_ned_m,
-                            activate=ACTIVATE_PLANNED_PATH,
-                        )
+                        if path_manager.planning_mode == "observed_next_two":
+                            observed_planning_gates = _observed_gate_records_for_planning(
+                                observation,
+                                gate_map=gate_map,
+                                vehicle_state=frame_vehicle_state,
+                            )
+                            planned_path = path_manager.plan_from_observed_gates(
+                                observed_planning_gates,
+                                position_local_ned_m=frame_vehicle_state.position_local_ned_m,
+                                activate=ACTIVATE_PLANNED_PATH,
+                            )
+                        else:
+                            planned_path = path_manager.plan_from_gate_map(
+                                gate_map.gates,
+                                position_local_ned_m=frame_vehicle_state.position_local_ned_m,
+                                activate=ACTIVATE_PLANNED_PATH,
+                            )
                         logger.log_planned_path(
                             planned_path.to_log_dict(origin_local_ned_m=frame_vehicle_state.position_local_ned_m),
                             cycle=inner_cycle,
                             outer_cycle=outer_cycle,
                             frame_id=frame_log["frame_id"],
-                            planner="vision_gate_map_spline",
+                            planner=path_manager.planning_mode,
                         )
                     except Exception as error:  # noqa: BLE001
                         logger.log_vision_frame(frame_log, cycle=frame_outer_cycle, status="failed", error=str(error))
@@ -492,12 +560,11 @@ def main() -> int:
                 # compute attitude target for path-following test
                 carrot = path_manager.carrot_point(
                     vehicle_state.position_local_ned_m,
-                    CARROT_LOOKAHEAD_M,
+                    carrot_controller.lookahead_m,
                 )
                 carrot_target = carrot_controller.compute_control(
                     vehicle_state=vehicle_state,
                     carrot=carrot,
-                    lookahead_m=CARROT_LOOKAHEAD_M,
                 )
            
                 if latest_frame is not None:
@@ -538,12 +605,11 @@ def main() -> int:
                     if carrot_target is None:
                         carrot = path_manager.carrot_point(
                             vehicle_state.position_local_ned_m,
-                            CARROT_LOOKAHEAD_M,
+                            carrot_controller.lookahead_m,
                         )
                         carrot_target = carrot_controller.compute_control(
                             vehicle_state=vehicle_state,
                             carrot=carrot,
-                            lookahead_m=CARROT_LOOKAHEAD_M,
                         )
 
                     if carrot_target:

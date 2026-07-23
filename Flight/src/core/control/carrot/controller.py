@@ -15,6 +15,7 @@ class CarrotController:
         self,
         *,
         speed_mps: float = 3.0,
+        lookahead_m: float = 3.0,
         position_gain: float = 1.0,
         velocity_gain: float = 1.4,
         initial_thrust: float | None = None,
@@ -29,6 +30,7 @@ class CarrotController:
         command_mapper: CommandMapper | None = None,
     ):
         self.speed_mps = float(speed_mps)
+        self.lookahead_m = max(0.0, float(lookahead_m))
         self.position_gain = float(position_gain)
         self.velocity_gain = float(velocity_gain)
         self.min_thrust = float(min_thrust)
@@ -64,8 +66,6 @@ class CarrotController:
         self,
         vehicle_state: VehicleState,
         carrot: dict[str, Any],
-        *,
-        lookahead_m: float | None = None,
     ) -> dict[str, Any]:
         position = self._vec3(vehicle_state.position_local_ned_m, "position_local_ned_m")
         velocity = self._vec3(vehicle_state.velocity_local_ned_mps, "velocity_local_ned_mps")
@@ -77,8 +77,11 @@ class CarrotController:
         tangent = self._unit(carrot["tangent_local_ned"], "carrot.tangent_local_ned")
 
         desired_velocity = tangent * self.speed_mps
+        position_error = carrot_position - position
+        along_track_error = tangent * float(np.dot(position_error, tangent))
+        cross_track_error = position_error - along_track_error
         desired_acceleration = (
-            self.position_gain * (carrot_position - position)
+            self.position_gain * cross_track_error
             + self.velocity_gain * (desired_velocity - velocity)
         )
 
@@ -118,9 +121,11 @@ class CarrotController:
             "tangent_local_ned": [float(value) for value in tangent],
             "along_track_m": float(carrot["along_track_m"]),
             "cross_track_error_m": float(carrot["cross_track_error_m"]),
-            "lookahead_m": None if lookahead_m is None else float(lookahead_m),
+            "lookahead_m": float(self.lookahead_m),
             "speed_mps": float(self.speed_mps),
         }
+        payload["position_error_local_ned_m"] = [float(value) for value in position_error]
+        payload["cross_track_position_error_local_ned_m"] = [float(value) for value in cross_track_error]
         payload["desired_velocity_local_ned_mps"] = [float(value) for value in desired_velocity]
         payload["desired_acceleration_local_ned_mps2"] = [
             float(value) for value in desired_acceleration
