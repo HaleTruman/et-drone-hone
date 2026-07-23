@@ -1,0 +1,177 @@
+{
+  "schema": "vision-pipeline-presets.v1",
+  "image": {
+    "width": 640,
+    "height": 360
+  },
+  "camera": {
+    "fx": 320.0,
+    "fy": 320.0,
+    "cx": 320.0,
+    "cy": 180.0,
+    "distortion": "none"
+  },
+  "lut": {
+    "path": "assets/color_lut_v1.npz",
+    "decoder": "PIL.Image.open(path).convert(\"RGB\")",
+    "rgbKeyFormat": "0xRRGGBB"
+  },
+  "maskLayers": [
+    {
+      "prefix": "001",
+      "bit": 0,
+      "enabled": true
+    },
+    {
+      "prefix": "002",
+      "bit": 1,
+      "enabled": true
+    },
+    {
+      "prefix": "003",
+      "bit": 2,
+      "enabled": true
+    },
+    {
+      "prefix": "007",
+      "bit": 3,
+      "enabled": true
+    }
+  ],
+  "classes": [
+    {
+      "prefix": "001",
+      "classId": 1,
+      "confidence": 0.99,
+      "role": "kingpin",
+      "label": "Red Gate 0715 (<10 out of gate)",
+      "displayName": "(001) Red Gate 0715 (<10 out of gate)",
+      "color": "#ff40ff",
+      "candidateSource": true
+    },
+    {
+      "prefix": "002",
+      "classId": 2,
+      "confidence": 0.9,
+      "role": "inner-branding",
+      "label": "Red Gate 0715 (branding) only support inner gate",
+      "displayName": "(002) Red Gate 0715 (branding) only support inner gate",
+      "color": "#ffff00",
+      "candidateSource": true
+    },
+    {
+      "prefix": "003",
+      "classId": 2,
+      "confidence": 0.9,
+      "role": "inner-permissive",
+      "label": "Red Gate 0715 (permissive) only support inner gate",
+      "displayName": "(003) Red Gate 0715 (permissive) only support inner gate",
+      "color": "#00fdff",
+      "candidateSource": true
+    },
+    {
+      "prefix": "004",
+      "classId": 3,
+      "confidence": 0.8,
+      "role": "flood-support",
+      "label": "Red Gate 0715 (high permissive) only support inner gate",
+      "displayName": "(004) Red Gate 0715 (high permissive) only support inner gate",
+      "color": "#00f900",
+      "candidateSource": false
+    },
+    {
+      "prefix": "005",
+      "classId": 3,
+      "confidence": 0.8,
+      "role": "flood-support",
+      "label": "Red Gate 0715 (max permissive) only support inner gate",
+      "displayName": "(005) Red Gate 0715 (max permissive) only support inner gate",
+      "color": "#919191",
+      "candidateSource": false
+    },
+    {
+      "prefix": "006",
+      "classId": 3,
+      "confidence": 0.8,
+      "role": "edge-support",
+      "label": "Red Gate 0715 (edges) support",
+      "displayName": "(006) Red Gate 0715 (edges) support",
+      "color": "#ffb43f",
+      "candidateSource": false
+    },
+    {
+      "prefix": "007",
+      "classId": 4,
+      "confidence": 0.75,
+      "role": "edge-support",
+      "label": "Red Gate 0715 (permissive edges) support",
+      "displayName": "(007) Red Gate 0715 (permissive edges) support",
+      "color": "#ff9300",
+      "candidateSource": false
+    },
+    {
+      "prefix": "008",
+      "classId": 4,
+      "confidence": 0.75,
+      "role": "edge-support",
+      "label": "Red Gate 0715 (high permissive edges) support",
+      "displayName": "(008) Red Gate 0715 (high permissive edges) support",
+      "color": "#ffffff",
+      "candidateSource": false
+    }
+  ],
+  "bbox": {
+    "minPixels": 250,
+    "maxBboxesPerFrame": 4,
+    "connectivity": 8,
+    "quadFitEnabled": true,
+    "quadFitMode": "rotated-rect",
+    "targetAspect": 1.0,
+    "aspectTolerance": 0.6
+  },
+  "clipping": {
+    "enabled": true,
+    "marginPx": 6,
+    "minContactPixels": 12,
+    "minContactRatio": 0.01,
+    "requireBboxTouch": true,
+    "warnOnly": true
+  },
+  "contours": {
+    "maskSource": "enabled-layers",
+    "minOuterAreaPx": 10,
+    "minVoidAreaPx": 20,
+    "maxVoidsPerBbox": 12,
+    "simplifyEpsilonPx": 1.5
+  },
+  "pose": {
+    "squareSizeM": 2.7,
+    "edgeTolerancePx": 4.0,
+    "minEdgeCoverage": 0.45,
+    "maxReprojectionErrorPx": 8.0,
+    "minContourPoints": 4,
+    "clipPoseGuardEnabled": true
+  },
+  "instanceTracking": {
+    "maxFrameGap": 5,
+    "minAssociationScore": 0.45,
+    "max2dDistancePx": 90.0,
+    "minIou": 0.02,
+    "max3dDistanceM": 3.0,
+    "maxRpyDeltaDeg": 45.0,
+    "poseSource": "poseFit"
+  },
+  "flightBridge": {
+    "cameraPositionCameraM": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cameraOrientationCameraDeg": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "opencvToFlightCamera": "flip-y"
+  }
+}

@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Vision Review</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="header-main">
+        <div>
+          <h1>Vision Review</h1>
+          <p id="runMeta">Loading run...</p>
+        </div>
+        <div class="transport">
+          <button id="prevButton" type="button" title="Previous frame">Prev</button>
+          <button id="playButton" type="button" title="Play or pause">Play</button>
+          <button id="nextButton" type="button" title="Next frame">Next</button>
+          <label class="speed">
+            <span>Speed</span>
+            <select id="speedSelect">
+              <option value="1">1x</option>
+              <option value="2">2x</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <section class="header-controls">
+        <label class="run-folder">
+          <span>Run folder</span>
+          <input
+            id="runFolderInput"
+            type="text"
+            autocomplete="off"
+            placeholder="/Users/trumanhale/aigp sim v1 download/Runs/run-20260722T164010Z"
+          />
+        </label>
+        <button id="runDebugButton" type="button">Run Debug</button>
+        <div id="launcherStatus">Enter a run folder to generate debug JSON.</div>
+        <section class="scrubber">
+          <input id="frameSlider" type="range" min="0" max="0" value="0" />
+          <div id="frameReadout">Frame 0 / 0</div>
+        </section>
+      </section>
+    </header>
+
+    <main>
+      <section class="layout">
+        <div class="panel visual-panel">
+          <div class="panel-title">Source Frame</div>
+          <div class="stage-frame">
+            <img id="sourceImage" class="stage-source" alt="Source frame" />
+          </div>
+          <details class="json-toggle">
+            <summary>JSON</summary>
+            <pre id="sourceJson" class="json-view"></pre>
+          </details>
+        </div>
+
+        <div id="colorPanel" class="panel visual-panel">
+          <div class="panel-title">Color Mask</div>
+          <div class="stage-frame">
+            <img id="colorImage" class="stage-source" alt="Color mask source frame" />
+            <canvas id="maskCanvas" class="stage-overlay" width="640" height="360"></canvas>
+          </div>
+          <div id="maskMissing" class="missing stage-note hidden"></div>
+          <details class="json-toggle">
+            <summary>JSON</summary>
+            <pre id="colorJson" class="json-view"></pre>
+          </details>
+        </div>
+
+        <div id="bboxPanel" class="panel visual-panel">
+          <div class="panel-title">BBoxing</div>
+          <div class="stage-frame">
+            <img id="bboxImage" class="stage-source" alt="BBoxing source frame" />
+            <canvas id="bboxCanvas" class="stage-overlay" width="640" height="360"></canvas>
+          </div>
+          <div id="bboxNote" class="missing stage-note hidden"></div>
+          <details class="json-toggle">
+            <summary>JSON</summary>
+            <pre id="bboxJson" class="json-view"></pre>
+          </details>
+        </div>
+
+        <div id="clippingPanel" class="panel visual-panel">
+          <div class="panel-title">Clipping</div>
+          <div class="stage-frame">
+            <img id="clippingImage" class="stage-source" alt="Clipping source frame" />
+            <canvas id="clippingCanvas" class="stage-overlay" width="640" height="360"></canvas>
+          </div>
+          <div id="clippingNote" class="missing stage-note hidden"></div>
+          <details class="json-toggle">
+            <summary>JSON</summary>
+            <pre id="clippingJson" class="json-view"></pre>
+          </details>
+        </div>
+
+        <div id="contourPanel" class="panel visual-panel">
+          <div class="panel-title">Contouring</div>
+          <div class="stage-frame">
+            <img id="contourImage" class="stage-source" alt="Contouring source frame" />
+            <canvas id="contourCanvas" class="stage-overlay" width="640" height="360"></canvas>
+          </div>
+          <div id="contourNote" class="missing stage-note hidden"></div>
+          <details class="json-toggle">
+            <summary>JSON</summary>
+            <pre id="contourJson" class="json-view"></pre>
+          </details>
+        </div>
+
+        <div id="posePanel" class="panel visual-panel">
+          <div class="panel-title">Pose Estimation</div>
+          <div class="stage-frame">
+            <img id="poseImage" class="stage-source" alt="Pose estimation source frame" />
+            <canvas id="poseCanvas" class="stage-overlay" width="640" height="360"></canvas>
+          </div>
+          <div id="poseNote" class="missing stage-note hidden"></div>
+          <details class="json-toggle">
+            <summary>JSON</summary>
+            <pre id="poseJson" class="json-view"></pre>
+          </details>
+        </div>
+
+        <div id="instancePanel" class="panel visual-panel">
+          <div class="panel-title">Instance Tracking</div>
+          <div class="stage-frame">
+            <img id="instanceImage" class="stage-source" alt="Instance tracking source frame" />
+            <canvas id="instanceCanvas" class="stage-overlay" width="640" height="360"></canvas>
+          </div>
+          <div id="instanceNote" class="missing stage-note hidden"></div>
+          <details class="json-toggle">
+            <summary>JSON</summary>
+            <pre id="instanceJson" class="json-view"></pre>
+          </details>
+        </div>
+
+        <div id="visionResultsPanel" class="panel results-panel">
+          <div class="panel-title">Vision Results</div>
+          <div class="results-content">
+            <section class="results-frame-column">
+              <div class="results-section-title">Frames</div>
+              <div id="resultsFrameList" class="results-frame-list"></div>
+            </section>
+            <section class="results-detail-column">
+              <div id="resultsFrameSummary" class="results-summary"></div>
+              <div id="resultsGateList" class="results-gate-list"></div>
+              <details class="json-toggle results-json">
+                <summary>Raw Vision Results JSON</summary>
+                <pre id="visionResultsJson" class="json-view"></pre>
+              </details>
+            </section>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="renderers/shared.js"></script>
+    <script src="renderers/color_mask.js"></script>
+    <script src="renderers/bboxing.js"></script>
+    <script src="renderers/clipping.js"></script>
+    <script src="renderers/contouring.js"></script>
+    <script src="renderers/pose_estimation.js"></script>
+    <script src="renderers/instance_tracking.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
