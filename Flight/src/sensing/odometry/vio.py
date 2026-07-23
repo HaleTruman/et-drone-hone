@@ -1,12 +1,14 @@
 """Visual-inertial odometry measurement helpers.
 
 This module keeps VIO inputs in the same LOCAL_NED / BODY_FRD conventions used
-by VehicleStateEstimator. It intentionally does not own a VIO backend yet; it
-provides the data contract and frame conversion utilities needed to fuse one.
+by VehicleStateEstimator. The OpenCV provider is intentionally lightweight: it
+tracks visual features, estimates frame-to-frame monocular motion, and uses
+recent IMU samples only for metric scale hints.
 """
 
+from collections import deque
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
 
@@ -18,7 +20,10 @@ from core.coordinates import (
     rotation_matrix_from_quaternion,
     vec3,
 )
-from core.schemas import QuatWxyz, Vec3, VehicleState
+from core.schemas import MavlinkHighresImu, QuatWxyz, Vec3, VehicleState
+
+if TYPE_CHECKING:
+    from sensing.vision import VisionFrame
 
 
 class VioProvider(Protocol):
@@ -26,6 +31,81 @@ class VioProvider(Protocol):
 
     def get_latest_measurement(self) -> "VioMeasurement | None":
         ...
+
+
+@dataclass(frozen=True)
+class CameraIntrinsics:
+    """Pinhole camera calibration used by the OpenCV monocular frontend."""
+
+    width_px: int
+    height_px: int
+    fx_px: float
+    fy_px: float
+    cx_px: float
+    cy_px: float
+    distortion: tuple[float, ...] = ()
+
+    @classmethod
+    def from_image_size(
+        cls,
+        *,
+        width_px: int,
+        height_px: int,
+        horizontal_fov_deg: float = 90.0,
+        distortion: tuple[float, ...] = (),
+    ) -> "CameraIntrinsics":
+        half_fov_rad = np.deg2rad(float(horizontal_fov_deg)) * 0.5
+        fx_px = (float(width_px) * 0.5) / max(float(np.tan(half_fov_rad)), 1e-9)
+        fy_px = fx_px
+        return cls(
+            width_px=int(width_px),
+            height_px=int(height_px),
+            fx_px=fx_px,
+            fy_px=fy_px,
+            cx_px=(float(width_px) - 1.0) * 0.5,
+            cy_px=(float(height_px) - 1.0) * 0.5,
+            distortion=distortion,
+        )
+
+    @property
+    def matrix(self) -> np.ndarray:
+        return np.array(
+            [
+                [self.fx_px, 0.0, self.cx_px],
+                [0.0, self.fy_px, self.cy_px],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=float,
+        )
+
+    @property
+    def distortion_array(self) -> np.ndarray | None:
+        if not self.distortion:
+            return None
+        return np.asarray(self.distortion, dtype=float)
+
+
+@dataclass(frozen=True)
+class VioFrontendConfig:
+    """Feature tracking and relative-pose thresholds for OpenCV VIO."""
+
+    max_corners: int = 250
+    quality_level: float = 0.01
+    min_distance_px: float = 8.0
+    block_size_px: int = 7
+    lk_window_px: int = 21
+    lk_max_level: int = 3
+    lk_max_iterations: int = 30
+    lk_epsilon: float = 0.01
+    ransac_prob: float = 0.999
+    ransac_threshold_px: float = 1.5
+    min_tracked_points: int = 40
+    min_inliers: int = 30
+    horizontal_fov_deg: float = 90.0
+    fallback_translation_scale_m: float = 0.03
+    max_imu_buffer_samples: int = 400
+    max_frame_gap_s: float = 0.25
+    min_confidence: float = 0.15
 
 
 @dataclass(frozen=True)
@@ -145,6 +225,324 @@ class VioMeasurement:
         }
 
 
+@dataclass(frozen=True)
+class _TrackedFrame:
+    frame_id: int
+    sim_time_ns: int
+    gray: np.ndarray
+    keypoints_px: np.ndarray
+    camera_position_local_ned_m: Vec3
+    camera_attitude_quaternion: QuatWxyz
+
+
+class OpenCvMonocularVioProvider:
+    """Monocular visual odometry frontend with IMU-assisted scale hints.
+
+    This is a pragmatic bootstrap VIO backend for the current Python flight
+    loop. Monocular essential-matrix pose is only scale-observable through the
+    IMU displacement estimate, so position corrections should stay lightly
+    weighted until a metric landmark, depth, or stereo source is added.
+    """
+
+    def __init__(
+        self,
+        *,
+        camera: CameraIntrinsics | None = None,
+        frontend_config: VioFrontendConfig | None = None,
+        body_to_camera_translation_body_frd_m: Vec3 = (0.0, 0.0, 0.0),
+        camera_tilt_deg: float = 20.0,
+    ):
+        self.camera = camera
+        self.config = frontend_config or VioFrontendConfig()
+        self.body_to_camera_translation_body_frd_m = vec3(body_to_camera_translation_body_frd_m)
+        self.camera_tilt_deg = float(camera_tilt_deg)
+        self._imu_samples: deque[MavlinkHighresImu] = deque(maxlen=self.config.max_imu_buffer_samples)
+        self._previous_frame: _TrackedFrame | None = None
+        self._latest_measurement: VioMeasurement | None = None
+        self._last_status = "not_initialized"
+        self._last_raw: dict[str, Any] = {}
+
+    def reset(self) -> None:
+        self._imu_samples.clear()
+        self._previous_frame = None
+        self._latest_measurement = None
+        self._last_status = "reset"
+        self._last_raw = {}
+
+    def add_imu_sample(self, imu: MavlinkHighresImu) -> None:
+        if self._imu_samples and int(self._imu_samples[-1].time_boot_us) == int(imu.time_boot_us):
+            return
+        self._imu_samples.append(imu)
+
+    def get_latest_measurement(self) -> VioMeasurement | None:
+        return self._latest_measurement
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "backend": "opencv_monocular",
+            "status": self._last_status,
+            "imu_buffer_count": len(self._imu_samples),
+            "has_camera_intrinsics": self.camera is not None,
+            "has_previous_frame": self._previous_frame is not None,
+            "latest_measurement": None if self._latest_measurement is None else self._latest_measurement.to_log_dict(),
+            "last_raw": self._last_raw,
+        }
+
+    def process_frame(self, frame: "VisionFrame") -> VioMeasurement | None:
+        gray = self._decode_gray(frame.jpeg_bytes)
+        if gray is None:
+            self._set_status("decode_failed", frame_id=frame.frame_id)
+            return None
+
+        if self.camera is None:
+            height_px, width_px = gray.shape[:2]
+            self.camera = CameraIntrinsics.from_image_size(
+                width_px=width_px,
+                height_px=height_px,
+                horizontal_fov_deg=self.config.horizontal_fov_deg,
+            )
+
+        if self._previous_frame is None:
+            keypoints = self._detect_features(gray)
+            camera_attitude = quaternion_from_rotation_matrix(camera_optical_to_body_frd(self.camera_tilt_deg))
+            self._previous_frame = _TrackedFrame(
+                frame_id=frame.frame_id,
+                sim_time_ns=frame.sim_time_ns,
+                gray=gray,
+                keypoints_px=keypoints,
+                camera_position_local_ned_m=(0.0, 0.0, 0.0),
+                camera_attitude_quaternion=camera_attitude,
+            )
+            self._set_status("initialized", frame_id=frame.frame_id, feature_count=len(keypoints))
+            return None
+
+        dt_s = (int(frame.sim_time_ns) - int(self._previous_frame.sim_time_ns)) / 1_000_000_000.0
+        if dt_s <= 0.0 or dt_s > self.config.max_frame_gap_s:
+            self._replace_previous_frame(frame, gray, status="frame_gap_too_large")
+            return None
+
+        previous_points, current_points = self._track_features(
+            self._previous_frame.gray,
+            gray,
+            self._previous_frame.keypoints_px,
+        )
+        if len(current_points) < self.config.min_tracked_points:
+            self._replace_previous_frame(frame, gray, status="too_few_tracked_points", tracked_count=len(current_points))
+            return None
+
+        relative_pose = self._estimate_relative_camera_pose(previous_points, current_points)
+        if relative_pose is None:
+            self._replace_previous_frame(frame, gray, status="relative_pose_failed", tracked_count=len(current_points))
+            return None
+
+        rotation_21, translation_21, inlier_count = relative_pose
+        if inlier_count < self.config.min_inliers:
+            self._replace_previous_frame(
+                frame,
+                gray,
+                status="too_few_pose_inliers",
+                tracked_count=len(current_points),
+                inlier_count=inlier_count,
+            )
+            return None
+
+        scale_m = self._imu_translation_scale_m(self._previous_frame.sim_time_ns, frame.sim_time_ns)
+        if scale_m is None:
+            scale_m = self.config.fallback_translation_scale_m
+
+        previous_rotation_camera_to_local = rotation_matrix_from_quaternion(
+            self._previous_frame.camera_attitude_quaternion
+        )
+        current_rotation_camera_to_local = previous_rotation_camera_to_local @ rotation_21.T
+        translation_unit = translation_21.reshape(3)
+        current_position = (
+            np.asarray(self._previous_frame.camera_position_local_ned_m, dtype=float)
+            - current_rotation_camera_to_local @ translation_unit * float(scale_m)
+        )
+
+        velocity = vec3(
+            (
+                current_position - np.asarray(self._previous_frame.camera_position_local_ned_m, dtype=float)
+            )
+            / max(dt_s, 1e-6)
+        )
+        confidence = self._confidence(tracked_count=len(current_points), inlier_count=inlier_count)
+        camera_attitude = quaternion_from_rotation_matrix(current_rotation_camera_to_local)
+        measurement = VioMeasurement.from_camera_optical_pose(
+            sim_time_ns=frame.sim_time_ns,
+            camera_position_local_ned_m=vec3(current_position),
+            camera_attitude_quaternion=camera_attitude,
+            body_to_camera_translation_body_frd_m=self.body_to_camera_translation_body_frd_m,
+            camera_tilt_deg=self.camera_tilt_deg,
+            velocity_local_ned_mps=velocity,
+            confidence=confidence,
+            source="opencv_monocular_vio",
+            raw={
+                "frame_id": int(frame.frame_id),
+                "previous_frame_id": int(self._previous_frame.frame_id),
+                "dt_s": dt_s,
+                "tracked_count": int(len(current_points)),
+                "inlier_count": int(inlier_count),
+                "translation_scale_m": float(scale_m),
+            },
+        )
+
+        keypoints = self._detect_features(gray)
+        if len(keypoints) < self.config.min_tracked_points:
+            keypoints = current_points.reshape(-1, 1, 2).astype(np.float32)
+
+        self._previous_frame = _TrackedFrame(
+            frame_id=frame.frame_id,
+            sim_time_ns=frame.sim_time_ns,
+            gray=gray,
+            keypoints_px=keypoints,
+            camera_position_local_ned_m=vec3(current_position),
+            camera_attitude_quaternion=camera_attitude,
+        )
+        self._latest_measurement = measurement
+        self._set_status("measurement_ready", **measurement.raw)
+        return measurement
+
+    def _decode_gray(self, jpeg_bytes: bytes) -> np.ndarray | None:
+        try:
+            import cv2
+        except ImportError:
+            self._set_status("opencv_unavailable")
+            return None
+
+        image = cv2.imdecode(np.frombuffer(jpeg_bytes, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+        if image is None or image.size == 0:
+            return None
+        return image
+
+    def _detect_features(self, gray: np.ndarray) -> np.ndarray:
+        import cv2
+
+        points = cv2.goodFeaturesToTrack(
+            gray,
+            maxCorners=int(self.config.max_corners),
+            qualityLevel=float(self.config.quality_level),
+            minDistance=float(self.config.min_distance_px),
+            blockSize=int(self.config.block_size_px),
+        )
+        if points is None:
+            return np.empty((0, 1, 2), dtype=np.float32)
+        return points.astype(np.float32)
+
+    def _track_features(
+        self,
+        previous_gray: np.ndarray,
+        gray: np.ndarray,
+        previous_points: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        import cv2
+
+        if previous_points.size == 0:
+            return np.empty((0, 2), dtype=np.float32), np.empty((0, 2), dtype=np.float32)
+        current_points, status, _ = cv2.calcOpticalFlowPyrLK(
+            previous_gray,
+            gray,
+            previous_points,
+            None,
+            winSize=(int(self.config.lk_window_px), int(self.config.lk_window_px)),
+            maxLevel=int(self.config.lk_max_level),
+            criteria=(
+                cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT,
+                int(self.config.lk_max_iterations),
+                float(self.config.lk_epsilon),
+            ),
+        )
+        if current_points is None or status is None:
+            return np.empty((0, 2), dtype=np.float32), np.empty((0, 2), dtype=np.float32)
+        valid = status.reshape(-1).astype(bool)
+        return previous_points.reshape(-1, 2)[valid], current_points.reshape(-1, 2)[valid]
+
+    def _estimate_relative_camera_pose(
+        self,
+        previous_points: np.ndarray,
+        current_points: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, int] | None:
+        import cv2
+
+        assert self.camera is not None
+        essential, mask = cv2.findEssentialMat(
+            previous_points,
+            current_points,
+            self.camera.matrix,
+            method=cv2.RANSAC,
+            prob=float(self.config.ransac_prob),
+            threshold=float(self.config.ransac_threshold_px),
+        )
+        if essential is None:
+            return None
+        if essential.shape[0] > 3:
+            essential = essential[:3, :]
+        recovered_count, rotation_21, translation_21, pose_mask = cv2.recoverPose(
+            essential,
+            previous_points,
+            current_points,
+            self.camera.matrix,
+            mask=mask,
+        )
+        inlier_count = int(recovered_count)
+        if pose_mask is not None:
+            inlier_count = int(np.count_nonzero(pose_mask))
+        return rotation_21, translation_21, inlier_count
+
+    def _imu_translation_scale_m(self, start_sim_time_ns: int, end_sim_time_ns: int) -> float | None:
+        samples = [
+            sample
+            for sample in self._imu_samples
+            if int(start_sim_time_ns) <= int(sample.time_boot_us) * 1_000 <= int(end_sim_time_ns)
+        ]
+        if len(samples) < 2:
+            return None
+
+        velocity = np.zeros(3, dtype=float)
+        displacement = np.zeros(3, dtype=float)
+        previous = samples[0]
+        for sample in samples[1:]:
+            dt_s = (int(sample.time_boot_us) - int(previous.time_boot_us)) / 1_000_000.0
+            if dt_s <= 0.0:
+                previous = sample
+                continue
+            acceleration = np.asarray(sample.acceleration_body_frd_mps2, dtype=float)
+            displacement += velocity * dt_s + 0.5 * acceleration * dt_s * dt_s
+            velocity += acceleration * dt_s
+            previous = sample
+
+        displacement_norm = float(np.linalg.norm(displacement))
+        if not np.isfinite(displacement_norm) or displacement_norm <= 1e-4:
+            return None
+        return displacement_norm
+
+    def _replace_previous_frame(self, frame: "VisionFrame", gray: np.ndarray, *, status: str, **raw: Any) -> None:
+        keypoints = self._detect_features(gray)
+        previous_position = (0.0, 0.0, 0.0)
+        previous_attitude = quaternion_from_rotation_matrix(camera_optical_to_body_frd(self.camera_tilt_deg))
+        if self._previous_frame is not None:
+            previous_position = self._previous_frame.camera_position_local_ned_m
+            previous_attitude = self._previous_frame.camera_attitude_quaternion
+        self._previous_frame = _TrackedFrame(
+            frame_id=frame.frame_id,
+            sim_time_ns=frame.sim_time_ns,
+            gray=gray,
+            keypoints_px=keypoints,
+            camera_position_local_ned_m=previous_position,
+            camera_attitude_quaternion=previous_attitude,
+        )
+        self._set_status(status, frame_id=frame.frame_id, feature_count=len(keypoints), **raw)
+
+    def _confidence(self, *, tracked_count: int, inlier_count: int) -> float:
+        tracked_score = min(1.0, tracked_count / max(float(self.config.max_corners), 1.0))
+        inlier_score = min(1.0, inlier_count / max(float(self.config.min_inliers * 2), 1.0))
+        return max(float(self.config.min_confidence), min(1.0, 0.4 * tracked_score + 0.6 * inlier_score))
+
+    def _set_status(self, status: str, **raw: Any) -> None:
+        self._last_status = status
+        self._last_raw = dict(raw)
+
+
 def should_apply_vio_measurement(
     state: VehicleState,
     measurement: VioMeasurement,
@@ -235,7 +633,10 @@ def _clamped_alpha(value: float) -> float:
 
 
 __all__ = [
+    "CameraIntrinsics",
+    "OpenCvMonocularVioProvider",
     "VioCorrectionConfig",
+    "VioFrontendConfig",
     "VioMeasurement",
     "VioProvider",
     "blend_vio_state",

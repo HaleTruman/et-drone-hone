@@ -1,5 +1,6 @@
 """Canonical runtime schemas for the Flight stack."""
 
+import copy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -91,6 +92,7 @@ class MavlinkTelemetry:
     imu: MavlinkHighresImu | None = None
     system_status: str | None = None
     reset_count: int | None = None
+    sim_truth: dict[str, Any] | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
     def __init__(
@@ -102,6 +104,7 @@ class MavlinkTelemetry:
         imu: MavlinkHighresImu | None = None,
         system_status: str | None = None,
         reset_count: int | None = None,
+        sim_truth: dict[str, Any] | None = None,
         raw: dict[str, Any] | None = None,
     ):
         object.__setattr__(self, "sim_time_ns", int(sim_time_ns))
@@ -109,6 +112,7 @@ class MavlinkTelemetry:
         object.__setattr__(self, "imu", imu)
         object.__setattr__(self, "system_status", system_status)
         object.__setattr__(self, "reset_count", reset_count)
+        object.__setattr__(self, "sim_truth", copy.deepcopy(sim_truth) if sim_truth is not None else None)
         object.__setattr__(self, "raw", raw or {})
 
     @property

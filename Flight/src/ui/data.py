@@ -206,27 +206,106 @@ def nearby_frame_rows(run: RunBundle, frame_index: int, radius: int = 42) -> lis
 
 def telemetry_series(run: RunBundle, selected_cycle_index: int | None) -> dict[str, Any]:
     if not run.cycles:
-        return {"times_s": [], "selected": None, "position": [], "velocity": [], "rates": []}
+        return {"times_s": [], "selected": None, "position": [], "velocity": [], "rates": [], "groups": []}
     stride = max(1, len(run.cycles) // 1600)
     sampled = run.cycles[::stride]
     base_ns = next((_telemetry_sim_time_ns(cycle) for cycle in run.cycles if _telemetry_sim_time_ns(cycle) is not None), None)
     times: list[float] = []
     position: list[list[float | None]] = []
     velocity: list[list[float | None]] = []
+    acceleration: list[list[float | None]] = []
+    attitude: list[list[float | None]] = []
     rates: list[list[float | None]] = []
+    imu_acceleration: list[list[float | None]] = []
+    imu_gyro: list[list[float | None]] = []
+    sim_truth_position: list[list[float | None]] = []
+    sim_truth_velocity: list[list[float | None]] = []
+    sim_truth_attitude: list[list[float | None]] = []
+    sim_truth_rates: list[list[float | None]] = []
     for cycle in sampled:
         sim_ns = _telemetry_sim_time_ns(cycle)
         times.append((sim_ns - base_ns) / 1_000_000_000 if sim_ns is not None and base_ns is not None else float(len(times)))
         telemetry = cycle.get("telemetry") if isinstance(cycle.get("telemetry"), dict) else {}
+        imu = telemetry.get("imu") if isinstance(telemetry.get("imu"), dict) else {}
+        sim_truth = telemetry.get("sim_truth") if isinstance(telemetry.get("sim_truth"), dict) else {}
+        truth_odometry = sim_truth.get("odometry") if isinstance(sim_truth.get("odometry"), dict) else {}
+        truth_local_position = sim_truth.get("local_position_ned") if isinstance(sim_truth.get("local_position_ned"), dict) else {}
+        truth_attitude = sim_truth.get("attitude") if isinstance(sim_truth.get("attitude"), dict) else {}
         position.append(_vec3(telemetry.get("position_local_ned_m")))
         velocity.append(_vec3(telemetry.get("velocity_local_ned_mps")))
+        acceleration.append(_vec3(telemetry.get("acceleration_local_ned_mps2")))
+        attitude.append(_vec4(telemetry.get("attitude_quaternion") or telemetry.get("attitude")))
         rates.append(_vec3(telemetry.get("body_rates_frd_rps") or telemetry.get("body_rates_rps")))
+        imu_acceleration.append(_vec3(imu.get("acceleration_body_frd_mps2")))
+        imu_gyro.append(_vec3(imu.get("gyro_body_frd_rps")))
+        sim_truth_position.append(_vec3(truth_odometry.get("position_local_ned_m") or truth_local_position.get("position_local_ned_m")))
+        sim_truth_velocity.append(_vec3(truth_odometry.get("velocity_local_ned_mps") or truth_local_position.get("velocity_local_ned_mps")))
+        sim_truth_attitude.append(_vec4(truth_odometry.get("attitude_quaternion")))
+        sim_truth_rates.append(_vec3(truth_odometry.get("body_rates_frd_rps") or truth_attitude.get("body_rates_frd_rps")))
     selected = None
     if selected_cycle_index is not None and 0 <= selected_cycle_index < len(run.cycles):
         sim_ns = _telemetry_sim_time_ns(run.cycles[selected_cycle_index])
         if sim_ns is not None and base_ns is not None:
             selected = (sim_ns - base_ns) / 1_000_000_000
-    return {"times_s": times, "selected": selected, "position": position, "velocity": velocity, "rates": rates}
+    groups = [
+        _telemetry_group(
+            "position",
+            "Position Local NED",
+            "m",
+            ["x", "y", "z"],
+            [("estimate", position), ("sim truth", sim_truth_position)],
+        ),
+        _telemetry_group(
+            "velocity",
+            "Velocity Local NED",
+            "m/s",
+            ["vx", "vy", "vz"],
+            [("estimate", velocity), ("sim truth", sim_truth_velocity)],
+        ),
+        _telemetry_group(
+            "acceleration",
+            "Acceleration Local NED",
+            "m/s2",
+            ["ax", "ay", "az"],
+            [("estimate", acceleration)],
+        ),
+        _telemetry_group(
+            "body_rates",
+            "Body Rates FRD",
+            "rad/s",
+            ["p", "q", "r"],
+            [("estimate", rates), ("sim truth", sim_truth_rates)],
+        ),
+        _telemetry_group(
+            "attitude",
+            "Attitude Quaternion",
+            "",
+            ["w", "x", "y", "z"],
+            [("estimate", attitude), ("sim truth", sim_truth_attitude)],
+        ),
+        _telemetry_group(
+            "imu_acceleration",
+            "IMU Acceleration Body FRD",
+            "m/s2",
+            ["xacc", "yacc", "zacc"],
+            [("imu", imu_acceleration)],
+        ),
+        _telemetry_group(
+            "imu_gyro",
+            "IMU Gyro Body FRD",
+            "rad/s",
+            ["xgyro", "ygyro", "zgyro"],
+            [("imu", imu_gyro)],
+        ),
+    ]
+    return {
+        "times_s": times,
+        "selected": selected,
+        "position": position,
+        "velocity": velocity,
+        "rates": rates,
+        "groups": [group for group in groups if group is not None],
+    }
 
 
 def timeline_payload(run: RunBundle, selected_frame_index: int) -> dict[str, Any]:
@@ -639,8 +718,44 @@ def _frame_id_from_observation(record: dict[str, Any] | None) -> int | None:
 
 def _vec3(value: Any) -> list[float | None]:
     if isinstance(value, list) and len(value) >= 3:
-        return [float(value[0]), float(value[1]), float(value[2])]
+        return [_number_or_none(value[0]), _number_or_none(value[1]), _number_or_none(value[2])]
     return [None, None, None]
+
+
+def _vec4(value: Any) -> list[float | None]:
+    if isinstance(value, list) and len(value) >= 4:
+        return [_number_or_none(value[0]), _number_or_none(value[1]), _number_or_none(value[2]), _number_or_none(value[3])]
+    return [None, None, None, None]
+
+
+def _number_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _telemetry_group(
+    group_id: str,
+    title: str,
+    unit: str,
+    axes: list[str],
+    series: list[tuple[str, list[list[float | None]]]],
+) -> dict[str, Any] | None:
+    populated = [
+        {"label": label, "values": values}
+        for label, values in series
+        if any(any(value is not None for value in row) for row in values)
+    ]
+    if not populated:
+        return None
+    return {
+        "id": group_id,
+        "title": title,
+        "unit": unit,
+        "axes": axes,
+        "series": populated,
+    }
 
 
 def _signature(run_dir: Path) -> tuple[int, int, int, int, int, int, int]:
