@@ -18,10 +18,11 @@ from mapping.gates import GateMap
 from mapping.perception import VisionGateObservation, VisionObservation
 from sensing.telemetry import MavlinkClient
 from sensing.vision import VisionStreamReceiver
-from sensing.odometry import VehicleStateEstimator
+from sensing.odometry import OpenCvMonocularVioProvider, VehicleStateEstimator, VioCorrectionConfig, VioFrontendConfig
 from sensing.vision.service import VisionPerceptionConfig, VisionPerceptionService
 
 MAVLINK_ENDPOINT = "udpin:127.0.0.1:14550"
+SIM_RUNTIME = "VQ_1"
 VISION_HOST = "0.0.0.0"
 VISION_PORT = 5600
 INNER_LOOP_HZ = 100.0
@@ -51,6 +52,10 @@ ALLOW_FLIGHT = True
 CREATE_VIDEO = False
 RECORD_SCREEN = False
 ACTIVATE_PLANNED_PATH = False
+ENABLE_VIO = False
+VIO_CAMERA_HORIZONTAL_FOV_DEG = 90.0
+VIO_CAMERA_TILT_DEG = 20.0
+VIO_BODY_TO_CAMERA_TRANSLATION_BODY_FRD_M = (0.0, 0.0, 0.0)
 
 # Test
 TARGET_QUATERNION = quaternion_from_roll_pitch_yaw_deg(0.0, -0.8, 0)
@@ -65,6 +70,7 @@ def main() -> int:
     logger = Logger(
         {
             "scenario": "live_stream_minimal",
+            "sim_runtime": SIM_RUNTIME,
             "mavlink_endpoint": MAVLINK_ENDPOINT,
             "vision_host": VISION_HOST,
             "vision_port": VISION_PORT,
@@ -77,8 +83,19 @@ def main() -> int:
     print(f"Starting run at {run_dir}...")
 
     # clients and managers
-    vehicle_state_estimator = VehicleStateEstimator()
-    mavlink_client = MavlinkClient(endpoint=MAVLINK_ENDPOINT)
+    vehicle_state_estimator = VehicleStateEstimator(
+        vio_config=VioCorrectionConfig(
+            position_alpha=0.02,
+            velocity_alpha=0.05,
+            attitude_alpha=0.03,
+        )
+    )
+    vio_provider = OpenCvMonocularVioProvider(
+        frontend_config=VioFrontendConfig(horizontal_fov_deg=VIO_CAMERA_HORIZONTAL_FOV_DEG),
+        body_to_camera_translation_body_frd_m=VIO_BODY_TO_CAMERA_TRANSLATION_BODY_FRD_M,
+        camera_tilt_deg=VIO_CAMERA_TILT_DEG,
+    )
+    mavlink_client = MavlinkClient(endpoint=MAVLINK_ENDPOINT, sim_runtime=SIM_RUNTIME)
     vision_rx = VisionStreamReceiver(host=VISION_HOST, port=VISION_PORT, output_dir=run_dir / "vision_frames")
     vision_perception = VisionPerceptionService(VisionPerceptionConfig(backend="deterministic_0721", run_landmarker=False))
     vision_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vision")
@@ -152,7 +169,12 @@ def main() -> int:
     logger.log_event("mavlink_receiving", sim_time_ns=telemetry.sim_time_ns)
 
     vision_rx.start_listener()
-    logger.log_event("vision_started", receiver=vision_rx.snapshot(), perception=vision_perception.snapshot())
+    logger.log_event(
+        "vision_started",
+        receiver=vision_rx.snapshot(),
+        perception=vision_perception.snapshot(),
+        vio=vio_provider.snapshot(),
+    )
 
     frame = vision_rx.wait_until_receiving(timeout_s=STARTUP_DATA_TIMEOUT_S)
     logger.log_event("vision_receiving", sim_time_ns=frame.sim_time_ns)
@@ -184,6 +206,7 @@ def main() -> int:
         # clear pre-reset samples, then wait for fresh post-reset telemetry and vision
         mavlink_client.clear_cached_telemetry()
         vision_rx.clear_buffer()
+        vio_provider.reset()
         telemetry = mavlink_client.wait_until_receiving(timeout_s=STARTUP_DATA_TIMEOUT_S)
         logger.log_event("post_reset_mavlink_receiving", sim_time_ns=telemetry.sim_time_ns)
 
@@ -373,6 +396,7 @@ def main() -> int:
         
         carrot_target = None
         vision_pending = None
+        vio_measurement_pending = None
 
         time_began_flight = time.perf_counter()
 
@@ -384,7 +408,14 @@ def main() -> int:
             # inner loop: ingest telemetry and update state
             raw_telemetry = mavlink_client.get_telemetry()
             imu_data_t = mavlink_client.latest_imu
-            vehicle_state = vehicle_state_estimator.update(imu_data_t=imu_data_t)
+            if ENABLE_VIO and imu_data_t is not None:
+                vio_provider.add_imu_sample(imu_data_t)
+            vio_measurement_for_update = vio_measurement_pending
+            vehicle_state = vehicle_state_estimator.update(
+                imu_data_t=imu_data_t,
+                vio_measurement=vio_measurement_for_update,
+            )
+            vio_measurement_pending = None
             telemetry = raw_telemetry
             if raw_telemetry is not None and vehicle_state is not None:
                 telemetry = MavlinkTelemetry(
@@ -393,7 +424,16 @@ def main() -> int:
                     imu=raw_telemetry.imu,
                     system_status=raw_telemetry.system_status,
                     reset_count=raw_telemetry.reset_count,
-                    raw={**raw_telemetry.raw, "vehicle_state_source": "vehicle_state_estimator_highres_imu"},
+                    sim_truth=raw_telemetry.sim_truth,
+                    raw={
+                        **raw_telemetry.raw,
+                        "vehicle_state_source": "vehicle_state_estimator_highres_imu_vio"
+                        if vio_measurement_for_update is not None
+                        and vehicle_state_estimator.last_vio_status == "accepted"
+                        else "vehicle_state_estimator_highres_imu",
+                        "vio_status": vehicle_state_estimator.last_vio_status,
+                        "vio_residual": vehicle_state_estimator.last_vio_residual,
+                    },
                 )
 
             if telemetry is not None:
@@ -462,6 +502,8 @@ def main() -> int:
            
                 if latest_frame is not None:
                     vision_rx.record_frame_cycle(latest_frame.frame_id, inner_cycle)
+                    if ENABLE_VIO:
+                        vio_measurement_pending = vio_provider.process_frame(latest_frame)
                     frame_log = {
                         "frame_id": latest_frame.frame_id,
                         "inner_cycle": inner_cycle,
@@ -583,6 +625,7 @@ def main() -> int:
                     **vision_rx.snapshot(),
                     "perception": vision_perception.snapshot()
                 },
+                vio=vio_provider.snapshot(),
             )
      
 

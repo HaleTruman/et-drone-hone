@@ -330,7 +330,8 @@ button.active, .modeButton.active, .plotTab.active {
   background: #050607;
 }
 
-#map3dPanel {
+#map3dPanel,
+#telemetryPanel {
   grid-template-rows: auto minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
@@ -338,7 +339,8 @@ button.active, .modeButton.active, .plotTab.active {
   background: #050607;
 }
 
-#map3dToolbar {
+#map3dToolbar,
+#telemetryToolbar {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
@@ -346,7 +348,8 @@ button.active, .modeButton.active, .plotTab.active {
   padding-bottom: 9px;
 }
 
-#map3dMeta {
+#map3dMeta,
+#telemetryMeta {
   min-width: 0;
   overflow: hidden;
   color: var(--muted);
@@ -451,6 +454,13 @@ button.active, .modeButton.active, .plotTab.active {
 .legendSwatch.gate { background: var(--violet); }
 .legendSwatch.path { background: #ffffff; }
 .legendSwatch.plannedPath { background: #ff2f2f; }
+.legendSwatch.telemetryFourth { background: var(--yellow); }
+.legendSwatch.telemetryActual { background: #d8e3ea; }
+.legendSwatch.telemetryTruth {
+  height: 0;
+  border-top: 2px dashed var(--yellow);
+  background: transparent;
+}
 
 #map3dFooter {
   display: flex;
@@ -468,6 +478,177 @@ button.active, .modeButton.active, .plotTab.active {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+#telemetryPanel {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+#telemetryToolbar {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+#telemetryLegend,
+.telemetryToggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+#telemetryLegend {
+  gap: 8px 12px;
+  padding: 8px 9px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(8, 11, 14, .78);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+#telemetryLegend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.telemetryLegendLine {
+  width: 24px;
+  height: 0;
+  border-top: 2px solid var(--cyan);
+}
+
+.telemetryLegendLine.truth {
+  border-top-style: dashed;
+  border-color: var(--yellow);
+}
+
+.telemetryLegendLine.imu {
+  border-color: var(--green);
+}
+
+#telemetryPlotGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
+  scrollbar-gutter: stable;
+}
+
+#telemetryPlotGrid[hidden] { display: none; }
+
+.telemetryChart {
+  display: grid;
+  grid-template-rows: auto var(--telemetry-chart-height, 750px) 12px;
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--line);
+  background: var(--panel3);
+}
+
+.telemetryChartHead {
+  display: grid;
+  grid-template-columns: minmax(160px, auto) minmax(0, 1fr);
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 9px;
+  border-bottom: 1px solid var(--line);
+}
+
+.telemetryChartTitle {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.telemetryChartTitle strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.telemetryChartScale {
+  color: var(--muted);
+  font: 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.telemetryChartLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  justify-content: flex-end;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.telemetryChartLegend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.telemetryPlotSwatch {
+  width: 18px;
+  height: 0;
+  border-top: 2px solid var(--muted);
+}
+
+.telemetryPlotSwatch.truth {
+  border-top-style: dashed;
+}
+
+.telemetryChart canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: #050708;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.telemetryChart canvas.axisHover,
+.telemetryChart canvas.plotHover,
+.telemetryChart canvas.scaling,
+.telemetryChart canvas.selecting {
+  cursor: crosshair;
+}
+
+.telemetryResizeHandle {
+  display: grid;
+  place-items: center;
+  min-height: 12px;
+  border-top: 1px solid var(--line);
+  background: #0b1014;
+  cursor: row-resize;
+}
+
+.telemetryResizeHandle::before {
+  content: "";
+  width: 54px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line2);
+}
+
+#telemetryEmpty {
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  border: 1px solid rgba(255,255,255,.1);
+  color: var(--muted);
+  background: rgba(0,0,0,.35);
+  font-size: 13px;
+}
+
+#telemetryEmpty[hidden] { display: none; }
 
 #stageToolbar {
   display: grid;
@@ -703,7 +884,15 @@ button.active, .modeButton.active, .plotTab.active {
   font: 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
+.gateCard:hover,
+.gateCard.hovered {
+  border-color: rgba(255, 212, 90, .72);
+  background: #171914;
+}
+
 .gateCard strong { color: var(--cyan); }
+.gateCard:hover strong,
+.gateCard.hovered strong { color: var(--yellow); }
 .gateCard span { color: var(--muted); }
 
 #statusbar {
@@ -800,9 +989,10 @@ kbd {
   .viewPane { grid-column: 1; grid-row: 2; }
   #leftPanel, #rightPanel { border: 0; border-top: 1px solid var(--line); }
   #stagePanel { min-height: 62vh; }
-  #map3dPanel { min-height: 62vh; }
-  #map3dToolbar { grid-template-columns: 1fr; }
+  #map3dPanel, #telemetryPanel { min-height: 62vh; }
+  #map3dToolbar, #telemetryToolbar { grid-template-columns: 1fr; }
   .map3dToggles { justify-content: flex-start; }
+  #telemetryLegend { justify-content: flex-start; }
   .inspectorActions { justify-content: flex-start; flex-wrap: wrap; }
   .modalOverlay { padding: 10px; }
   .jsonModal { width: calc(100vw - 20px); height: calc(100vh - 20px); }

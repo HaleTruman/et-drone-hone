@@ -10,6 +10,12 @@ const VISION_CAMERA = {
   cy: 180
 };
 
+const TELEMETRY_DEFAULT_CHART_HEIGHT_PX = 750;
+const TELEMETRY_MIN_CHART_HEIGHT_PX = 240;
+const TELEMETRY_MAX_CHART_HEIGHT_PX = 1600;
+const TELEMETRY_MIN_SCALE = 0.1;
+const TELEMETRY_MAX_SCALE = 80;
+
 function verticalFovFromCamera(camera = VISION_CAMERA) {
   return 2 * Math.atan(camera.heightPx / (2 * camera.fy)) * 180 / Math.PI;
 }
@@ -25,6 +31,10 @@ const state = {
   inspectorMode: 'telemetry',
   plotMode: 'position',
   viewMode: 'frame',
+  hoveredGateIndex: null,
+  telemetryChartHeights: {},
+  telemetryScales: {},
+  telemetryXDomains: {},
   imageNatural: { width: 0, height: 0 },
   frameViewportState: { scrollLeft: 0, scrollTop: 0 },
   settings: {
@@ -40,7 +50,9 @@ const state = {
     show3dGateMap: true,
     show3dTestPath: true,
     show3dPlannedPath: true,
-    show3dTrail: true
+    show3dTrail: true,
+    showTelemetryActual: true,
+    showTelemetryTruth: true
   }
 };
 
@@ -122,6 +134,12 @@ const els = {
   show3dTestPath: document.getElementById('show3dTestPath'),
   show3dPlannedPath: document.getElementById('show3dPlannedPath'),
   show3dTrail: document.getElementById('show3dTrail'),
+  showTelemetryActual: document.getElementById('showTelemetryActual'),
+  showTelemetryTruth: document.getElementById('showTelemetryTruth'),
+  telemetryMeta: document.getElementById('telemetryMeta'),
+  telemetryLegend: document.getElementById('telemetryLegend'),
+  telemetryPlotGrid: document.getElementById('telemetryPlotGrid'),
+  telemetryEmpty: document.getElementById('telemetryEmpty'),
   controlsHelp: document.getElementById('controlsHelp'),
   controlsHelpClose: document.getElementById('controlsHelpClose')
 };
@@ -269,6 +287,7 @@ function renderFrame() {
   renderInspector();
   renderTimeline();
   renderTelemetryPlot();
+  renderTelemetryDashboard();
   renderOverlay();
   renderMap3d();
 }
@@ -306,19 +325,36 @@ function renderGateList() {
   const gates = state.frame?.observation_gates || [];
   els.gateCount.textContent = String(gates.length);
   els.overlayStatus.textContent = `${gates.length} gates`;
+  state.hoveredGateIndex = null;
   if (!gates.length) {
     els.gateList.innerHTML = '<div class="gateCard"><span>No observation matched this frame.</span></div>';
     return;
   }
-  els.gateList.innerHTML = gates.map((gate, index) => {
+  els.gateList.replaceChildren(...gates.map((gate, index) => {
     const position = formatVec(gate.position_xyz, 'm');
     const orientation = formatVec(gate.orientation_xyz, 'deg');
-    return `<div class="gateCard">
+    const card = document.createElement('div');
+    card.className = 'gateCard';
+    card.dataset.gateIndex = String(index);
+    card.innerHTML = `
       <strong>${escapeHtml(gate.id || `gate-${index + 1}`)}</strong>
       <span>pos ${escapeHtml(position)} | conf ${formatNumber(gate.position_confidence)}</span>
       <span>rpy ${escapeHtml(orientation)} | conf ${formatNumber(gate.orientation_confidence)}</span>
-    </div>`;
-  }).join('');
+    `;
+    card.addEventListener('mouseenter', () => {
+      state.hoveredGateIndex = index;
+      card.classList.add('hovered');
+      renderOverlay();
+      renderMap3d();
+    });
+    card.addEventListener('mouseleave', () => {
+      if (state.hoveredGateIndex === index) state.hoveredGateIndex = null;
+      card.classList.remove('hovered');
+      renderOverlay();
+      renderMap3d();
+    });
+    return card;
+  }));
 }
 
 function renderInspector() {
@@ -425,7 +461,509 @@ function renderTelemetryPlot() {
     ctx.lineTo(x, canvas.height - plot.bottom);
     ctx.stroke();
   }
+  const hover = nearestCompactTelemetryPoint(canvas, series, values, labels, colors, plot, minX, maxX, minY, maxY);
+  if (hover) drawTelemetryHoverTip(ctx, hover, canvas.width, canvas.height);
   els.plotStatus.textContent = state.plotMode;
+}
+
+function renderTelemetryDashboard() {
+  if (!els.telemetryPlotGrid) return;
+  const series = state.frame?.telemetry_series;
+  const groups = Array.isArray(series?.groups) ? series.groups : [];
+  const hasTelemetry = Boolean(series?.times_s?.length && groups.length);
+  els.telemetryEmpty.hidden = hasTelemetry;
+  els.telemetryPlotGrid.hidden = !hasTelemetry;
+  els.telemetryMeta.textContent = hasTelemetry
+    ? `${series.times_s.length} samples | selected t=${series.selected == null ? 'n/a' : `${series.selected.toFixed(3)}s`}`
+    : 'No telemetry samples loaded.';
+  renderTelemetryLegend(groups);
+  if (!hasTelemetry) {
+    els.telemetryPlotGrid.innerHTML = '';
+    return;
+  }
+  const existing = new Map([...els.telemetryPlotGrid.querySelectorAll('.telemetryChart')].map((item) => [item.dataset.groupId, item]));
+  const ordered = [];
+  for (const group of groups) {
+    let chart = existing.get(group.id);
+    if (!chart) {
+      chart = document.createElement('section');
+      chart.className = 'telemetryChart';
+      chart.dataset.groupId = group.id;
+      chart.innerHTML = `
+        <div class="telemetryChartHead">
+          <div class="telemetryChartTitle">
+            <strong></strong>
+            <span class="telemetryChartScale"></span>
+          </div>
+          <div class="telemetryChartLegend"></div>
+        </div>
+        <canvas width="760" height="250"></canvas>
+        <div class="telemetryResizeHandle" role="separator" aria-orientation="horizontal"></div>
+      `;
+      installTelemetryChartInteractions(chart);
+    }
+    const height = telemetryChartHeight(group.id);
+    chart.style.setProperty('--telemetry-chart-height', `${height}px`);
+    chart.querySelector('strong').textContent = group.title || group.id;
+    chart.querySelector('.telemetryChartScale').textContent = telemetryScaleLabel(group);
+    renderTelemetryChartLegend(chart.querySelector('.telemetryChartLegend'), group);
+    chart._telemetryGroup = group;
+    ordered.push(chart);
+  }
+  els.telemetryPlotGrid.replaceChildren(...ordered);
+  for (const chart of ordered) {
+    drawTelemetryGroup(chart.querySelector('canvas'), series, chart._telemetryGroup);
+  }
+}
+
+function installTelemetryChartInteractions(chart) {
+  if (chart.dataset.telemetryInteractions === 'installed') return;
+  chart.dataset.telemetryInteractions = 'installed';
+  const canvas = chart.querySelector('canvas');
+  const handle = chart.querySelector('.telemetryResizeHandle');
+
+  handle.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    const groupId = chart.dataset.groupId;
+    const startY = event.clientY;
+    const startHeight = telemetryChartHeight(groupId);
+    handle.setPointerCapture(event.pointerId);
+
+    const onMove = (moveEvent) => {
+      const nextHeight = clamp(
+        startHeight + moveEvent.clientY - startY,
+        TELEMETRY_MIN_CHART_HEIGHT_PX,
+        TELEMETRY_MAX_CHART_HEIGHT_PX
+      );
+      state.telemetryChartHeights[groupId] = Math.round(nextHeight);
+      chart.style.setProperty('--telemetry-chart-height', `${state.telemetryChartHeights[groupId]}px`);
+      if (state.frame?.telemetry_series && chart._telemetryGroup) {
+        drawTelemetryGroup(canvas, state.frame.telemetry_series, chart._telemetryGroup);
+      }
+    };
+
+    const onUp = (upEvent) => {
+      handle.releasePointerCapture?.(upEvent.pointerId);
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      handle.removeEventListener('pointercancel', onUp);
+    };
+
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointercancel', onUp);
+  });
+
+  canvas.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    const groupId = chart.dataset.groupId;
+    const series = state.frame?.telemetry_series;
+    const group = chart._telemetryGroup;
+    const metrics = telemetryPlotMetrics(canvas, series, group);
+    if (!metrics) return;
+    const pointer = canvasPointer(canvas, event);
+    const startScale = telemetryChartScale(groupId);
+    const dragMode = pointer.x < metrics.plot.left ? 'scale-y' : 'select-x';
+    const startPointer = pointer;
+    canvas.setPointerCapture(event.pointerId);
+    canvas.classList.add(dragMode === 'scale-y' ? 'scaling' : 'selecting');
+    canvas._telemetryDragMode = dragMode;
+    canvas._telemetryPointer = pointer;
+
+    const onMove = (moveEvent) => {
+      const nextPointer = canvasPointer(canvas, moveEvent);
+      canvas._telemetryPointer = nextPointer;
+      if (dragMode === 'scale-y') {
+        const deltaY = nextPointer.y - startPointer.y;
+        state.telemetryScales[groupId] = clamp(
+          startScale * Math.exp(-deltaY * 0.01),
+          TELEMETRY_MIN_SCALE,
+          TELEMETRY_MAX_SCALE
+        );
+        chart.querySelector('.telemetryChartScale').textContent = telemetryScaleLabel(chart._telemetryGroup);
+      } else {
+        canvas._telemetrySelection = {
+          startX: clamp(startPointer.x, metrics.plot.left, metrics.cssWidth - metrics.plot.right),
+          endX: clamp(nextPointer.x, metrics.plot.left, metrics.cssWidth - metrics.plot.right)
+        };
+      }
+      if (state.frame?.telemetry_series && chart._telemetryGroup) {
+        drawTelemetryGroup(canvas, state.frame.telemetry_series, chart._telemetryGroup);
+      }
+    };
+
+    const onUp = (upEvent) => {
+      const endPointer = canvasPointer(canvas, upEvent);
+      if (dragMode === 'select-x' && metrics) {
+        const startX = clamp(startPointer.x, metrics.plot.left, metrics.cssWidth - metrics.plot.right);
+        const endX = clamp(endPointer.x, metrics.plot.left, metrics.cssWidth - metrics.plot.right);
+        if (Math.abs(endX - startX) >= 8) {
+          const rangeStart = map(Math.min(startX, endX), metrics.plot.left, metrics.cssWidth - metrics.plot.right, metrics.minX, metrics.maxX);
+          const rangeEnd = map(Math.max(startX, endX), metrics.plot.left, metrics.cssWidth - metrics.plot.right, metrics.minX, metrics.maxX);
+          if (Number.isFinite(rangeStart) && Number.isFinite(rangeEnd) && rangeEnd > rangeStart) {
+            state.telemetryXDomains[groupId] = [rangeStart, rangeEnd];
+          }
+        }
+      }
+      canvas.releasePointerCapture?.(upEvent.pointerId);
+      canvas.classList.remove('scaling', 'selecting');
+      canvas._telemetryDragMode = null;
+      canvas._telemetrySelection = null;
+      canvas.removeEventListener('pointermove', onMove);
+      canvas.removeEventListener('pointerup', onUp);
+      canvas.removeEventListener('pointercancel', onUp);
+      if (state.frame?.telemetry_series && chart._telemetryGroup) {
+        chart.querySelector('.telemetryChartScale').textContent = telemetryScaleLabel(chart._telemetryGroup);
+        drawTelemetryGroup(canvas, state.frame.telemetry_series, chart._telemetryGroup);
+      }
+    };
+
+    canvas.addEventListener('pointermove', onMove);
+    canvas.addEventListener('pointerup', onUp);
+    canvas.addEventListener('pointercancel', onUp);
+  });
+
+  canvas.addEventListener('pointermove', (event) => {
+    if (canvas._telemetryDragMode || !state.frame?.telemetry_series || !chart._telemetryGroup) return;
+    canvas._telemetryPointer = canvasPointer(canvas, event);
+    const metrics = telemetryPlotMetrics(canvas, state.frame.telemetry_series, chart._telemetryGroup);
+    canvas.classList.toggle('axisHover', Boolean(metrics && canvas._telemetryPointer.x < metrics.plot.left));
+    canvas.classList.toggle('plotHover', Boolean(metrics && canvas._telemetryPointer.x >= metrics.plot.left));
+    drawTelemetryGroup(canvas, state.frame.telemetry_series, chart._telemetryGroup);
+  });
+
+  canvas.addEventListener('pointerleave', () => {
+    if (canvas._telemetryDragMode) return;
+    canvas._telemetryPointer = null;
+    canvas.classList.remove('axisHover', 'plotHover');
+    if (state.frame?.telemetry_series && chart._telemetryGroup) {
+      drawTelemetryGroup(canvas, state.frame.telemetry_series, chart._telemetryGroup);
+    }
+  });
+
+  canvas.addEventListener('dblclick', (event) => {
+    event.preventDefault();
+    delete state.telemetryScales[chart.dataset.groupId];
+    delete state.telemetryXDomains[chart.dataset.groupId];
+    canvas._telemetrySelection = null;
+    chart.querySelector('.telemetryChartScale').textContent = telemetryScaleLabel(chart._telemetryGroup);
+    if (state.frame?.telemetry_series && chart._telemetryGroup) {
+      drawTelemetryGroup(canvas, state.frame.telemetry_series, chart._telemetryGroup);
+    }
+  });
+}
+
+function telemetryChartHeight(groupId) {
+  const value = Number(state.telemetryChartHeights[groupId]);
+  return Number.isFinite(value)
+    ? clamp(value, TELEMETRY_MIN_CHART_HEIGHT_PX, TELEMETRY_MAX_CHART_HEIGHT_PX)
+    : TELEMETRY_DEFAULT_CHART_HEIGHT_PX;
+}
+
+function telemetryChartScale(groupId) {
+  const value = Number(state.telemetryScales[groupId]);
+  return Number.isFinite(value)
+    ? clamp(value, TELEMETRY_MIN_SCALE, TELEMETRY_MAX_SCALE)
+    : 1;
+}
+
+function telemetryXDomain(groupId, minX, maxX) {
+  const domain = state.telemetryXDomains[groupId];
+  if (!Array.isArray(domain) || domain.length < 2) return [minX, maxX];
+  const start = clamp(Number(domain[0]), minX, maxX);
+  const end = clamp(Number(domain[1]), minX, maxX);
+  return end > start ? [start, end] : [minX, maxX];
+}
+
+function telemetryScaleLabel(group) {
+  if (!group) return '';
+  const yScale = telemetryChartScale(group.id);
+  const xDomain = state.telemetryXDomains[group.id];
+  const xLabel = Array.isArray(xDomain) && xDomain.length >= 2
+    ? ` | x ${formatNumber(xDomain[0])}-${formatNumber(xDomain[1])}s`
+    : '';
+  return `${group.unit || ''}${yScale === 1 ? '' : ` | y x${yScale.toFixed(2)}`}${xLabel}`;
+}
+
+function renderTelemetryLegend(groups) {
+  if (!els.telemetryLegend) return;
+  const hasSimTruth = groups.some((group) => (group.series || []).some((item) => item.label === 'sim truth'));
+  const items = [
+    ['x / p / qw', 'north'],
+    ['y / q / qx', 'east'],
+    ['z / r / qy', 'down'],
+    ['qz', 'telemetryFourth'],
+    ['actual', 'telemetryActual']
+  ];
+  if (hasSimTruth) items.push(['truth', 'telemetryTruth']);
+  els.telemetryLegend.innerHTML = items.map(([label, cls]) => (
+    `<span><i class="legendSwatch ${cls}"></i>${escapeHtml(label)}</span>`
+  )).join('');
+}
+
+function visibleTelemetryGroupSeries(group) {
+  return (group.series || []).filter((item) => {
+    const isTruth = item.label === 'sim truth';
+    return isTruth ? state.settings.showTelemetryTruth : state.settings.showTelemetryActual;
+  });
+}
+
+function renderTelemetryChartLegend(container, group) {
+  if (!container) return;
+  const axes = Array.isArray(group.axes) ? group.axes : [];
+  const groupSeries = visibleTelemetryGroupSeries(group);
+  const items = [];
+  for (const item of groupSeries) {
+    const isTruth = item.label === 'sim truth';
+    axes.forEach((axisLabel, axis) => {
+      items.push({
+        label: `${axisLabel} ${isTruth ? 'truth' : item.label}`,
+        color: telemetryAxisColor(axis),
+        truth: isTruth
+      });
+    });
+  }
+  container.innerHTML = items.map((item) => (
+    `<span><i class="telemetryPlotSwatch${item.truth ? ' truth' : ''}" style="border-top-color:${item.color}"></i>${escapeHtml(item.label)}</span>`
+  )).join('');
+}
+
+function telemetryAxisColor(axis) {
+  return ['#5cf2ff', '#ff6048', '#71e989', '#ffd45a'][axis % 4];
+}
+
+function drawTelemetryGroup(canvas, series, group) {
+  const metrics = telemetryPlotMetrics(canvas, series, group, { resize: true });
+  if (!metrics) return;
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(metrics.dpr, 0, 0, metrics.dpr, 0, 0);
+  const { cssWidth, cssHeight, plot, minX, maxX, minY, maxY, groupSeries } = metrics;
+  ctx.clearRect(0, 0, cssWidth, cssHeight);
+  ctx.fillStyle = '#050708';
+  ctx.fillRect(0, 0, cssWidth, cssHeight);
+  ctx.strokeStyle = '#2a333b';
+  ctx.strokeRect(0.5, 0.5, cssWidth - 1, cssHeight - 1);
+  drawGrid(ctx, { width: cssWidth, height: cssHeight }, plot, minX, maxX, minY, maxY);
+  const sourceStyles = {
+    'estimate': { alpha: 1, dash: [] },
+    'sim truth': { alpha: 0.85, dash: [7, 4] },
+    'imu': { alpha: 0.95, dash: [] }
+  };
+  groupSeries.forEach((item) => {
+    const style = sourceStyles[item.label] || { alpha: 0.9, dash: [] };
+    (group.axes || []).forEach((axisLabel, axis) => {
+      ctx.save();
+      ctx.globalAlpha = style.alpha;
+      ctx.strokeStyle = telemetryAxisColor(axis);
+      ctx.lineWidth = item.label === 'sim truth' ? 1.2 : 1.6;
+      ctx.setLineDash(style.dash);
+      ctx.beginPath();
+      let started = false;
+      for (let i = 0; i < metrics.xs.length; i += 1) {
+        const yRaw = item.values?.[i]?.[axis];
+        const xRaw = metrics.xs[i];
+        if (!Number.isFinite(Number(xRaw)) || xRaw < minX || xRaw > maxX) {
+          started = false;
+          continue;
+        }
+        if (!Number.isFinite(Number(yRaw))) {
+          started = false;
+          continue;
+        }
+        const x = map(xRaw, minX, maxX, plot.left, cssWidth - plot.right);
+        const y = map(Number(yRaw), minY, maxY, cssHeight - plot.bottom, plot.top);
+        if (!started) {
+          ctx.moveTo(x, y);
+          started = true;
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.stroke();
+      ctx.restore();
+    });
+  });
+  if (series.selected != null) {
+    const x = map(series.selected, minX, maxX, plot.left, cssWidth - plot.right);
+    ctx.strokeStyle = '#ffffff';
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(x, plot.top);
+    ctx.lineTo(x, cssHeight - plot.bottom);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  const hover = nearestTelemetryGroupPoint(canvas, series, group, groupSeries, plot, minX, maxX, minY, maxY, cssWidth, cssHeight);
+  if (hover) drawTelemetryHoverTip(ctx, hover, cssWidth, cssHeight);
+  if (canvas._telemetrySelection) drawTelemetrySelection(ctx, canvas._telemetrySelection, plot, cssWidth, cssHeight);
+}
+
+function telemetryPlotMetrics(canvas, series, group, { resize = false } = {}) {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const width = Math.max(320, Math.floor((rect.width || 760) * dpr));
+  const height = Math.max(190, Math.floor((rect.height || 250) * dpr));
+  if (resize && (canvas.width !== width || canvas.height !== height)) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+  const cssWidth = width / dpr;
+  const cssHeight = height / dpr;
+  const xs = Array.isArray(series?.times_s) ? series.times_s : [];
+  const groupSeries = group ? visibleTelemetryGroupSeries(group) : [];
+  const fullMinX = xs[0];
+  const fullMaxX = xs[xs.length - 1] || fullMinX + 1;
+  if (!xs.length || !Number.isFinite(Number(fullMinX)) || !Number.isFinite(Number(fullMaxX))) return null;
+  const [minX, maxX] = telemetryXDomain(group.id, Number(fullMinX), Number(fullMaxX));
+  const values = [];
+  for (const item of groupSeries) {
+    for (let i = 0; i < xs.length; i += 1) {
+      const x = Number(xs[i]);
+      if (!Number.isFinite(x) || x < minX || x > maxX) continue;
+      for (const value of item.values?.[i] || []) {
+        if (Number.isFinite(Number(value))) values.push(Number(value));
+      }
+    }
+  }
+  if (!values.length) return null;
+  let minY = Math.min(...values);
+  let maxY = Math.max(...values);
+  if (Math.abs(maxY - minY) < 1e-9) {
+    minY -= 1;
+    maxY += 1;
+  }
+  const yScale = telemetryChartScale(group.id);
+  if (yScale !== 1) {
+    const centerY = (minY + maxY) / 2;
+    const halfRange = ((maxY - minY) / 2) / yScale;
+    minY = centerY - halfRange;
+    maxY = centerY + halfRange;
+  }
+  return {
+    dpr,
+    cssWidth,
+    cssHeight,
+    xs,
+    groupSeries,
+    plot: { left: 48, top: 14, right: 14, bottom: 28 },
+    minX,
+    maxX,
+    minY,
+    maxY
+  };
+}
+
+function canvasPointer(canvas, event) {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  return {
+    x: ((event.clientX - rect.left) / Math.max(rect.width, 1)) * (canvas.width / dpr),
+    y: ((event.clientY - rect.top) / Math.max(rect.height, 1)) * (canvas.height / dpr)
+  };
+}
+
+function canvasPixelPointer(canvas, event) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: ((event.clientX - rect.left) / Math.max(rect.width, 1)) * canvas.width,
+    y: ((event.clientY - rect.top) / Math.max(rect.height, 1)) * canvas.height
+  };
+}
+
+function nearestCompactTelemetryPoint(canvas, series, values, labels, colors, plot, minX, maxX, minY, maxY) {
+  const pointer = canvas._compactTelemetryPointer;
+  if (!pointer) return null;
+  let best = null;
+  const xs = series.times_s || [];
+  for (let axis = 0; axis < 3; axis += 1) {
+    for (let i = 0; i < xs.length; i += 1) {
+      const value = Number(values[i]?.[axis]);
+      if (!Number.isFinite(value)) continue;
+      const x = map(xs[i], minX, maxX, plot.left, canvas.width - plot.right);
+      const y = map(value, minY, maxY, canvas.height - plot.bottom, plot.top);
+      const distance = Math.hypot(pointer.x - x, pointer.y - y);
+      if (!best || distance < best.distance) {
+        best = { x, y, distance, color: colors[axis], title: labels[axis], time: xs[i], value };
+      }
+    }
+  }
+  return best && best.distance <= 16 ? best : null;
+}
+
+function nearestTelemetryGroupPoint(canvas, series, group, groupSeries, plot, minX, maxX, minY, maxY, cssWidth, cssHeight) {
+  const pointer = canvas._telemetryPointer;
+  if (!pointer) return null;
+  const xs = series.times_s || [];
+  let best = null;
+  groupSeries.forEach((item) => {
+    (group.axes || []).forEach((axisLabel, axis) => {
+      for (let i = 0; i < xs.length; i += 1) {
+        const xRaw = Number(xs[i]);
+        if (!Number.isFinite(xRaw) || xRaw < minX || xRaw > maxX) continue;
+        const value = Number(item.values?.[i]?.[axis]);
+        if (!Number.isFinite(value)) continue;
+        const x = map(xRaw, minX, maxX, plot.left, cssWidth - plot.right);
+        const y = map(value, minY, maxY, cssHeight - plot.bottom, plot.top);
+        const distance = Math.hypot(pointer.x - x, pointer.y - y);
+        if (!best || distance < best.distance) {
+          best = {
+            x,
+            y,
+            distance,
+            color: telemetryAxisColor(axis),
+            title: `${axisLabel} ${item.label}`,
+            time: xs[i],
+            value
+          };
+        }
+      }
+    });
+  });
+  return best && best.distance <= 16 ? best : null;
+}
+
+function drawTelemetrySelection(ctx, selection, plot, width, height) {
+  const startX = clamp(selection.startX, plot.left, width - plot.right);
+  const endX = clamp(selection.endX, plot.left, width - plot.right);
+  const left = Math.min(startX, endX);
+  const selectionWidth = Math.abs(endX - startX);
+  ctx.save();
+  ctx.fillStyle = 'rgba(92, 242, 255, .16)';
+  ctx.strokeStyle = 'rgba(92, 242, 255, .7)';
+  ctx.fillRect(left, plot.top, selectionWidth, height - plot.top - plot.bottom);
+  ctx.strokeRect(left + 0.5, plot.top + 0.5, Math.max(0, selectionWidth - 1), height - plot.top - plot.bottom - 1);
+  ctx.restore();
+}
+
+function drawTelemetryHoverTip(ctx, hover, width, height) {
+  const lines = [
+    hover.title,
+    `t=${formatNumber(hover.time)}s`,
+    `v=${formatNumber(hover.value)}`
+  ];
+  ctx.save();
+  ctx.setLineDash([]);
+  ctx.strokeStyle = hover.color;
+  ctx.fillStyle = hover.color;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(hover.x, hover.y, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(hover.x, hover.y, 7, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+  const tooltipWidth = Math.max(...lines.map((line) => ctx.measureText(line).width)) + 18;
+  const tooltipHeight = 52;
+  const x = Math.min(Math.max(hover.x + 12, 6), width - tooltipWidth - 6);
+  const y = Math.min(Math.max(hover.y - tooltipHeight - 10, 6), height - tooltipHeight - 6);
+  ctx.fillStyle = 'rgba(8, 11, 14, .94)';
+  ctx.strokeStyle = 'rgba(255, 255, 255, .18)';
+  ctx.fillRect(x, y, tooltipWidth, tooltipHeight);
+  ctx.strokeRect(x + 0.5, y + 0.5, tooltipWidth - 1, tooltipHeight - 1);
+  ctx.fillStyle = hover.color;
+  lines.forEach((line, index) => ctx.fillText(line, x + 9, y + 16 + index * 14));
+  ctx.restore();
 }
 
 function drawGrid(ctx, canvas, plot, minX, maxX, minY, maxY) {
@@ -618,7 +1156,7 @@ function addObservationGates(scene, dronePosition, droneQuaternion, points) {
       vertical = normalizeVec3(scaleVec3(column3(gateToLocal, 2), -1));
     }
     points.push(center);
-    addGateFrame(center, normal, gateColor(index), gate.id || `obs-${index + 1}`, 2.7, 1.5, horizontal, vertical);
+    addGateFrame(center, normal, gateColor(index), gate.id || `obs-${index + 1}`, 2.7, 1.5, horizontal, vertical, { highlighted: state.hoveredGateIndex === index });
   });
 }
 
@@ -659,7 +1197,7 @@ function addDrone(position, quaternion) {
   map3d.root.add(body);
 }
 
-function addGateFrame(center, normal, colorCss, label, outerSize, innerSize, horizontalAxis = null, verticalAxis = null) {
+function addGateFrame(center, normal, colorCss, label, outerSize, innerSize, horizontalAxis = null, verticalAxis = null, options = {}) {
   const color = new THREE.Color(colorCss);
   const normalVec = normalizeVec3(normal);
   let vertical = verticalAxis ? normalizeVec3(verticalAxis) : rejectVector([0, 0, -1], normalVec);
@@ -668,13 +1206,17 @@ function addGateFrame(center, normal, colorCss, label, outerSize, innerSize, hor
   const horizontal = horizontalAxis ? normalizeVec3(horizontalAxis) : normalizeVec3(crossVec3(vertical, normalVec));
   const outer = squarePoints(center, horizontal, vertical, outerSize);
   const inner = squarePoints(center, horizontal, vertical, innerSize);
+  if (options.highlighted) {
+    const highlight = squarePoints(center, horizontal, vertical, outerSize * 1.08);
+    map3d.root.add(makeLine(highlight, 0xffd45a, 0.92));
+  }
   map3d.root.add(makeLine(outer, color.getHex(), 1));
   map3d.root.add(makeLine(inner, color.getHex(), 0.72));
   map3d.root.add(makeArrowFromLocal(center, normalVec, 1.4, 0xffd45a, 'dir'));
   map3d.root.add(makeArrowFromLocal(center, vertical, 0.9, 0x71e989, 'up'));
   const marker = new THREE.Mesh(
-    new THREE.SphereGeometry(0.08, 12, 8),
-    new THREE.MeshBasicMaterial({ color })
+    new THREE.SphereGeometry(options.highlighted ? 0.13 : 0.08, 12, 8),
+    new THREE.MeshBasicMaterial({ color: options.highlighted ? 0xffd45a : color })
   );
   marker.position.copy(nedToThree(center));
   map3d.root.add(marker);
@@ -949,9 +1491,10 @@ function drawGateObservation(ctx, canvas, gate, index, alpha) {
   const halfY = (intrinsics.fy * state.settings.gateSizeM / Math.max(z, 0.001)) / 2;
   ctx.save();
   ctx.globalAlpha = alpha;
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = color;
-  ctx.fillStyle = color;
+  const highlighted = state.hoveredGateIndex === index;
+  ctx.lineWidth = highlighted ? 4 : 2;
+  ctx.strokeStyle = highlighted ? '#ffd45a' : color;
+  ctx.fillStyle = highlighted ? '#ffd45a' : color;
   if (state.settings.showGateBoxes) {
     ctx.strokeRect(projected.x - halfX, projected.y - halfY, halfX * 2, halfY * 2);
     ctx.setLineDash([6, 4]);
@@ -968,6 +1511,12 @@ function drawGateObservation(ctx, canvas, gate, index, alpha) {
     ctx.moveTo(projected.x, projected.y - 14);
     ctx.lineTo(projected.x, projected.y + 14);
     ctx.stroke();
+  }
+  if (highlighted && state.settings.showGateBoxes) {
+    ctx.globalAlpha = Math.min(1, alpha + 0.08);
+    ctx.setLineDash([10, 6]);
+    ctx.strokeRect(projected.x - halfX * 1.08, projected.y - halfY * 1.08, halfX * 2.16, halfY * 2.16);
+    ctx.setLineDash([]);
   }
   if (state.settings.showLabels) {
     const text = `${gate.id || `gate-${index + 1}`} ${formatNumber(gate.position_confidence)} z=${formatNumber(z)}m`;
@@ -1024,6 +1573,10 @@ function formatNumber(value) {
 function map(value, inMin, inMax, outMin, outMax) {
   if (Math.abs(inMax - inMin) < 1e-12) return (outMin + outMax) / 2;
   return outMin + ((value - inMin) / (inMax - inMin)) * (outMax - outMin);
+}
+
+function clamp(value, minimum, maximum) {
+  return Math.max(minimum, Math.min(maximum, Number(value)));
 }
 
 function escapeHtml(value) {
@@ -1135,6 +1688,15 @@ function installEvents() {
       renderMap3d();
     });
   }
+  for (const [element, key] of [
+    [els.showTelemetryActual, 'showTelemetryActual'],
+    [els.showTelemetryTruth, 'showTelemetryTruth']
+  ]) {
+    element.addEventListener('change', () => {
+      state.settings[key] = Boolean(element.checked);
+      renderTelemetryDashboard();
+    });
+  }
   els.frameStage.addEventListener('wheel', (event) => {
     if (!event.ctrlKey && !event.metaKey) return;
     event.preventDefault();
@@ -1148,10 +1710,19 @@ function installEvents() {
     loadFrame(Math.round(ratio * maxFrame));
   });
   els.overlayCanvas.addEventListener('mousemove', updateHoverReadout);
+  els.telemetryPlot.addEventListener('pointermove', (event) => {
+    els.telemetryPlot._compactTelemetryPointer = canvasPixelPointer(els.telemetryPlot, event);
+    renderTelemetryPlot();
+  });
+  els.telemetryPlot.addEventListener('pointerleave', () => {
+    els.telemetryPlot._compactTelemetryPointer = null;
+    renderTelemetryPlot();
+  });
   window.addEventListener('resize', () => {
     syncCanvasToImage();
     renderOverlay();
     resizeMap3d();
+    renderTelemetryDashboard();
   });
   window.addEventListener('keydown', (event) => {
     if (event.target && ['INPUT', 'SELECT', 'TEXTAREA'].includes(event.target.tagName)) return;
@@ -1249,7 +1820,7 @@ function restoreFrameViewport() {
 
 function setViewMode(mode) {
   if (state.viewMode === 'frame') saveFrameViewport();
-  state.viewMode = mode === 'map3d' ? 'map3d' : 'frame';
+  state.viewMode = ['frame', 'map3d', 'telemetry'].includes(mode) ? mode : 'frame';
   els.viewTabs.forEach((button) => {
     button.classList.toggle('active', button.dataset.view === state.viewMode);
   });
@@ -1260,6 +1831,8 @@ function setViewMode(mode) {
     initMap3d();
     resizeMap3d();
     renderMap3d();
+  } else if (state.viewMode === 'telemetry') {
+    renderTelemetryDashboard();
   } else {
     syncCanvasToImage();
     restoreFrameViewport();
@@ -1303,4 +1876,3 @@ loadRuns().catch((error) => {
   console.error(error);
   setStatus(`startup failed: ${error.message}`);
 });
-

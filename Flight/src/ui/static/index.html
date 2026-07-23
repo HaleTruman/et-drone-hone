@@ -32,6 +32,7 @@
     <nav id="viewTabs" class="segmented" aria-label="Viewer page">
       <button class="viewTab active" data-view="frame" type="button">Frame</button>
       <button class="viewTab" data-view="map3d" type="button">3D Map</button>
+      <button class="viewTab" data-view="telemetry" type="button">Telemetry</button>
     </nav>
 
     <main id="workspace">
@@ -114,6 +115,19 @@
         </div>
       </section>
 
+      <section id="telemetryPanel" class="viewPane" data-view-pane="telemetry">
+        <div id="telemetryToolbar">
+          <div id="telemetryMeta">No telemetry loaded.</div>
+          <div class="telemetryToggles" aria-label="Telemetry visibility">
+            <label class="compactToggle"><span>Actual</span><input id="showTelemetryActual" type="checkbox" checked></label>
+            <label class="compactToggle"><span>Truth</span><input id="showTelemetryTruth" type="checkbox" checked></label>
+          </div>
+          <div id="telemetryLegend" aria-label="Telemetry plot legend"></div>
+        </div>
+        <div id="telemetryPlotGrid" aria-label="Telemetry plots"></div>
+        <div id="telemetryEmpty">Select a run with telemetry samples.</div>
+      </section>
+
       <aside id="rightPanel" class="panel">
         <section class="panelBlock">
           <div class="sectionHead"><strong>Frame-Aligned Telemetry</strong><span id="telemetryStatus">-</span></div>
@@ -194,4 +208,3 @@
   <script type="module" src="/static/app.js"></script>
 </body>
 </html>
-

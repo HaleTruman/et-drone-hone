@@ -126,6 +126,7 @@ class VehicleStateEstimator:
             imu=telemetry.imu,
             system_status=telemetry.system_status,
             reset_count=telemetry.reset_count,
+            sim_truth=telemetry.sim_truth,
             raw={
                 **telemetry.raw,
                 "vehicle_state_source": "vehicle_state_estimator_highres_imu_vio"
