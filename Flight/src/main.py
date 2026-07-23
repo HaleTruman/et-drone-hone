@@ -168,17 +168,32 @@ def main() -> int:
         ## RESET SIM AFTER START
         mavlink_client.send_sim_reset_command()
         time_sim_reset_s = time.perf_counter()
-        logger.log_event("simulator_reset_sent", sim_time_ns=telemetry.sim_time_ns)
+        logger.log_event(
+            "simulator_reset_sent",
+            pre_reset_sim_time_ns=telemetry.sim_time_ns if telemetry else None,
+        )
 
-        ## TODO add a short post-reset delay to let the sim settle before beginning any recording
+        if POST_RESET_DELAY_S > 0.0:
+            time.sleep(POST_RESET_DELAY_S)
+            logger.log_event(
+                "simulator_settle_complete",
+                elapsed_s=time.perf_counter() - time_sim_reset_s,
+                settle_delay_s=POST_RESET_DELAY_S,
+            )
+
+        # clear pre-reset samples, then wait for fresh post-reset telemetry and vision
+        mavlink_client.clear_cached_telemetry()
+        vision_rx.clear_buffer()
+        telemetry = mavlink_client.wait_until_receiving(timeout_s=STARTUP_DATA_TIMEOUT_S)
+        logger.log_event("post_reset_mavlink_receiving", sim_time_ns=telemetry.sim_time_ns)
+
+        frame = vision_rx.wait_until_receiving(timeout_s=STARTUP_DATA_TIMEOUT_S)
+        logger.log_event("post_reset_vision_receiving", sim_time_ns=frame.sim_time_ns)
 
         # start screen recording
         if RECORD_SCREEN:
             logger.log_event("obs_recording_started", sim_time_ns=telemetry.sim_time_ns) if obs_recorder.start_recording() else logger.log_event("obs_recording_failed", sim_time_ns=telemetry.sim_time_ns)
 
-        # clear states, buffers, and maps
-        vision_rx.clear_buffer()
-        
         stationary_imu_samples: list[MavlinkHighresImu] = []
         last_calibration_imu_time_boot_us: int | None = None
 
@@ -334,10 +349,6 @@ def main() -> int:
             )
             raise Exception("System mode failed to enter ARMED.")
         
-        # DELAY BUFFER POST RESET
-        if POST_RESET_DELAY_S > 0.0:
-            time.sleep(POST_RESET_DELAY_S)
-
         ## MAIN LOOP
         control_started_s = time.perf_counter()
         next_inner_cycle_s = control_started_s

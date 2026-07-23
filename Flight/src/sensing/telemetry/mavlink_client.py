@@ -149,6 +149,13 @@ class MavlinkClient:
             0,
         )
 
+    def clear_cached_telemetry(self) -> None:
+        self.latest_imu = None
+        self.latest_actuator_output = None
+        self.race_status = None
+        self.collisions.clear()
+        self._latest_message_monotonic_s = None
+
     def send_position_target(self, target: dict[str, Any]) -> None:
         self.latest_position_target = target
         if not self.is_live:
