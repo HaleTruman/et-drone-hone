@@ -1,1 +1,1 @@
-"""Deterministic vision runtime stages."""
+"""Projection production runtime package."""

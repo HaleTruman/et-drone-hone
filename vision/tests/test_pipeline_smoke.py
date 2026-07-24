@@ -1,107 +1,95 @@
-from __future__ import annotations
-
-import json
-import sys
-import tempfile
-import unittest
 from pathlib import Path
+import json
 
+import numpy as np
 from PIL import Image
+import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-
-from vision.pipeline import PipelineOptions, run_pipeline
-
-
-def _make_jpeg(directory: Path, name: str = "frame_000000.jpg") -> Path:
-    directory.mkdir(parents=True, exist_ok=True)
-    image_path = directory / name
-    Image.new("RGB", (64, 36), (4, 5, 6)).save(image_path, quality=95)
-    return image_path
+from vision.src.config import DEFAULT_PRESET_PATH, ProjectionConfig
+from vision.src.pipeline import PipelineOptions, run_pipeline
 
 
-def _read_json(path: Path) -> dict:
-    with path.open("r", encoding="utf-8") as handle:
-        payload = json.load(handle)
-    assert isinstance(payload, dict)
-    return payload
+def _nonzero_rgb(config: ProjectionConfig) -> tuple[int, int, int]:
+    with np.load(config.lut_path, allow_pickle=False) as payload:
+        key = int(np.flatnonzero(payload["lut"])[0])
+    return ((key >> 16) & 0xFF, (key >> 8) & 0xFF, key & 0xFF)
 
 
-class PipelineSmokeTests(unittest.TestCase):
-    def test_pipeline_production_writes_only_final_outputs(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            tmp_path = Path(temp_dir)
-            source_dir = tmp_path / "frames"
-            _make_jpeg(source_dir)
-            output_root = tmp_path / "runs"
-            manifest = run_pipeline(
-                PipelineOptions(
-                    mode="batch",
-                    source_dir=source_dir,
-                    output_root=output_root,
-                    run_id="run-prod",
-                    debug=False,
-                    max_frames=1,
-                )
-            )
-            run_root = Path(manifest.run_root)
-            self.assertTrue((run_root / "run_manifest.json").exists())
-            self.assertTrue((run_root / "status.json").exists())
-            self.assertTrue((run_root / "latest.json").exists())
-            frame_files = sorted((run_root / "frames").glob("frame_*.json"))
-            self.assertEqual(len(frame_files), 1)
-            self.assertFalse((run_root / "debug").exists())
-            self.assertEqual(_read_json(run_root / "run_manifest.json")["frame_count"], 1)
-            self.assertEqual(_read_json(run_root / "status.json")["status"], "complete")
-
-    def test_pipeline_debug_writes_one_json_per_stage_and_no_stage_aggregates(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            tmp_path = Path(temp_dir)
-            source_dir = tmp_path / "frames"
-            _make_jpeg(source_dir)
-            output_root = tmp_path / "runs"
-            manifest = run_pipeline(
-                PipelineOptions(
-                    mode="batch",
-                    source_dir=source_dir,
-                    output_root=output_root,
-                    run_id="run-debug",
-                    debug=True,
-                    max_frames=1,
-                )
-            )
-            run_root = Path(manifest.run_root)
-            stages = [
-                "color_masking",
-                "bboxing",
-                "clipping",
-                "contouring",
-                "pose_estimation",
-                "instance_tracking",
-            ]
-            for stage in stages:
-                frame_json = sorted((run_root / "debug" / stage / "frames").glob("frame_*.json"))
-                self.assertEqual(len(frame_json), 1, stage)
-                aggregate_json = list((run_root / "debug" / stage).glob("*.json"))
-                self.assertEqual(aggregate_json, [])
-            self.assertFalse((run_root / "debug" / "flight_bridge").exists())
-            mask_files = list((run_root / "debug" / "color_masking" / "masks").glob("frame_*.bin"))
-            self.assertEqual(len(mask_files), 1)
-            manifest_payload = _read_json(run_root / "run_manifest.json")
-            self.assertEqual(manifest_payload["frame_count"], 1)
-            self.assertIn("vision_results", manifest_payload["stages"])
-            self.assertNotIn("flight_bridge", manifest_payload["stages"])
-            self.assertTrue(
-                manifest_payload["frame_index"][0]["debug_artifacts"]["bboxing"].endswith(
-                    "debug/bboxing/frames/frame_000000.json"
-                )
-            )
-            frame_files = sorted((run_root / "frames").glob("frame_*.json"))
-            self.assertEqual(len(frame_files), 1)
-            frame_payload = _read_json(frame_files[0])
-            self.assertIn("vision_results", frame_payload)
-            self.assertNotIn("flight_bridge", frame_payload)
+def _write_frame(path: Path) -> None:
+    config = ProjectionConfig.from_path(DEFAULT_PRESET_PATH)
+    rgb = _nonzero_rgb(config)
+    image = Image.new("RGB", (640, 360), (0, 0, 0))
+    for x in range(260, 380):
+        for y in range(120, 240):
+            if not (300 <= x < 340 and 160 <= y < 200):
+                image.putpixel((x, y), rgb)
+    image.save(path, quality=100, subsampling=0)
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_pipeline_one_frame_production_and_debug(tmp_path: Path):
+    source_dir = tmp_path / "frames"
+    source_dir.mkdir()
+    _write_frame(source_dir / "frame_000000.jpg")
+
+    prod_manifest = run_pipeline(
+        PipelineOptions(
+            mode="batch",
+            source_dir=source_dir,
+            output_root=tmp_path / "prod",
+            run_id="prod-run",
+            debug=False,
+            preset_path=DEFAULT_PRESET_PATH,
+        )
+    )
+    prod_root = Path(prod_manifest.run_root)
+    assert (prod_root / "frames" / "frame_000000.json").exists()
+    assert (prod_root / "latest.json").exists()
+    assert (prod_root / "status.json").exists()
+    assert (prod_root / "run_manifest.json").exists()
+    assert not (prod_root / "debug").exists()
+
+    debug_manifest = run_pipeline(
+        PipelineOptions(
+            mode="batch",
+            source_dir=source_dir,
+            output_root=tmp_path / "debug",
+            run_id="debug-run",
+            debug=True,
+            preset_path=DEFAULT_PRESET_PATH,
+        )
+    )
+    debug_root = Path(debug_manifest.run_root)
+    assert len(list((debug_root / "debug" / "color_mask" / "frames").glob("*.json"))) == 1
+    for profile_id in ["A", "B", "C"]:
+        for stage in ["bbox", "inner_voids", "geometry_fits", "solve_pnp", "tracking"]:
+            files = list((debug_root / "debug" / "profiles" / profile_id / stage / "frames").glob("*.json"))
+            assert len(files) == 1
+    assert (debug_root / "debug" / "color_mask" / "masks" / "frame_000000.bin").exists()
+    assert (debug_root / "debug" / "global_mapping" / "run.json").exists()
+    frame_payload = json.loads((debug_root / "frames" / "frame_000000.json").read_text(encoding="utf-8"))
+    assert frame_payload["stage_counts"]["profiles"] == 3
+    assert "vision_results" in frame_payload
+
+
+def test_pipeline_runs_available_repo_frame(tmp_path: Path):
+    source_dir = Path(__file__).resolve().parents[2] / "run-20260720T023225Z" / "vision_frames"
+    if not source_dir.exists():
+        source_dir = Path(__file__).resolve().parents[1] / "assets"
+    if not any(source_dir.glob("*.jpg")):
+        pytest.skip("repo frame resource is not available")
+    manifest = run_pipeline(
+        PipelineOptions(
+            mode="batch",
+            source_dir=source_dir,
+            output_root=tmp_path / "real-frame",
+            run_id="real-frame-run",
+            debug=False,
+            max_frames=1,
+            preset_path=DEFAULT_PRESET_PATH,
+        )
+    )
+    root = Path(manifest.run_root)
+    payload = json.loads((root / "frames" / "frame_000000.json").read_text(encoding="utf-8"))
+    assert manifest.frame_count == 1
+    assert payload["stage_counts"]["profiles"] == 3
+    assert isinstance(payload["vision_results"]["gates"], list)
