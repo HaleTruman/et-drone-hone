@@ -8,7 +8,7 @@ import numpy as np
 
 from core.coordinates import quat_wxyz, vec3
 from core.coordinates import euler_from_quaternion, normalize_quaternion, rotate_vector
-from core.schemas import MavlinkHighresImu, MavlinkTelemetry, QuatWxyz, Vec3, VehicleState
+from core.schemas import MavlinkHighresImu, MavlinkTelemetry, QuatWxyz, Vec3, VehicleState, VioCorrection
 from sensing.odometry.vio import VioCorrectionConfig, VioMeasurement, blend_vio_state, should_apply_vio_measurement
 
 
@@ -101,7 +101,7 @@ class VehicleStateEstimator:
     def update(
         self,
         imu_data_t: MavlinkHighresImu | None,
-        vio_measurement: VioMeasurement | None = None,
+        vio_measurement: VioMeasurement | VioCorrection | None = None,
     ) -> VehicleState | None:
         vehicle_state = self.state if imu_data_t is None and self.initialized else None
         if imu_data_t is not None:
@@ -109,13 +109,15 @@ class VehicleStateEstimator:
         if vehicle_state is None:
             return None
         if vio_measurement is not None:
+            if isinstance(vio_measurement, VioCorrection):
+                vio_measurement = vio_measurement.measurement
             vehicle_state = self.update_from_vio(vio_measurement)
         return vehicle_state
 
     def update_telemetry(
         self,
         telemetry: MavlinkTelemetry | None,
-        vio_measurement: VioMeasurement | None = None,
+        vio_measurement: VioMeasurement | VioCorrection | None = None,
     ) -> MavlinkTelemetry | None:
         vehicle_state = self.update(None if telemetry is None else telemetry.imu, vio_measurement=vio_measurement)
         if telemetry is None or vehicle_state is None:

@@ -96,11 +96,10 @@ class CarrotController:
             yaw = euler_from_quaternion(vehicle_state.attitude_quaternion)[2]
 
         dt_s = self._sample_dt_s(vehicle_state.sim_time_ns)
-        vertical_feedback = (
+        legacy_vertical_feedback = (
             self.vertical_velocity_gain * float(velocity[2])
             + self.vertical_acceleration_gain * float(acceleration[2])
         )
-        self._adapt_hover_thrust_estimate(vertical_feedback, dt_s)
         tilt_compensation = thrust_acceleration_norm / self.gravity_mps2
 
         quaternion = np.asarray(
@@ -109,7 +108,7 @@ class CarrotController:
         )
         thrust = float(
             np.clip(
-                self.hover_thrust_estimate * tilt_compensation + vertical_feedback,
+                self.hover_thrust_estimate * tilt_compensation,
                 self.min_thrust,
                 self.max_thrust,
             )
@@ -131,10 +130,13 @@ class CarrotController:
             float(value) for value in desired_acceleration
         ]
         payload["thrust_control"] = {
+            "mode": "path_acceleration_only",
             "hover_thrust_estimate": float(self.hover_thrust_estimate),
-            "vertical_feedback": float(vertical_feedback),
+            "vertical_feedback": 0.0,
+            "legacy_vertical_feedback_observer": float(legacy_vertical_feedback),
             "tilt_compensation": float(tilt_compensation),
             "dt_s": float(dt_s),
+            "ned_z_note": "vertical path velocity error is already included in desired_acceleration; absolute vertical damping is not applied",
         }
         self.last_payload = payload
         return payload

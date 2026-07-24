@@ -153,6 +153,35 @@ class PathManager:
             source="observed_next_two",
         )
 
+    def plan_for_mode(
+        self,
+        *,
+        gate_map_gates: Iterable[GateRecord],
+        position_local_ned_m: Vec3,
+        observed_gates: Iterable[GateRecord] = (),
+        test_path: PlannedPath | None = None,
+        activate: bool = True,
+    ) -> PlannedPath:
+        if self.planning_mode == "test_path":
+            if test_path is None:
+                raise ValueError("test_path planning mode requires a test_path.")
+            if activate:
+                self.set_waypoints(test_path.points_relative_ned_m)
+            return test_path
+
+        if self.planning_mode == "observed_next_two":
+            return self.plan_from_observed_gates(
+                observed_gates,
+                position_local_ned_m=position_local_ned_m,
+                activate=activate,
+            )
+
+        return self.plan_from_gate_map(
+            gate_map_gates,
+            position_local_ned_m=position_local_ned_m,
+            activate=activate,
+        )
+
     def _planning_gates(
         self,
         gates: Iterable[GateRecord],
@@ -608,6 +637,6 @@ def _vec3(value: Vec3, name: str) -> np.ndarray:
 
 def _normalize_planning_mode(value: str) -> str:
     mode = str(value).strip().lower()
-    if mode in {"gate_map", "observed_next_two"}:
+    if mode in {"gate_map", "observed_next_two", "test_path"}:
         return mode
-    raise ValueError("planning_mode must be 'gate_map' or 'observed_next_two'")
+    raise ValueError("planning_mode must be 'gate_map', 'observed_next_two', or 'test_path'")

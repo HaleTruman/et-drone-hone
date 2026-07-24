@@ -43,6 +43,7 @@ class VisionStreamReceiver:
         self._thread: threading.Thread | None = None
         self._socket: socket.socket | None = None
         self._running = threading.Event()
+        self._saving_frames = threading.Event()
         self._lock = threading.Lock()
         self._manifest_lock = threading.Lock()
         self._saved_frame_paths: dict[int, str] = {}
@@ -53,8 +54,6 @@ class VisionStreamReceiver:
     def start_listener(self) -> None:
         if self._thread is not None:
             return
-        if self.output_dir is not None:
-            self.output_dir.mkdir(parents=True, exist_ok=True)
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._socket.settimeout(0.25)
         self._socket.bind((self.host, self.port))
@@ -62,6 +61,12 @@ class VisionStreamReceiver:
         self._thread = threading.Thread(target=self._vision_loop, name="vision-rx", daemon=True)
         self._thread.start()
         print("Vision receiver started...")
+
+    def begin_saving_frames(self) -> None:
+        if self.output_dir is None:
+            return
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self._saving_frames.set()
 
     def process_packet(self, packet: bytes) -> VisionFrame | None:
         if len(packet) < VISION_HEADER_SIZE:
@@ -136,6 +141,7 @@ class VisionStreamReceiver:
             "host": self.host,
             "port": self.port,
             "output_dir": str(self.output_dir) if self.output_dir else None,
+            "saving_frames": self._saving_frames.is_set(),
             "saved_frame_count": self.saved_frame_count,
             "buffered_frame_count": len(self._frames),
             "partial_frame_count": len(self._partial_frames),
@@ -183,7 +189,7 @@ class VisionStreamReceiver:
             self.process_packet(packet)
 
     def _save_frame(self, frame_id: int, sim_time_ns: int, jpeg_bytes: bytes) -> str | None:
-        if self.output_dir is None:
+        if self.output_dir is None or not self._saving_frames.is_set():
             return None
         if frame_id in self._saved_frame_paths:
             return self._saved_frame_paths[frame_id]

@@ -255,6 +255,31 @@ class GateMap:
             source="vision",
         )
 
+    def observed_gate_records_for_planning(
+        self,
+        observation: VisionObservation,
+        *,
+        vehicle_state: VehicleState,
+        min_position_confidence: float = 0.0,
+        require_forward_camera_position: bool = True,
+    ) -> list[GateRecord]:
+        records: list[GateRecord] = []
+        min_confidence = self._clamp_confidence(min_position_confidence)
+        for sequence, observed_gate in enumerate(observation.gates):
+            if float(observed_gate.position_confidence) < min_confidence:
+                continue
+            if require_forward_camera_position and float(observed_gate.position_camera_m[2]) <= 0.0:
+                continue
+            records.append(
+                self.gate_record_from_observation(
+                    observed_gate,
+                    vehicle_state=vehicle_state,
+                    sequence=sequence,
+                    observed_cycle=observation.frame_id,
+                )
+            )
+        return records
+
     def camera_to_body_frd(self, vector_camera: tuple[float, float, float]) -> tuple[float, float, float]:
         """Rotate camera optical [right, up, forward] into body FRD [forward, right, down]."""
 

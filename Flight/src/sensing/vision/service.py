@@ -13,6 +13,7 @@ from sensing.vision.cnn.regressor.cnn_ingress import RawLogitsFrame
 from sensing.vision.cnn.regressor.logit_inference import DEFAULT_REGRESSOR_CHECKPOINT, LogitRegressor
 from sensing.vision.cnn.regressor.regression_output import build_surveyer_payload
 from sensing.vision.deterministic import DeterministicVisionConfig
+from sensing.vision.deterministic_v2 import DeterministicVisionV2Config
 from sensing.vision.vision_stream import VisionFrame
 
 
@@ -30,6 +31,7 @@ class VisionPerceptionConfig:
     min_component_area: int = 3
     max_candidates: int = 32
     deterministic: DeterministicVisionConfig = DeterministicVisionConfig()
+    deterministic_v2: DeterministicVisionV2Config = DeterministicVisionV2Config()
 
 
 class VisionPerceptionService:
@@ -45,8 +47,11 @@ class VisionPerceptionService:
         deterministic: Any | None = None,
     ) -> None:
         self.config = config or VisionPerceptionConfig()
-        if self.config.backend not in {"cnn_regressor", "deterministic_0721"}:
-            raise ValueError("VisionPerceptionConfig.backend must be 'cnn_regressor' or 'deterministic_0721'.")
+        if self.config.backend not in {"cnn_regressor", "deterministic_0721", "deterministic_0721_v2"}:
+            raise ValueError(
+                "VisionPerceptionConfig.backend must be 'cnn_regressor', 'deterministic_0721', "
+                "or 'deterministic_0721_v2'."
+            )
         self._cnn = cnn
         self._regressor = regressor
         self._landmarker = landmarker
@@ -55,6 +60,8 @@ class VisionPerceptionService:
     def process_frame(self, *, frame_id: int, sim_time_ns: int, jpeg_bytes: bytes) -> VisionObservation:
         if self.config.backend == "deterministic_0721":
             return self.deterministic.process_frame(frame_id=frame_id, sim_time_ns=sim_time_ns, jpeg_bytes=jpeg_bytes)
+        if self.config.backend == "deterministic_0721_v2":
+            return self.deterministic_v2.process_frame(frame_id=frame_id, sim_time_ns=sim_time_ns, jpeg_bytes=jpeg_bytes)
         return self._process_cnn_frame(frame_id=frame_id, sim_time_ns=sim_time_ns, jpeg_bytes=jpeg_bytes)
 
     def _process_cnn_frame(self, *, frame_id: int, sim_time_ns: int, jpeg_bytes: bytes) -> VisionObservation:
@@ -142,6 +149,14 @@ class VisionPerceptionService:
             from sensing.vision.deterministic.service import DeterministicVisionBackend
 
             self._deterministic = DeterministicVisionBackend(self.config.deterministic)
+        return self._deterministic
+
+    @property
+    def deterministic_v2(self) -> Any:
+        if self._deterministic is None:
+            from sensing.vision.deterministic_v2.service import DeterministicVisionV2Backend
+
+            self._deterministic = DeterministicVisionV2Backend(self.config.deterministic_v2)
         return self._deterministic
 
     def shutdown(self) -> None:

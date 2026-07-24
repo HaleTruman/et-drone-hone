@@ -74,6 +74,7 @@ def main() -> int:
         mavlink_client.start_heartbeat()
 
     vision_rx.start_listener()
+    vision_rx.begin_saving_frames()
     print(f"Vision receiver listening: {args.vision_host}:{args.vision_port}", flush=True)
     print("Press Ctrl+C to stop.\n", flush=True)
 

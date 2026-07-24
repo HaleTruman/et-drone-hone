@@ -20,6 +20,39 @@ class VehicleState:
 
 
 @dataclass(frozen=True)
+class VioCorrection:
+    """Deferred visual-odometry correction queued for the next state update.
+
+    - measurement: VIO pose/velocity measurement to blend into the estimator.
+    - frame_id: Vision frame that produced the measurement.
+    - frame_sim_time_ns: Simulator timestamp from that vision frame.
+    - queued_inner_cycle: Inner-loop cycle when the correction was queued.
+    - queued_outer_cycle: Outer-loop cycle when the correction was queued.
+    - source: Human-readable source label for logging/debugging.
+    """
+
+    measurement: Any
+    frame_id: int
+    frame_sim_time_ns: int
+    queued_inner_cycle: int
+    queued_outer_cycle: int
+    source: str = "vio"
+
+    def to_log_dict(self) -> dict[str, Any]:
+        measurement_payload = self.measurement
+        if hasattr(self.measurement, "to_log_dict"):
+            measurement_payload = self.measurement.to_log_dict()
+        return {
+            "frame_id": int(self.frame_id),
+            "frame_sim_time_ns": int(self.frame_sim_time_ns),
+            "queued_inner_cycle": int(self.queued_inner_cycle),
+            "queued_outer_cycle": int(self.queued_outer_cycle),
+            "source": self.source,
+            "measurement": measurement_payload,
+        }
+
+
+@dataclass(frozen=True)
 class RuntimeStatus:
     connected: bool
     running: bool
@@ -73,6 +106,20 @@ class MavlinkTimesync:
 
 @dataclass(frozen=True)
 class MavlinkHighresImu:
+    """
+    HIGHRES_IMU sample normalized for the flight stack.
+    - time_boot_us: Sensor sample time in microseconds since vehicle boot.
+    - acceleration_body_frd_mps2: Specific force in the body FRD frame, in m/s^2.
+    - gyro_body_frd_rps: Angular velocity in the body FRD frame, in rad/s.
+    - magnetic_field_gauss: Magnetic field vector in gauss, when provided.
+    - absolute_pressure_hpa: Static absolute pressure in hectopascals, when provided.
+    - differential_pressure_hpa: Differential pressure in hectopascals, when provided.
+    - pressure_altitude_m: Barometric pressure altitude in meters, when provided.
+    - temperature_c: IMU temperature in degrees Celsius, when provided.
+    - fields_updated: MAVLink bitmask indicating which HIGHRES_IMU fields changed.
+    - id: Sensor instance identifier, when provided by the sender.
+    """
+
     time_boot_us: int
     acceleration_body_frd_mps2: Vec3
     gyro_body_frd_rps: Vec3
@@ -130,6 +177,57 @@ class MavlinkTelemetry:
         if self.imu is None:
             return None
         return self.imu.gyro_body_frd_rps
+
+
+@dataclass(frozen=True)
+class StateRecord:
+    """Log-focused snapshot of raw telemetry plus the fused estimator update."""
+
+    sim_time_ns: int
+    vehicle_state: VehicleState | None = None
+    imu: MavlinkHighresImu | None = None
+    system_status: str | None = None
+    reset_count: int | None = None
+    sim_truth: dict[str, Any] | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
+    state_update: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_telemetry(
+        cls,
+        telemetry: MavlinkTelemetry,
+        *,
+        vehicle_state: VehicleState | None,
+        vio_correction: VioCorrection | None = None,
+        vio_status: str | None = None,
+        vio_residual: dict[str, object] | None = None,
+    ) -> "StateRecord":
+        sim_time_ns = vehicle_state.sim_time_ns if vehicle_state is not None else telemetry.sim_time_ns
+        vehicle_state_source = (
+            "vehicle_state_estimator_highres_imu_vio"
+            if vio_correction is not None and vio_status == "accepted"
+            else "vehicle_state_estimator_highres_imu"
+        )
+        vio_correction_payload = None if vio_correction is None else vio_correction.to_log_dict()
+        state_update = {
+            "vehicle_state_source": vehicle_state_source,
+            "vio_status": vio_status,
+            "vio_residual": vio_residual,
+            "vio_correction": vio_correction_payload,
+        }
+        return cls(
+            sim_time_ns=int(sim_time_ns),
+            vehicle_state=vehicle_state,
+            imu=telemetry.imu,
+            system_status=telemetry.system_status,
+            reset_count=telemetry.reset_count,
+            sim_truth=copy.deepcopy(telemetry.sim_truth),
+            raw={
+                **telemetry.raw,
+                **state_update,
+            },
+            state_update=state_update,
+        )
 
 
 @dataclass(frozen=True)
