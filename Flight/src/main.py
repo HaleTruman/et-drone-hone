@@ -425,10 +425,13 @@ def main() -> int:
             # ======================== OUTER LOOP START ========================
             if outer_loop_ran:
                 next_outer_cycle_s += outer_period_s
-                outer_cycle += 1
 
+                # if the vision job has completed
                 if vision_pending is not None and vision_pending[0].done():
                     vision_future, frame_log, frame_outer_cycle, frame_vehicle_state = vision_pending
+                    vision_pending = None
+
+                    # do things with the observation 
                     try:
                         observation = vision_future.result()
                         frame_log["gate_count"] = len(observation.gates)
@@ -473,9 +476,49 @@ def main() -> int:
                     except Exception as error:  # noqa: BLE001
                         logger.log_vision_frame(frame_log, cycle=frame_outer_cycle, status="failed", error=str(error))
                         print(f"vision frame={frame_log['frame_id']} failed: {error}", flush=True)
-                    vision_pending = None
 
-                latest_frame = None if vision_pending is not None else vision_rx.get_next_frame()
+
+                # Pull latest frame
+                latest_frame = vision_rx.get_latest_frame()
+
+                if latest_frame is not None:
+                    vision_rx.record_frame_cycle(latest_frame.frame_id, inner_cycle)
+
+                # do VIO
+                if ENABLE_VIO and latest_frame is not None:
+                    vio_measurement = vio_provider.process_frame(latest_frame)
+                    pending_vio_correction = (
+                        None
+                        if vio_measurement is None
+                        else VioCorrection(
+                            measurement=vio_measurement,
+                            frame_id=latest_frame.frame_id,
+                            frame_sim_time_ns=latest_frame.sim_time_ns,
+                            queued_inner_cycle=inner_cycle,
+                            queued_outer_cycle=outer_cycle,
+                            source="opencv_monocular_vio",
+                        )
+                    )
+
+                # if there is no job queued and we have a frame
+                if vision_pending is None and latest_frame is not None:
+                    frame_log = {
+                        "frame_id": latest_frame.frame_id,
+                        "inner_cycle": inner_cycle,
+                        "outer_cycle": outer_cycle,
+                        "sim_time_ns": latest_frame.sim_time_ns,
+                        "saved_path": latest_frame.saved_path,
+                        "jpeg_size": len(latest_frame.jpeg_bytes),
+                    }
+
+                    # queue vision job
+                    vision_pending = (
+                        vision_executor.submit(vision_perception.process_vision_frame, latest_frame),
+                        frame_log,
+                        outer_cycle,
+                        vehicle_state,
+                    )
+
 
                 # compute attitude target for path-following test
                 carrot = path_manager.carrot_point(
@@ -487,38 +530,11 @@ def main() -> int:
                     carrot=carrot,
                 )
            
-                if latest_frame is not None:
-                    vision_rx.record_frame_cycle(latest_frame.frame_id, inner_cycle)
-                    if ENABLE_VIO:
-                        vio_measurement = vio_provider.process_frame(latest_frame)
-                        pending_vio_correction = (
-                            None
-                            if vio_measurement is None
-                            else VioCorrection(
-                                measurement=vio_measurement,
-                                frame_id=latest_frame.frame_id,
-                                frame_sim_time_ns=latest_frame.sim_time_ns,
-                                queued_inner_cycle=inner_cycle,
-                                queued_outer_cycle=outer_cycle,
-                                source="opencv_monocular_vio",
-                            )
-                        )
-                    frame_log = {
-                        "frame_id": latest_frame.frame_id,
-                        "inner_cycle": inner_cycle,
-                        "outer_cycle": outer_cycle,
-                        "sim_time_ns": latest_frame.sim_time_ns,
-                        "saved_path": latest_frame.saved_path,
-                        "jpeg_size": len(latest_frame.jpeg_bytes),
-                    }
 
-                    # analyze frame with CNN, update gate maps, and generate path
-                    vision_pending = (
-                        vision_executor.submit(vision_perception.process_vision_frame, latest_frame),
-                        frame_log,
-                        outer_cycle,
-                        vehicle_state,
-                    )
+
+                outer_cycle += 1
+            # ======================== OUTER LOOP END ========================
+
 
             control_target = {}
 
@@ -641,6 +657,8 @@ def main() -> int:
             # sleep until next inner cycle begins
             if sleep_s > 0.0:
                 time.sleep(sleep_s)
+
+             # ======================== INNER LOOP END ======================== 
 
 # =================================================================== END MAIN LOOP ===================================================================
 

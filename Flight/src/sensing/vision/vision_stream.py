@@ -114,6 +114,15 @@ class VisionStreamReceiver:
 
         return cv2.imdecode(np.frombuffer(jpeg_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
 
+    def get_latest_frame(self) -> VisionFrame | None:
+        with self._lock:
+            if not self._frames:
+                return None
+            latest = self._frames.pop()
+
+            self._frames.clear()
+            return latest
+
     def get_next_frame(self) -> VisionFrame | None:
         with self._lock:
             return self._frames.popleft() if self._frames else None
