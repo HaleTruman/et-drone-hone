@@ -5,7 +5,7 @@ GATE_FOLDER = "Gates"
 CAMERA_LABEL = "AI_Hangar_Wide_Long_Interior_Camera"
 TARGET_LEVEL_PATH = "/Game/Hangar1"
 LEVEL_PATH = TARGET_LEVEL_PATH
-RENDER_TARGET_PATH = "/Game/NewTextureRenderTarget640x360"
+RENDER_TARGET_PATH = "/Game/RenderTarget1920x1080"
 
 # Output folders and files.
 DATASETS_DIRECTORY_NAME = "datasets"

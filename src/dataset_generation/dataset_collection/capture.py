@@ -180,7 +180,7 @@ def prepare_render_target_for_png(render_target):
         return
 
     png_format = None
-    for enum_name in ("RTF_RGBA8", "RTF_RGBA8_SRGB"):
+    for enum_name in ("RTF_RGBA8_SRGB", "RTF_RGBA8"):
         candidate = getattr(texture_render_target_format, enum_name, None)
         if candidate is not None:
             png_format = candidate
