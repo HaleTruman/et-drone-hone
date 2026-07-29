@@ -29,6 +29,7 @@ DEPTH_PRIOR_POWER = math.log(_OTHER_M / ANCHOR_M) / math.log(_OTHER_PX / ANCHOR_
 PRIOR_WEIGHT = 0.05  # low relative to real-ray weights; not precision-tuned (v0)
 SPREAD_SATURATION_DEG = 15.0  # angle at which parallax spread maxes out the confidence factor; not tuned (v0)
 RAY_COUNT_TIERS = ((8, 0.9), (3, 0.6), (1, 0.3))  # (min ray_count, base confidence), highest first; not tuned (v0)
+MIN_VOID_OBSERVATION_CONFIDENCE = 0.6
 
 
 def _pitch_matrix(deg: float) -> np.ndarray:
@@ -181,6 +182,8 @@ class Final3DPoseEstimator:
         }
         touched = set()
         for estimate in analysis.final_void_estimates:
+            if not math.isfinite(estimate.confidence) or estimate.confidence < MIN_VOID_OBSERVATION_CONFIDENCE:
+                continue
             entry = self._pool.setdefault(estimate.track_id, _new_entry())
             touched.add(estimate.track_id)
             if entry["passed"]:
