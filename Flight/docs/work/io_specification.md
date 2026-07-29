@@ -51,7 +51,7 @@ Required method:
 
 ```python
 class DeterministicVision:
-    def process_frame(self, frame: VisionFrame) -> VisionObservation:
+    def process_frame(self, frame: VisionFrame, vehicle_state: VehicleState | None) -> VisionObservation:
         ...
 ```
 
@@ -88,6 +88,23 @@ class VisionFrame:
     jpeg_bytes: bytes
     image: Any | None = None
     saved_path: str | None = None
+```
+
+Additionally, the ``DeterministicVision().process_frame(frame, vehicle_state)`` method takes a VehicleState optionally, which will be imported from the existing schema. The definition of a VehicleState dataclass will be defined at ``Flight\src\core\schemas.py``
+
+```python
+Vec3 = tuple[float, float, float]
+QuatWxyz = tuple[float, float, float, float]
+
+
+@dataclass(frozen=True)
+class VehicleState:
+    sim_time_ns: int
+    position_local_ned_m: Vec3
+    velocity_local_ned_mps: Vec3
+    attitude_quaternion: QuatWxyz
+    body_rates_frd_rps: Vec3
+    acceleration_local_ned_mps2: Vec3
 ```
 
 Fields:
@@ -153,63 +170,6 @@ class VisionObservation:
 | `orientation_confidence` | `float` | No | Confidence score for the orientation estimate. Defaults to `0.0`. |
 | `trace` | `dict[str, Any]` | No | Per-gate JSON-compatible diagnostics. |
 
-## Coordinate Frame
-
-Gate positions must use camera optical coordinates:
-
-```text
-[right_m, up_m, forward_m]
-```
-
-`orientation_camera`, when present, must also be expressed in the camera frame.
-The current Flight convention describes this as roll-right, pitch-up, yaw-right
-in degrees from the camera frame to the gate frame.
-
-The vision library must not silently return body-frame, world-frame, NED, ENU,
-or pixel coordinates in `position_camera_m`. Pixel-space detections may be
-included only as additional fields or trace metadata.
-
-## Controller Payload Compatibility
-
-The output dataclasses should support conversion to and from the existing
-controller payload shape:
-
-```json
-{
-  "run": {
-    "output_dir": "memory",
-    "cycle": 1,
-    "frame_id": "frame_000001",
-    "sim_time_ns": 123456789
-  },
-  "gates": [
-    {
-      "id": "gate-current-000",
-      "position_xyz": [0.0, 0.0, 10.0],
-      "position_confidence": 0.8,
-      "orientation_xyz": [0.0, 0.0, 1.0],
-      "orientation_confidence": 0.7
-    }
-  ],
-  "obstacles": []
-}
-```
-
-Required mappings:
-
-| Dataclass field | Payload field |
-| --- | --- |
-| `VisionObservation.frame_id` | `run.cycle` |
-| `VisionObservation.sim_time_ns` | `run.sim_time_ns` |
-| `VisionGateObservation.gate_id` | `gates[].id` |
-| `VisionGateObservation.position_camera_m` | `gates[].position_xyz` |
-| `VisionGateObservation.position_confidence` | `gates[].position_confidence` |
-| `VisionGateObservation.orientation_camera` | `gates[].orientation_xyz` |
-| `VisionGateObservation.orientation_confidence` | `gates[].orientation_confidence` |
-
-The controller payload should always include `obstacles`, even if the list is
-empty, to preserve compatibility with current Flight consumers.
-
 ## Optional Rich Result Fields
 
 `VisionObservation` must include the minimum fields above, but the library may
@@ -266,6 +226,19 @@ The library should validate or normalize the public output before returning it:
 from vision_library import DeterministicVision
 from vision_library.schema import VisionFrame
 
+Vec3 = tuple[float, float, float]
+QuatWxyz = tuple[float, float, float, float]
+
+@dataclass(frozen=True)
+class VehicleState:
+    sim_time_ns: int
+    position_local_ned_m: Vec3
+    velocity_local_ned_mps: Vec3
+    attitude_quaternion: QuatWxyz
+    body_rates_frd_rps: Vec3
+    acceleration_local_ned_mps2: Vec3
+
+
 vision = DeterministicVision()
 
 frame = VisionFrame(
@@ -274,7 +247,16 @@ frame = VisionFrame(
     jpeg_bytes=jpeg_bytes,
 )
 
-observation = vision.process_frame(frame)
+vehicle_state = VehicleState(
+  sim_time_ns: 123456789,
+  position_local_ned_m = Vec3([0, 0, 0]),
+  velocity_local_ned_mps = Vec3([0, 0, 0]),
+  attitude_quaternion = QuatWxyz([1, 0, 0, 0]),
+  body_rates_frd_rps Vec3([0, 0, 0]),
+  acceleration_local_ned_mps2 Vec3([0, 0, 0])
+)
+
+observation = vision.process_frame(frame, vehicle_state)
 
 assert observation.frame_id == 1
 assert observation.sim_time_ns == 123456789
