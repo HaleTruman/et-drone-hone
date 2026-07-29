@@ -404,23 +404,22 @@ def _vision_observation_figure(
     for trace, trace_points in _camera_frustum_traces(max_forward_m):
         points.extend(trace_points)
         fig.add_trace(trace)
+    sync = nearest_cycle_for_frame(run, frame)
+    telemetry = sync.cycle.get("telemetry") if isinstance(sync.cycle, dict) and isinstance(sync.cycle.get("telemetry"), dict) else {}
+    attitude = _point4_value(telemetry.get("attitude_quaternion") or telemetry.get("attitude"))
     for gate in gates:
-        position = gate.get("position_xyz")
-        if not _point3(position):
+        camera_position = _observation_camera_position(gate, attitude)
+        if camera_position is None:
             continue
-        plot_position = _camera_observation_point_to_plot(position)
+        plot_position = _camera_observation_point_to_plot(camera_position)
         points.append(plot_position)
         gate_id = str(gate.get("id", "gate"))
         confidence = _round(gate.get("position_confidence"))
-        orientation = gate.get("orientation_xyz")
-        normal = (
-            _camera_observation_vector_to_plot(orientation)
-            if _point3(orientation)
-            else _normalize_vector(np.asarray(plot_position, dtype=float))
-        )
-        for trace, trace_points in _camera_gate_wireframe_traces(plot_position, normal, gate_id):
-            points.extend(trace_points)
-            fig.add_trace(trace)
+        normal = _observation_camera_normal(gate, attitude)
+        if normal is not None:
+            for trace, trace_points in _camera_gate_wireframe_traces(plot_position, normal, gate_id):
+                points.extend(trace_points)
+                fig.add_trace(trace)
         fig.add_trace(
             go.Scatter3d(
                 x=[plot_position[0]],
@@ -482,7 +481,53 @@ def _vision_observation_figure(
 def _vision_observation_gates(observation_record: dict[str, Any] | None) -> list[dict[str, Any]]:
     observation = observation_record.get("observation") if isinstance(observation_record, dict) else None
     gates = observation.get("gates") if isinstance(observation, dict) else None
-    return [gate for gate in gates if isinstance(gate, dict)] if isinstance(gates, list) else []
+    return [_vision_observation_gate_payload(gate) for gate in gates if isinstance(gate, dict)] if isinstance(gates, list) else []
+
+
+def _vision_observation_gate_payload(gate: dict[str, Any]) -> dict[str, Any]:
+    position_confidence = gate.get("position_confidence") if gate.get("position_confidence") is not None else gate.get("confidence")
+    return {
+        **gate,
+        "id": gate.get("id") or gate.get("gate_id"),
+        "position_xyz": _point3_value(gate.get("position_xyz")),
+        "position_relative_ned_m": _point3_value(
+            gate.get("position_relative_ned_m")
+            or gate.get("position_local_ned")
+            or gate.get("position_local_ned_m")
+        ),
+        "position_confidence": position_confidence,
+        "orientation_xyz": _point3_value(gate.get("orientation_xyz")),
+        "orientation_local_ned_quat": _point4_value(
+            gate.get("orientation_local_ned_quat")
+            or gate.get("orientation_quat")
+            or gate.get("quaternion")
+            or gate.get("quat")
+        ),
+    }
+
+
+def _observation_camera_position(gate: dict[str, Any], attitude_quat: list[float] | None) -> list[float] | None:
+    position_xyz = _point3_value(gate.get("position_xyz"))
+    if position_xyz:
+        return position_xyz
+    relative_ned = _point3_value(gate.get("position_relative_ned_m"))
+    if relative_ned is None or attitude_quat is None:
+        return None
+    body_relative = _quat_to_matrix(attitude_quat).T @ np.asarray(relative_ned, dtype=float)
+    return _body_frd_to_camera_optical(body_relative).tolist()
+
+
+def _observation_camera_normal(gate: dict[str, Any], attitude_quat: list[float] | None) -> np.ndarray | None:
+    orientation_xyz = _point3_value(gate.get("orientation_xyz"))
+    if orientation_xyz:
+        return _camera_observation_vector_to_plot(orientation_xyz)
+    orientation_quat = _point4_value(gate.get("orientation_local_ned_quat"))
+    if orientation_quat is None or attitude_quat is None:
+        return None
+    local_normal = _quat_to_matrix(orientation_quat)[:, 0]
+    body_normal = _quat_to_matrix(attitude_quat).T @ local_normal
+    camera_normal = _body_frd_to_camera_optical(body_normal)
+    return _camera_observation_vector_to_plot(camera_normal.tolist())
 
 
 def _camera_observation_point_to_plot(point: list[float]) -> list[float]:
@@ -493,6 +538,67 @@ def _camera_observation_point_to_plot(point: list[float]) -> list[float]:
 def _camera_observation_vector_to_plot(vector: list[float]) -> np.ndarray:
     right, up, forward = vector[:3]
     return _normalize_vector(np.asarray([float(forward), -float(right), float(up)], dtype=float))
+
+
+def _point3_value(value: Any) -> list[float] | None:
+    if isinstance(value, (list, tuple)) and len(value) >= 3:
+        try:
+            return [float(value[0]), float(value[1]), float(value[2])]
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _point4_value(value: Any) -> list[float] | None:
+    if isinstance(value, (list, tuple)) and len(value) >= 4:
+        try:
+            return [float(value[0]), float(value[1]), float(value[2]), float(value[3])]
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _body_frd_to_camera_optical(vector: np.ndarray) -> np.ndarray:
+    return _camera_optical_to_body_frd_matrix().T @ np.asarray(vector, dtype=float)
+
+
+def _camera_optical_to_body_frd_matrix() -> np.ndarray:
+    tilt = np.deg2rad(20.0)
+    cos_t = np.cos(tilt)
+    sin_t = np.sin(tilt)
+    optical_to_body = np.asarray(
+        [
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [0.0, -1.0, 0.0],
+        ],
+        dtype=float,
+    )
+    pitch_up = np.asarray(
+        [
+            [cos_t, 0.0, sin_t],
+            [0.0, 1.0, 0.0],
+            [-sin_t, 0.0, cos_t],
+        ],
+        dtype=float,
+    )
+    return pitch_up @ optical_to_body
+
+
+def _quat_to_matrix(quaternion: list[float]) -> np.ndarray:
+    q = np.asarray(quaternion, dtype=float)
+    norm = float(np.linalg.norm(q))
+    if norm < 1e-12:
+        return np.eye(3)
+    w, x, y, z = q / norm
+    return np.asarray(
+        [
+            [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+            [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+            [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
+        ],
+        dtype=float,
+    )
 
 
 def _camera_gate_wireframe_traces(

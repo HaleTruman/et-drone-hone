@@ -2,7 +2,7 @@
 
 This module belongs to the vision package. It adapts the compact
 ``0721vision-instance-frame.v1`` JSON into the same controller payload shape
-that Flight's ``mapping.perception.VisionObservation`` consumes.
+that Flight's ``core.schema.VisionObservation`` consumes.
 """
 
 from __future__ import annotations

@@ -4,24 +4,24 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from sensing.vision.cnn.cnn_pipeline import (
+from sensing.vision.models.cnn.cnn_pipeline import (
     DEFAULT_CHECKPOINT as DEFAULT_CNN_CHECKPOINT,
     PipelineConfig as CnnPipelineConfig,
     PipelineStats as CnnPipelineStats,
     run_pipeline as run_cnn_pipeline,
 )
 from sensing.vision.io.udp_protocol import DEFAULT_HOST, DEFAULT_PORT
-from sensing.vision.cnn.landmarker.landmarker_pipeline import (
+from sensing.vision.models.cnn.landmarker.landmarker_pipeline import (
     LandmarkerPipelineConfig,
     LandmarkerPipelineStats,
     run_landmarker_pipeline,
 )
-from sensing.vision.cnn.regressor.regressor_pipeline import (
+from sensing.vision.models.cnn.regressor.regressor_pipeline import (
     RegressorPipelineConfig,
     RegressorPipelineStats,
     run_regressor_pipeline,
 )
-from sensing.vision.cnn.regressor.logit_inference import DEFAULT_REGRESSOR_CHECKPOINT
+from sensing.vision.models.cnn.regressor.logit_inference import DEFAULT_REGRESSOR_CHECKPOINT
 
 
 DEFAULT_OUTPUT_ROOT = Path("logs/vision")

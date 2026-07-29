@@ -12,9 +12,9 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from mapping.perception import VisionGateObservation, VisionObservation
-from sensing.vision.deterministic.config import BACKEND_DIR, DeterministicVisionConfig
-from sensing.vision.vision_stream import VisionFrame
+from core.schema import VisionGateObservation, VisionObservation
+from sensing.vision.models.deterministic.config import BACKEND_DIR, DeterministicVisionConfig
+from core.schema import VisionFrame
 
 
 TOOLS_DIR = BACKEND_DIR / "tools"
@@ -23,15 +23,15 @@ for path in (TOOLS_DIR, SRC_DIR):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from sensing.vision.deterministic.src.bbox_clipping.build import build_bbox_clipping_frame  # noqa: E402
-from sensing.vision.deterministic.src.bbox_contours.build import build_bbox_contour_frame  # noqa: E402
-from sensing.vision.deterministic.tools.build_mask_bboxes import (  # noqa: E402
+from sensing.vision.models.deterministic.src.bbox_clipping.build import build_bbox_clipping_frame  # noqa: E402
+from sensing.vision.models.deterministic.src.bbox_contours.build import build_bbox_contour_frame  # noqa: E402
+from sensing.vision.models.deterministic.tools.build_mask_bboxes import (  # noqa: E402
     bbox_settings_from_review,
     clean_float,
     normalized_fov_clip_settings,
 )
-from sensing.vision.deterministic.tools.build_mask_contours import normalized_contour_settings  # noqa: E402
-from sensing.vision.deterministic.src.color_masks.mask_frames import (  # noqa: E402
+from sensing.vision.models.deterministic.tools.build_mask_contours import normalized_contour_settings  # noqa: E402
+from sensing.vision.models.deterministic.src.color_masks.mask_frames import (  # noqa: E402
     DEFAULT_MANIFEST_NAME,
     FrameRef,
     build_manifest as build_mask_manifest,
@@ -41,13 +41,13 @@ from sensing.vision.deterministic.src.color_masks.mask_frames import (  # noqa: 
     merge_summary as merge_mask_summary,
     process_frame as process_mask_frame,
 )
-from sensing.vision.deterministic.src.instance_tracking.instance_mapping import (  # noqa: E402
+from sensing.vision.models.deterministic.src.instance_tracking.instance_mapping import (  # noqa: E402
     InstanceTrackingRuntime,
     instance_tracking_settings_from_review,
 )
-from sensing.vision.deterministic.src.mask_bbox.build_from_maskbits import build_maskbits_bbox_frame  # noqa: E402
-from sensing.vision.deterministic.src.mask_bbox.maskbits_input import build_mask_frame_lookup, build_maskbits_context  # noqa: E402
-from sensing.vision.deterministic.src.pose_estimation.pose_fit import build_pose_frame, pose_settings_from_review  # noqa: E402
+from sensing.vision.models.deterministic.src.mask_bbox.build_from_maskbits import build_maskbits_bbox_frame  # noqa: E402
+from sensing.vision.models.deterministic.src.mask_bbox.maskbits_input import build_mask_frame_lookup, build_maskbits_context  # noqa: E402
+from sensing.vision.models.deterministic.src.pose_estimation.pose_fit import build_pose_frame, pose_settings_from_review  # noqa: E402
 
 
 class DeterministicVisionBackend:
@@ -372,12 +372,14 @@ class DeterministicVisionBackend:
         fit_quality = pose.get("fitQuality") if isinstance(pose.get("fitQuality"), dict) else {}
         return VisionGateObservation(
             gate_id=gate_id,
-            position_camera_m=self._opencv_camera_to_flight_camera(xyz_camera_m),
+            position_local_ned=self._opencv_camera_to_flight_camera(xyz_camera_m),
             position_confidence=self._clamp01(instance.get("observationQuality")),
-            orientation_camera=self._float3(pose.get("rpyCameraDeg")),
+            orientation_local_ned_quat=None,
             orientation_confidence=self._clamp01(fit_quality.get("overall")),
             trace={
                 "backend": "deterministic_0721",
+                "legacy_position_camera_m": self._opencv_camera_to_flight_camera(xyz_camera_m),
+                "legacy_orientation_camera": self._float3(pose.get("rpyCameraDeg")),
                 "sourceInstance": instance,
                 "bbox": instance.get("source", {}).get("bbox") if isinstance(instance.get("source"), dict) else None,
                 "fovClip": instance.get("fovClip") if isinstance(instance.get("fovClip"), dict) else {},

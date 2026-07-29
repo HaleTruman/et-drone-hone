@@ -557,7 +557,38 @@ def _telemetry_sim_time_ns(cycle: dict[str, Any]) -> int | None:
 def _observation_gates(record: dict[str, Any] | None) -> list[dict[str, Any]]:
     observation = record.get("observation") if isinstance(record, dict) else None
     gates = observation.get("gates") if isinstance(observation, dict) else None
-    return [gate for gate in gates if isinstance(gate, dict)] if isinstance(gates, list) else []
+    return [_observation_gate_payload(gate) for gate in gates if isinstance(gate, dict)] if isinstance(gates, list) else []
+
+
+def _observation_gate_payload(gate: dict[str, Any]) -> dict[str, Any]:
+    position_xyz = _point3_or_none(gate.get("position_xyz"))
+    position_relative_ned = _point3_or_none(
+        gate.get("position_relative_ned_m")
+        or gate.get("position_local_ned")
+        or gate.get("position_local_ned_m")
+    )
+    orientation_xyz = _point3_or_none(gate.get("orientation_xyz"))
+    orientation_quaternion = _quat4_or_none(
+        gate.get("orientation_local_ned_quat")
+        or gate.get("orientation_quat")
+        or gate.get("quaternion")
+        or gate.get("quat")
+    )
+    return {
+        **gate,
+        "id": gate.get("id") or gate.get("gate_id"),
+        "position_xyz": position_xyz,
+        "position_relative_ned_m": position_relative_ned,
+        "position_local_ned": position_relative_ned,
+        "position_confidence": gate.get("position_confidence")
+        if gate.get("position_confidence") is not None
+        else gate.get("confidence"),
+        "orientation_xyz": orientation_xyz,
+        "orientation_local_ned_quat": orientation_quaternion,
+        "orientation_quat": orientation_quaternion,
+        "orientation_confidence": gate.get("orientation_confidence"),
+        "has_orientation": orientation_xyz is not None or orientation_quaternion is not None,
+    }
 
 
 def _cycle_number(frame: FrameRecord, cycle: dict[str, Any] | None) -> int | None:

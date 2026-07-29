@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from sensing.vision.cnn.logits_output import (
+from sensing.vision.models.cnn.logits_output import (
     DEPTH_CHANNELS,
     HEATMAP_HEIGHT,
     HEATMAP_WIDTH,

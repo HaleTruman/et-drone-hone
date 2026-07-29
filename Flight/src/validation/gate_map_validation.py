@@ -11,7 +11,7 @@ SRC = Path(__file__).resolve().parents[1]
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from core.schemas import VehicleState
+from core.schema import VehicleState
 from mapping.gates import GateMap
 from core.coordinates import quaternion_from_roll_pitch_yaw_deg, euler_from_quaternion
 from sensing.vision.service import VisionPerceptionService, VisionPerceptionConfig

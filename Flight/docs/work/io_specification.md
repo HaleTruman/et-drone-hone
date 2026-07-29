@@ -75,7 +75,7 @@ Behavioral requirements:
 ## Input Schema: VisionFrame
 
 The input frame schema must match the current Flight contract defined at
-`Flight/src/sensing/vision/vision_stream.py`.
+`Flight/src/core/schema.py`.
 
 ```python
 from dataclasses import dataclass
@@ -90,7 +90,7 @@ class VisionFrame:
     saved_path: str | None = None
 ```
 
-Additionally, the ``DeterministicVision().process_frame(frame, vehicle_state)`` method takes a VehicleState optionally, which will be imported from the existing schema. The definition of a VehicleState dataclass will be defined at ``Flight\src\core\schemas.py``
+Additionally, the ``DeterministicVision().process_frame(frame, vehicle_state)`` method takes a VehicleState optionally, which will be imported from the existing schema. The definition of a VehicleState dataclass will be defined at ``Flight\src\core\schema.py``
 
 ```python
 Vec3 = tuple[float, float, float]
@@ -125,7 +125,7 @@ Flight compatibility, `jpeg_bytes` must remain accepted even when `image` is
 ## Minimum Output Schema: VisionObservation
 
 The output observation schema must hold at least the current Flight contract
-defined at `Flight/src/mapping/perception/vision_observation.py`.
+defined at `Flight/src/core/schema.py`.
 
 ```python
 from dataclasses import dataclass, field
@@ -134,10 +134,10 @@ from typing import Any
 @dataclass(frozen=True)
 class VisionGateObservation:
     gate_id: str
-    position_camera_m: tuple[float, float, float]
+    position_local_ned: tuple[float, float, float]
     position_confidence: float
-    orientation_camera: tuple[float, float, float] | None = None
-    orientation_confidence: float = 0.0
+    orientation_local_ned_quat: tuple[float, float, float, float] | None = None
+    orientation_confidence: float | None = None
     trace: dict[str, Any] = field(default_factory=dict)
 
 @dataclass(frozen=True)
@@ -155,7 +155,7 @@ class VisionObservation:
 | --- | --- | --- | --- |
 | `frame_id` | `int` | Yes | Frame identifier copied from the input `VisionFrame`. |
 | `sim_time_ns` | `int` | Yes | Simulation timestamp copied from the input `VisionFrame`. |
-| `gates` | `list[VisionGateObservation]` | Yes | Gate observations in camera optical coordinates. |
+| `gates` | `list[VisionGateObservation]` | Yes | Gate observations in local-NED coordinates. |
 | `source` | `str` | No | Producer identifier. Default should be `"vision"` unless a more specific backend name is useful. |
 | `trace` | `dict[str, Any]` | No | JSON-compatible diagnostic metadata. |
 
@@ -164,10 +164,10 @@ class VisionObservation:
 | Field | Type | Required | Meaning |
 | --- | --- | --- | --- |
 | `gate_id` | `str` | Yes | Stable identifier for the observed gate when known. Temporary IDs are acceptable when identity is not known. |
-| `position_camera_m` | `tuple[float, float, float]` | Yes | Gate position in camera optical coordinates, in meters. |
+| `position_local_ned` | `tuple[float, float, float]` | Yes | Gate position in local-NED coordinates, in meters. |
 | `position_confidence` | `float` | Yes | Confidence score for the position estimate. |
-| `orientation_camera` | `tuple[float, float, float] \| None` | No | Gate orientation in camera optical coordinates when available. |
-| `orientation_confidence` | `float` | No | Confidence score for the orientation estimate. Defaults to `0.0`. |
+| `orientation_local_ned_quat` | `tuple[float, float, float, float] \| None` | No | Gate orientation in local-NED quaternion form when available. |
+| `orientation_confidence` | `float \| None` | No | Confidence score for the orientation estimate. |
 | `trace` | `dict[str, Any]` | No | Per-gate JSON-compatible diagnostics. |
 
 ## Optional Rich Result Fields
@@ -175,7 +175,7 @@ class VisionObservation:
 `VisionObservation` must include the minimum fields above, but the library may
 also expose richer output data similar to the current deterministic-v2
 `VisionResults` schema at
-`Flight/src/sensing/vision/deterministic_v2/src/schema.py`.
+`Flight/src/sensing/vision/models/deterministic_v2/src/schema.py`.
 
 Optional result metadata may include:
 
@@ -190,8 +190,8 @@ Optional result metadata may include:
 | `created_at` | `str` | UTC creation timestamp. |
 | `timing_ms` | `dict[str, float]` | Timing breakdown by stage. |
 | `coordinate_frame` | `str` | Name of the coordinate convention used by result fields. |
-| `camera_position_camera_m` | `tuple[float, float, float]` | Camera origin in camera coordinates, normally `(0.0, 0.0, 0.0)`. |
-| `camera_orientation_camera` | `tuple[float, float, float]` | Camera orientation in camera coordinates, normally `(0.0, 0.0, 0.0)`. |
+| `camera_position_local_ned_m` | `tuple[float, float, float]` | Camera position in local-NED coordinates when available. |
+| `camera_orientation_local_ned_quat` | `tuple[float, float, float, float]` | Camera orientation in local-NED quaternion form when available. |
 | `obstacles` | `list[dict[str, Any]]` | Optional obstacle detections or estimates. |
 | `trace` | `dict[str, Any]` | JSON-compatible diagnostic metadata. |
 
@@ -212,8 +212,8 @@ minimal dataclass.
 
 The library should validate or normalize the public output before returning it:
 
-- `position_camera_m` must contain exactly three numeric values.
-- `orientation_camera`, when present, must contain exactly three numeric values.
+- `position_local_ned` must contain exactly three numeric values.
+- `orientation_local_ned_quat`, when present, must contain exactly four numeric values.
 - Confidence fields must be numeric floats.
 - `gate_id` must be a string.
 - Missing detections must be represented by an empty `gates` list.
@@ -268,8 +268,7 @@ assert isinstance(observation.gates, list)
 For Flight integration, the required compatibility target is:
 
 ```python
-from sensing.vision.vision_stream import VisionFrame
-from mapping.perception.vision_observation import VisionObservation
+from core.schema import VisionFrame, VisionObservation
 
 observation: VisionObservation = DeterministicVision().process_frame(frame)
 ```

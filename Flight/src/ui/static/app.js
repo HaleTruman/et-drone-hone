@@ -331,15 +331,21 @@ function renderGateList() {
     return;
   }
   els.gateList.replaceChildren(...gates.map((gate, index) => {
-    const position = formatVec(gate.position_xyz, 'm');
-    const orientation = formatVec(gate.orientation_xyz, 'deg');
+    const position = gate.position_xyz
+      ? `${formatVec(gate.position_xyz, 'm')} camera`
+      : `${formatVec(gate.position_relative_ned_m || gate.position_local_ned, 'm')} rel NED`;
+    const orientation = gateHasOrientation(gate)
+      ? (gate.orientation_xyz
+        ? formatVec(gate.orientation_xyz, 'deg')
+        : formatQuat(gate.orientation_local_ned_quat || gate.orientation_quat))
+      : 'none';
     const card = document.createElement('div');
     card.className = 'gateCard';
     card.dataset.gateIndex = String(index);
     card.innerHTML = `
       <strong>${escapeHtml(gate.id || `gate-${index + 1}`)}</strong>
       <span>pos ${escapeHtml(position)} | conf ${formatNumber(gate.position_confidence)}</span>
-      <span>rpy ${escapeHtml(orientation)} | conf ${formatNumber(gate.orientation_confidence)}</span>
+      <span>orientation ${escapeHtml(orientation)} | conf ${formatNumber(gate.orientation_confidence)}</span>
     `;
     card.addEventListener('mouseenter', () => {
       state.hoveredGateIndex = index;
@@ -1137,12 +1143,12 @@ function addObservationGates(scene, dronePosition, droneQuaternion, points) {
   const gates = Array.isArray(scene.observation_gates) ? scene.observation_gates : [];
   const bodyToLocal = rotationMatrixFromQuaternion(droneQuaternion);
   gates.forEach((gate, index) => {
-    const cameraPosition = point3(gate.position_xyz);
-    if (!cameraPosition) return;
-    const bodyRelative = cameraOpticalToBodyFrd(cameraPosition);
-    const localRelative = applyMatrix3(bodyToLocal, bodyRelative);
+    const localRelative = observationGateLocalRelative(gate, bodyToLocal);
+    if (!localRelative) return;
     const center = addVec3(dronePosition, localRelative);
+    const color = gateColor(index);
     const orientation = point3(gate.orientation_xyz);
+    const orientationQuaternion = quat4(gate.orientation_local_ned_quat || gate.orientation_quat);
     let normal = normalizeVec3(localRelative);
     let horizontal = null;
     let vertical = null;
@@ -1154,9 +1160,18 @@ function addObservationGates(scene, dronePosition, droneQuaternion, points) {
       normal = normalizeVec3(column3(gateToLocal, 0));
       horizontal = normalizeVec3(column3(gateToLocal, 1));
       vertical = normalizeVec3(scaleVec3(column3(gateToLocal, 2), -1));
+    } else if (orientationQuaternion) {
+      const gateToLocal = rotationMatrixFromQuaternion(orientationQuaternion);
+      normal = normalizeVec3(column3(gateToLocal, 0));
+      horizontal = normalizeVec3(column3(gateToLocal, 1));
+      vertical = normalizeVec3(scaleVec3(column3(gateToLocal, 2), -1));
     }
     points.push(center);
-    addGateFrame(center, normal, gateColor(index), gate.id || `obs-${index + 1}`, 2.7, 1.5, horizontal, vertical, { highlighted: state.hoveredGateIndex === index });
+    if (orientation || orientationQuaternion) {
+      addGateFrame(center, normal, color, gate.id || `obs-${index + 1}`, 2.7, 1.5, horizontal, vertical, { highlighted: state.hoveredGateIndex === index });
+    } else {
+      addGateCenter(center, color, gate.id || `obs-${index + 1}`, { highlighted: state.hoveredGateIndex === index });
+    }
   });
 }
 
@@ -1221,6 +1236,17 @@ function addGateFrame(center, normal, colorCss, label, outerSize, innerSize, hor
   marker.position.copy(nedToThree(center));
   map3d.root.add(marker);
   addLabel(label, addVec3(center, scaleVec3(vertical, outerSize * 0.58)), color.getHex());
+}
+
+function addGateCenter(center, colorCss, label, options = {}) {
+  const color = new THREE.Color(colorCss);
+  const marker = new THREE.Mesh(
+    new THREE.SphereGeometry(options.highlighted ? 0.18 : 0.11, 16, 10),
+    new THREE.MeshBasicMaterial({ color: options.highlighted ? 0xffd45a : color })
+  );
+  marker.position.copy(nedToThree(center));
+  map3d.root.add(marker);
+  addLabel(label, addVec3(center, [0, 0, -0.35]), options.highlighted ? 0xffd45a : color.getHex());
 }
 
 function addWorldAxes(scene) {
@@ -1334,6 +1360,10 @@ function cameraOpticalToBodyFrd(vector) {
   ];
 }
 
+function bodyFrdToCameraOptical(vector) {
+  return applyMatrix3(transposeMatrix3(cameraOpticalToBodyFrdMatrix()), vector);
+}
+
 function cameraFrdToBodyFrdMatrix() {
   const cameraOpticalFromCameraFrd = [
     [0, 1, 0],
@@ -1398,6 +1428,14 @@ function applyMatrix3(matrix, vector) {
     matrix[0][0] * vector[0] + matrix[0][1] * vector[1] + matrix[0][2] * vector[2],
     matrix[1][0] * vector[0] + matrix[1][1] * vector[1] + matrix[1][2] * vector[2],
     matrix[2][0] * vector[0] + matrix[2][1] * vector[1] + matrix[2][2] * vector[2]
+  ];
+}
+
+function transposeMatrix3(matrix) {
+  return [
+    [matrix[0][0], matrix[1][0], matrix[2][0]],
+    [matrix[0][1], matrix[1][1], matrix[2][1]],
+    [matrix[0][2], matrix[1][2], matrix[2][2]]
   ];
 }
 
@@ -1482,10 +1520,11 @@ function rejectVector(vector, normal) {
 }
 
 function drawGateObservation(ctx, canvas, gate, index, alpha) {
-  const projected = projectPoint(gate.position_xyz, canvas.width, canvas.height);
+  const cameraPosition = observationGateCameraPosition(gate);
+  const projected = projectPoint(cameraPosition, canvas.width, canvas.height);
   if (!projected) return;
   const color = gateColor(index);
-  const z = Number(gate.position_xyz?.[2]);
+  const z = Number(cameraPosition?.[2]);
   const intrinsics = scaledCameraIntrinsics(canvas.width, canvas.height);
   const halfX = (intrinsics.fx * state.settings.gateSizeM / Math.max(z, 0.001)) / 2;
   const halfY = (intrinsics.fy * state.settings.gateSizeM / Math.max(z, 0.001)) / 2;
@@ -1495,13 +1534,14 @@ function drawGateObservation(ctx, canvas, gate, index, alpha) {
   ctx.lineWidth = highlighted ? 4 : 2;
   ctx.strokeStyle = highlighted ? '#ffd45a' : color;
   ctx.fillStyle = highlighted ? '#ffd45a' : color;
-  if (state.settings.showGateBoxes) {
+  const hasOrientation = gateHasOrientation(gate);
+  if (hasOrientation && state.settings.showGateBoxes) {
     ctx.strokeRect(projected.x - halfX, projected.y - halfY, halfX * 2, halfY * 2);
     ctx.setLineDash([6, 4]);
     ctx.strokeRect(projected.x - halfX * 0.56, projected.y - halfY * 0.56, halfX * 1.12, halfY * 1.12);
     ctx.setLineDash([]);
   }
-  if (state.settings.showCenters) {
+  if (state.settings.showCenters || !hasOrientation) {
     ctx.beginPath();
     ctx.arc(projected.x, projected.y, 5, 0, Math.PI * 2);
     ctx.fill();
@@ -1512,7 +1552,7 @@ function drawGateObservation(ctx, canvas, gate, index, alpha) {
     ctx.lineTo(projected.x, projected.y + 14);
     ctx.stroke();
   }
-  if (highlighted && state.settings.showGateBoxes) {
+  if (hasOrientation && highlighted && state.settings.showGateBoxes) {
     ctx.globalAlpha = Math.min(1, alpha + 0.08);
     ctx.setLineDash([10, 6]);
     ctx.strokeRect(projected.x - halfX * 1.08, projected.y - halfY * 1.08, halfX * 2.16, halfY * 2.16);
@@ -1530,6 +1570,31 @@ function drawGateObservation(ctx, canvas, gate, index, alpha) {
     ctx.fillText(text, labelX, labelY);
   }
   ctx.restore();
+}
+
+function gateHasOrientation(gate) {
+  return Boolean(point3(gate?.orientation_xyz) || quat4(gate?.orientation_local_ned_quat || gate?.orientation_quat));
+}
+
+function observationGateCameraPosition(gate) {
+  const cameraPosition = point3(gate?.position_xyz);
+  if (cameraPosition) return cameraPosition;
+  const scene = state.frame?.scene || {};
+  const drone = scene.drone || {};
+  const droneQuaternion = quat4(drone.attitude_quaternion) || [1, 0, 0, 0];
+  const bodyToLocal = rotationMatrixFromQuaternion(droneQuaternion);
+  const localRelative = point3(gate?.position_relative_ned_m || gate?.position_local_ned);
+  if (!localRelative) return null;
+  const bodyRelative = applyMatrix3(transposeMatrix3(bodyToLocal), localRelative);
+  return bodyFrdToCameraOptical(bodyRelative);
+}
+
+function observationGateLocalRelative(gate, bodyToLocal) {
+  const localRelative = point3(gate?.position_relative_ned_m || gate?.position_local_ned);
+  if (localRelative) return localRelative;
+  const cameraPosition = point3(gate?.position_xyz);
+  if (!cameraPosition) return null;
+  return applyMatrix3(bodyToLocal, cameraOpticalToBodyFrd(cameraPosition));
 }
 
 function projectPoint(position, width, height) {
@@ -1564,6 +1629,11 @@ function gateColor(index) {
 function formatVec(value, suffix) {
   if (!Array.isArray(value) || value.length < 3) return 'n/a';
   return `${formatNumber(value[0])}, ${formatNumber(value[1])}, ${formatNumber(value[2])}${suffix ? ` ${suffix}` : ''}`;
+}
+
+function formatQuat(value) {
+  if (!Array.isArray(value) || value.length < 4) return 'n/a';
+  return `${formatNumber(value[0])}, ${formatNumber(value[1])}, ${formatNumber(value[2])}, ${formatNumber(value[3])}`;
 }
 
 function formatNumber(value) {

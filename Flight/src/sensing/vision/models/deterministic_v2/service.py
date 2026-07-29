@@ -8,10 +8,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-from mapping.perception import VisionGateObservation, VisionObservation
-from sensing.vision.deterministic_v2.config import DeterministicVisionV2Config
-from sensing.vision.deterministic_v2.src.pipeline import PipelineOptions, ProjectionPipeline
-from sensing.vision.vision_stream import VisionFrame
+from core.schema import VisionGateObservation, VisionObservation
+from sensing.vision.models.deterministic_v2.config import DeterministicVisionV2Config
+from sensing.vision.models.deterministic_v2.src.pipeline import PipelineOptions, ProjectionPipeline
+from core.schema import VisionFrame
 
 
 class DeterministicVisionV2Backend:

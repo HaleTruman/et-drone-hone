@@ -9,7 +9,7 @@ from typing import Any, Callable
 from pymavlink import mavutil
 
 from core.coordinates import vec3
-from core.schemas import (
+from core.schema import (
     CollisionEvent,
     MavlinkActuatorOutputStatus,
     MavlinkHeartbeat,

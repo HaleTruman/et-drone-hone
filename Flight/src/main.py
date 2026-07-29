@@ -1,5 +1,4 @@
 from pathlib import Path
-import math
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
@@ -12,7 +11,7 @@ from core.control.attitude import AttitudeController
 from core.control.carrot import CarrotController
 from core.logging import Logger, generate_mp4
 from core.logging.obs import OBSRecorder
-from core.schemas import MavlinkHighresImu, StateRecord, VioCorrection
+from core.schema import MavlinkHighresImu, StateRecord, VioCorrection
 from core.modes.system_mode import SystemModeManager
 from core.utils import time_since
 from mapping.gates import GateMap
@@ -46,7 +45,7 @@ TARGET_HOLD_S = 0.75
 
 # Vision filtering and path planning.
 MIN_GATE_CONFIDENCE = 0.10
-PLANNING_MODE = "test_path" # test_path, observed_next_two, gate_map 
+PLANNING_MODE = "center_targets" # test_path, observed_next_two, center_targets, gate_map
 GATE_ASSOCIATION_DISTANCE_M = 7.0
 GATE_MIN_OBSERVATIONS = 2
 PLANNING_GATE_COUNT = 2
@@ -115,7 +114,7 @@ def main() -> int:
 
     mavlink_client = MavlinkClient(endpoint=MAVLINK_ENDPOINT, sim_runtime=SIM_RUNTIME)
     vision_rx = VisionStreamReceiver(host=VISION_HOST, port=VISION_PORT, output_dir=RUN_DIR / "vision_frames")
-    vision_perception = VisionPerceptionService(VisionPerceptionConfig(backend="deterministic_0721_v2", run_landmarker=False))
+    vision_perception = VisionPerceptionService(VisionPerceptionConfig(backend="deterministic_v3"))
     vision_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vision")
     obs_recorder = OBSRecorder(RUN_DIR)
     system_mode_manager = SystemModeManager()
@@ -157,7 +156,7 @@ def main() -> int:
     )
     
     carrot_controller = CarrotController(
-        speed_mps=2,
+        speed_mps=10,
         lookahead_m=CARROT_LOOKAHEAD_M,
         position_gain=5.5,
         velocity_gain=1.5,
@@ -291,39 +290,28 @@ def main() -> int:
 
             # init gate map and path plan
             if latest_frame is not None:
-                observation = vision_perception.process_vision_frame(latest_frame)
+                observation = vision_perception.process_vision_frame(
+                    latest_frame,
+                    vehicle_state=vehicle_state_estimator.state,
+                )
                 
-                logger.log_event(
-                    "deterministic_vision_test_output",
+                logger.log_vision_observation(
+                    observation,
                     frame_id=latest_frame.frame_id,
                     sim_time_ns=latest_frame.sim_time_ns,
                     gate_count=len(observation.gates),
-                    observation=observation.to_controller_payload(output_dir="memory"),
                     perception=vision_perception.snapshot(),
-                )
-
-                gate_map.update_from_observation(observation=observation, vehicle_state=vehicle_state_estimator.state)
-                gate_map.mark_passed_near_position(
-                    vehicle_state_estimator.state.position_local_ned_m,
-                    distance_m=GATE_PASSED_DISTANCE_M,
-                )
-                logger.log_gate_map(
-                    gate_map.gates,
-                    cycle=inner_cycle,
-                    inner_cycle=inner_cycle,
-                    outer_cycle=outer_cycle,
-                    frame_id=latest_frame.frame_id if latest_frame else None,
-                    frame_sim_time_ns=latest_frame.sim_time_ns if latest_frame else None,
-                    source="deterministic_vision_test_output",
                 )
                 observed_planning_gates = gate_map.observed_gate_records_for_planning(
                     observation,
                     vehicle_state=vehicle_state_estimator.state,
                     min_position_confidence=MIN_GATE_CONFIDENCE,
                 )
+
                 planned_path = path_manager.plan_for_mode(
                     gate_map_gates=gate_map.gates,
                     observed_gates=observed_planning_gates,
+                    latest_observation=observation,
                     test_path=test_path,
                     position_local_ned_m=vehicle_state_estimator.state.position_local_ned_m,
                     activate=ACTIVATE_PLANNED_PATH,
@@ -353,6 +341,7 @@ def main() -> int:
             planned_path = path_manager.plan_for_mode(
                 gate_map_gates=gate_map.gates,
                 observed_gates=observed_planning_gates,
+                latest_observation=observation,
                 test_path=test_path,
                 position_local_ned_m=vehicle_state.position_local_ned_m,
                 activate=ACTIVATE_PLANNED_PATH,
@@ -437,32 +426,28 @@ def main() -> int:
                         observation = vision_future.result()
                         frame_log["gate_count"] = len(observation.gates)
                         frame_log["observation"] = observation.to_controller_payload(output_dir="memory")
-                        logger.log_vision_frame(frame_log, cycle=frame_outer_cycle, status="processed")
-                        gate_map.update_from_observation(
-                            observation=observation,
-                            vehicle_state=frame_vehicle_state,
-                        )
-                        gate_map.mark_passed_near_position(
-                            frame_vehicle_state.position_local_ned_m,
-                            distance_m=GATE_PASSED_DISTANCE_M,
-                        )
-                        logger.log_gate_map(
-                            gate_map.gates,
-                            cycle=frame_log["inner_cycle"],
+                        logger.log_vision_observation(
+                            observation,
+                            frame_id=frame_log["frame_id"],
                             inner_cycle=frame_log["inner_cycle"],
                             outer_cycle=frame_outer_cycle,
-                            frame_id=frame_log["frame_id"],
-                            frame_sim_time_ns=frame_log["sim_time_ns"],
-                            source="vision_frame_processed",
+                            sim_time_ns=frame_log["sim_time_ns"],
+                            gate_count=len(observation.gates),
+                            perception=vision_perception.snapshot(),
                         )
+                        logger.log_vision_frame(frame_log, cycle=frame_outer_cycle, status="processed")
+
+                        # update gatemap
                         observed_planning_gates = gate_map.observed_gate_records_for_planning(
                             observation,
                             vehicle_state=frame_vehicle_state,
                             min_position_confidence=MIN_GATE_CONFIDENCE,
                         )
+
                         planned_path = path_manager.plan_for_mode(
                             gate_map_gates=gate_map.gates,
                             observed_gates=observed_planning_gates,
+                            latest_observation=observation,
                             test_path=test_path,
                             position_local_ned_m=frame_vehicle_state.position_local_ned_m,
                             activate=ACTIVATE_PLANNED_PATH,
@@ -475,6 +460,7 @@ def main() -> int:
                             frame_id=frame_log["frame_id"],
                             planner=path_manager.planning_mode,
                         )
+
                     except Exception as error:  # noqa: BLE001
                         logger.log_vision_frame(frame_log, cycle=frame_outer_cycle, status="failed", error=str(error))
                         print(f"vision frame={frame_log['frame_id']} failed: {error}", flush=True)
@@ -515,7 +501,7 @@ def main() -> int:
 
                     # queue vision job
                     vision_pending = (
-                        vision_executor.submit(vision_perception.process_vision_frame, latest_frame),
+                        vision_executor.submit(vision_perception.process_vision_frame, latest_frame, vehicle_state=vehicle_state),
                         frame_log,
                         outer_cycle,
                         vehicle_state,

@@ -7,14 +7,8 @@ from contextlib import closing
 from dataclasses import dataclass
 from typing import Iterator
 
+from core.schema import VisionFrame
 from sensing.vision.io.udp_protocol import DEFAULT_HOST, DEFAULT_PORT, VisionPacket, unpack_packet
-
-
-@dataclass(frozen=True)
-class VisionFrame:
-    frame_id: int
-    sim_time_ns: int
-    jpeg_bytes: bytes
 
 
 @dataclass(frozen=True)

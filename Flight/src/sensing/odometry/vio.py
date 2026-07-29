@@ -20,10 +20,10 @@ from core.coordinates import (
     rotation_matrix_from_quaternion,
     vec3,
 )
-from core.schemas import MavlinkHighresImu, QuatWxyz, Vec3, VehicleState
+from core.schema import MavlinkHighresImu, QuatWxyz, Vec3, VehicleState
 
 if TYPE_CHECKING:
-    from sensing.vision import VisionFrame
+    from core.schema import VisionFrame
 
 
 class VioProvider(Protocol):

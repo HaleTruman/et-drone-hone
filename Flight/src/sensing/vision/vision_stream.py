@@ -7,22 +7,14 @@ import socket
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
+
+from core.schema import VisionFrame
 
 from .io.udp_protocol import VISION_HEADER, VISION_HEADER_SIZE, unpack_packet
 
 VISION_HEADER_FORMAT = VISION_HEADER.format
-
-
-@dataclass(frozen=True)
-class VisionFrame:
-    frame_id: int
-    sim_time_ns: int
-    jpeg_bytes: bytes
-    image: Any | None = None
-    saved_path: str | None = None
 
 
 class VisionStreamReceiver:

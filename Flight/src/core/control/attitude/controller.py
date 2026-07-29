@@ -4,7 +4,7 @@ from typing import Any
 import numpy as np
 
 from core.coordinates import euler_from_quaternion, normalize_quaternion
-from core.schemas import VehicleState
+from core.schema import VehicleState
 
 class AttitudeController:
     """Convert a desired local-NED attitude quaternion into FRD body rates."""

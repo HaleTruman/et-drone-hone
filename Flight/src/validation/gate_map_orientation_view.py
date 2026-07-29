@@ -14,9 +14,9 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from core.coordinates import rotation_matrix_from_quaternion
-from core.schemas import VehicleState
+from core.schema import VehicleState
 from mapping.gates import GateMap
-from mapping.perception import VisionGateObservation, VisionObservation
+from core.schema import VisionGateObservation, VisionObservation
 
 
 def vehicle_state_at_origin() -> VehicleState:
@@ -216,9 +216,9 @@ def main() -> int:
         gates=[
             VisionGateObservation(
                 gate_id="view_gate",
-                position_camera_m=(2.0, 0.0, 10.0),
+                position_local_ned=(10.0, 2.0, 0.0),
                 position_confidence=1.0,
-                orientation_camera=(0.0, 0.0, 0.0),
+                orientation_local_ned_quat=(1.0, 0.0, 0.0, 0.0),
                 orientation_confidence=1.0,
             )
         ],

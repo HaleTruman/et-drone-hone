@@ -8,7 +8,7 @@ from typing import Any
 
 import torch
 
-from sensing.vision.cnn.lightmask_model import MASK_CHANNELS, SCHEMA_VERSION, build_model, load_compatible_state_dict
+from sensing.vision.models.cnn.lightmask_model import MASK_CHANNELS, SCHEMA_VERSION, build_model, load_compatible_state_dict
 
 
 DEFAULT_CHECKPOINT = Path(__file__).resolve().parent / "cnn_last.pt"

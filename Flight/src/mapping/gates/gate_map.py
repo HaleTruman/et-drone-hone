@@ -12,8 +12,8 @@ from core.coordinates import (
     rotation_matrix_from_quaternion,
     vec3,
 )
-from core.schemas import VehicleState
-from mapping.perception import VisionGateObservation, VisionObservation
+from core.schema import VehicleState
+from core.schema import VisionGateObservation, VisionObservation
 
 
 @dataclass
@@ -295,20 +295,22 @@ class GateMap:
         observed_cycle: int | None = None,
         observed_time_s: float | None = None,
     ) -> GateRecord:
-        position_body_frd_m = self.camera_to_body_frd(observation.position_camera_m)
-        position_local_ned_m = self.body_relative_frd_to_local_ned_m(
-            position_body_frd_m,
-            vehicle_state=vehicle_state,
+        position_local_ned_m = vec3(
+            np.asarray(vehicle_state.position_local_ned_m, dtype=float)
+            + np.asarray(observation.position_local_ned, dtype=float)
         )
         return GateRecord(
             gate_id=observation.gate_id,
             position_local_ned_m=position_local_ned_m,
-            quaternion=self.camera_orientation_to_local_ned_quaternion(
-                observation.orientation_camera,
-                vehicle_state=vehicle_state,
+            quaternion=(
+                tuple(float(value) for value in normalize_quaternion(observation.orientation_local_ned_quat))
+                if observation.orientation_local_ned_quat is not None
+                else tuple(float(value) for value in normalize_quaternion(vehicle_state.attitude_quaternion))
             ),
             position_confidence=float(observation.position_confidence),
-            quaternion_confidence=float(observation.orientation_confidence),
+            quaternion_confidence=0.0
+            if observation.orientation_confidence is None
+            else float(observation.orientation_confidence),
             sequence=sequence,
             observation_count=1,
             last_observed_cycle=observed_cycle,
@@ -330,7 +332,12 @@ class GateMap:
         for sequence, observed_gate in enumerate(observation.gates):
             if float(observed_gate.position_confidence) < min_confidence:
                 continue
-            if require_forward_camera_position and float(observed_gate.position_camera_m[2]) <= 0.0:
+            position_local_ned_m = vec3(
+                np.asarray(vehicle_state.position_local_ned_m, dtype=float)
+                + np.asarray(observed_gate.position_local_ned, dtype=float)
+            )
+            position_camera_m = self.local_ned_position_to_camera(position_local_ned_m, vehicle_state=vehicle_state)
+            if require_forward_camera_position and float(position_camera_m[2]) <= 0.0:
                 continue
             records.append(
                 self.gate_record_from_observation(
@@ -808,9 +815,10 @@ class GateMap:
         return max(0.05, self._clamp_confidence(confidence))
 
     def _raw_observation_meets_candidate_confidence(self, observation: VisionGateObservation) -> bool:
+        orientation_confidence = 0.0 if observation.orientation_confidence is None else float(observation.orientation_confidence)
         return (
             float(observation.position_confidence) >= self.min_candidate_position_confidence
-            and float(observation.orientation_confidence) >= self.min_candidate_orientation_confidence
+            and orientation_confidence >= self.min_candidate_orientation_confidence
         )
 
     def _meets_candidate_confidence(self, gate: GateRecord) -> bool:

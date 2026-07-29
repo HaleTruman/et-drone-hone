@@ -5,7 +5,7 @@ from typing import Any
 
 import numpy as np
 
-from core.schemas import Vec3
+from core.schema import Vec3, VisionObservation
 from mapping.gates import GateRecord
 
 
@@ -153,12 +153,60 @@ class PathManager:
             source="observed_next_two",
         )
 
+    def plan_from_observation_centers(
+        self,
+        observation: VisionObservation | None,
+        *,
+        position_local_ned_m: Vec3,
+        activate: bool = True,
+    ) -> PlannedPath:
+        started = perf_counter()
+        position = _vec3(position_local_ned_m, "position_local_ned_m")
+        observed_gate_centers = [] if observation is None else [
+            (
+                gate,
+                _vec3(gate.position_local_ned, f"observation.gates[{index}].position_local_ned"),
+            )
+            for index, gate in enumerate(observation.gates)
+        ]
+        observed_gate_centers.sort(key=lambda item: float(np.linalg.norm(item[1])))
+        observed_gates = [gate for gate, _ in observed_gate_centers]
+        gate_centers = [position + relative_center for _, relative_center in observed_gate_centers]
+
+        anchors = self._dedupe_points(np.asarray([position, *gate_centers], dtype=float))
+        points = self._sample_spline(anchors)
+        if activate and len(points) >= 2:
+            self.set_waypoints(points)
+        elif len(points) < 2 and len(self._waypoints) >= 2:
+            points = self.get_waypoints().astype(float).tolist()
+
+        gate_ids = [
+            str(gate.gate_id or f"observation_gate_{index + 1}")
+            for index, gate in enumerate(observed_gates)
+        ]
+        gate_center_errors = {
+            gate_id: self._minimum_distance(points, center)
+            for gate_id, center in zip(gate_ids, gate_centers)
+        }
+        return PlannedPath(
+            points_relative_ned_m=points,
+            anchors_relative_ned_m=anchors.astype(float).tolist(),
+            gate_ids=gate_ids,
+            gate_center_errors_m=gate_center_errors,
+            gate_center_tolerance_m=float(self.gate_center_tolerance_m),
+            spline_corner_tightness=float(self.spline_corner_tightness),
+            spacing_m=float(self.spacing_m),
+            computation_ms=(perf_counter() - started) * 1000.0,
+            source="center_targets",
+        )
+
     def plan_for_mode(
         self,
         *,
         gate_map_gates: Iterable[GateRecord],
         position_local_ned_m: Vec3,
         observed_gates: Iterable[GateRecord] = (),
+        latest_observation: VisionObservation | None = None,
         test_path: PlannedPath | None = None,
         activate: bool = True,
     ) -> PlannedPath:
@@ -172,6 +220,13 @@ class PathManager:
         if self.planning_mode == "observed_next_two":
             return self.plan_from_observed_gates(
                 observed_gates,
+                position_local_ned_m=position_local_ned_m,
+                activate=activate,
+            )
+
+        if self.planning_mode == "center_targets":
+            return self.plan_from_observation_centers(
+                latest_observation,
                 position_local_ned_m=position_local_ned_m,
                 activate=activate,
             )
@@ -637,6 +692,6 @@ def _vec3(value: Vec3, name: str) -> np.ndarray:
 
 def _normalize_planning_mode(value: str) -> str:
     mode = str(value).strip().lower()
-    if mode in {"gate_map", "observed_next_two", "test_path"}:
+    if mode in {"gate_map", "observed_next_two", "center_targets", "test_path"}:
         return mode
-    raise ValueError("planning_mode must be 'gate_map', 'observed_next_two', or 'test_path'")
+    raise ValueError("planning_mode must be 'gate_map', 'observed_next_two', 'center_targets', or 'test_path'")

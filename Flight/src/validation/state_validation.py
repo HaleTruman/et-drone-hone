@@ -11,7 +11,7 @@ ROOT = SRC.parent
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from core.schemas import MavlinkHighresImu
+from core.schema import MavlinkHighresImu
 from sensing.odometry.state import IDENTITY_QUATERNION, VehicleStateEstimator
 
 
