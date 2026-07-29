@@ -562,11 +562,8 @@ def _observation_gates(record: dict[str, Any] | None) -> list[dict[str, Any]]:
 
 def _observation_gate_payload(gate: dict[str, Any]) -> dict[str, Any]:
     position_xyz = _point3_or_none(gate.get("position_xyz"))
-    position_relative_ned = _point3_or_none(
-        gate.get("position_relative_ned_m")
-        or gate.get("position_local_ned")
-        or gate.get("position_local_ned_m")
-    )
+    position_local_ned = _point3_or_none(gate.get("position_local_ned") or gate.get("position_local_ned_m"))
+    position_relative_ned = _point3_or_none(gate.get("position_relative_ned_m"))
     orientation_xyz = _point3_or_none(gate.get("orientation_xyz"))
     orientation_quaternion = _quat4_or_none(
         gate.get("orientation_local_ned_quat")
@@ -578,8 +575,9 @@ def _observation_gate_payload(gate: dict[str, Any]) -> dict[str, Any]:
         **gate,
         "id": gate.get("id") or gate.get("gate_id"),
         "position_xyz": position_xyz,
+        "position_local_ned": position_local_ned,
+        "position_local_ned_m": position_local_ned,
         "position_relative_ned_m": position_relative_ned,
-        "position_local_ned": position_relative_ned,
         "position_confidence": gate.get("position_confidence")
         if gate.get("position_confidence") is not None
         else gate.get("confidence"),

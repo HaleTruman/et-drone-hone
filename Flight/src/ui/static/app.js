@@ -333,7 +333,7 @@ function renderGateList() {
   els.gateList.replaceChildren(...gates.map((gate, index) => {
     const position = gate.position_xyz
       ? `${formatVec(gate.position_xyz, 'm')} camera`
-      : `${formatVec(gate.position_relative_ned_m || gate.position_local_ned, 'm')} rel NED`;
+      : `${formatVec(gate.position_local_ned_m || gate.position_local_ned || gate.position_relative_ned_m, 'm')} local NED`;
     const orientation = gateHasOrientation(gate)
       ? (gate.orientation_xyz
         ? formatVec(gate.orientation_xyz, 'deg')
@@ -1143,13 +1143,12 @@ function addObservationGates(scene, dronePosition, droneQuaternion, points) {
   const gates = Array.isArray(scene.observation_gates) ? scene.observation_gates : [];
   const bodyToLocal = rotationMatrixFromQuaternion(droneQuaternion);
   gates.forEach((gate, index) => {
-    const localRelative = observationGateLocalRelative(gate, bodyToLocal);
-    if (!localRelative) return;
-    const center = addVec3(dronePosition, localRelative);
+    const center = observationGateLocalPosition(gate, dronePosition, bodyToLocal);
+    if (!center) return;
     const color = gateColor(index);
     const orientation = point3(gate.orientation_xyz);
     const orientationQuaternion = quat4(gate.orientation_local_ned_quat || gate.orientation_quat);
-    let normal = normalizeVec3(localRelative);
+    let normal = normalizeVec3(subVec3(center, dronePosition));
     let horizontal = null;
     let vertical = null;
     if (orientation) {
@@ -1490,6 +1489,10 @@ function addVec3(a, b) {
   return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 }
 
+function subVec3(a, b) {
+  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
+
 function scaleVec3(vector, scale) {
   return [vector[0] * scale, vector[1] * scale, vector[2] * scale];
 }
@@ -1581,20 +1584,26 @@ function observationGateCameraPosition(gate) {
   if (cameraPosition) return cameraPosition;
   const scene = state.frame?.scene || {};
   const drone = scene.drone || {};
+  const dronePosition = point3(drone.position_local_ned_m) || [0, 0, 0];
   const droneQuaternion = quat4(drone.attitude_quaternion) || [1, 0, 0, 0];
   const bodyToLocal = rotationMatrixFromQuaternion(droneQuaternion);
-  const localRelative = point3(gate?.position_relative_ned_m || gate?.position_local_ned);
+  const localPosition = point3(gate?.position_local_ned_m || gate?.position_local_ned);
+  const localRelative = localPosition
+    ? subVec3(localPosition, dronePosition)
+    : point3(gate?.position_relative_ned_m);
   if (!localRelative) return null;
   const bodyRelative = applyMatrix3(transposeMatrix3(bodyToLocal), localRelative);
   return bodyFrdToCameraOptical(bodyRelative);
 }
 
-function observationGateLocalRelative(gate, bodyToLocal) {
-  const localRelative = point3(gate?.position_relative_ned_m || gate?.position_local_ned);
-  if (localRelative) return localRelative;
+function observationGateLocalPosition(gate, dronePosition, bodyToLocal) {
+  const localPosition = point3(gate?.position_local_ned_m || gate?.position_local_ned);
+  if (localPosition) return localPosition;
+  const localRelative = point3(gate?.position_relative_ned_m);
+  if (localRelative) return addVec3(dronePosition, localRelative);
   const cameraPosition = point3(gate?.position_xyz);
   if (!cameraPosition) return null;
-  return applyMatrix3(bodyToLocal, cameraOpticalToBodyFrd(cameraPosition));
+  return addVec3(dronePosition, applyMatrix3(bodyToLocal, cameraOpticalToBodyFrd(cameraPosition)));
 }
 
 function projectPoint(position, width, height) {

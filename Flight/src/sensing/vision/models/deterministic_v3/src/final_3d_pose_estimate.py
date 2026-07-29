@@ -155,7 +155,7 @@ class Final3DPoseEstimator:
     def _gate_observation(self, track_id: str, entry: dict, r_wc: np.ndarray, c_t: np.ndarray) -> VisionGateObservation:
         # Camera-relative NED: translate to the camera's current position only -- no rotation
         # into the camera's own optical attitude, so axes stay north/east/down.
-        position_local_ned = tuple(float(v) for v in (entry["position"] - c_t))
+        position_local_ned = tuple(float(v) for v in (entry["position"]))
         trace = {
             "track_id": track_id,
             "position_ned_m": tuple(float(v) for v in entry["position"]),

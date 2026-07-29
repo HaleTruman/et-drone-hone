@@ -9,9 +9,9 @@ from core.schema import QuatWxyz, Vec3, VisionObservation
 class GateRecord:
     gate_id: str
     position_local_ned_m: Vec3
-    quaternion: QuatWxyz
+    quaternion: QuatWxyz | None
     position_confidence: float
-    quaternion_confidence: float
+    quaternion_confidence: float | None
     crossed: bool = False
     frozen: bool = False
     sequence: int | None = None
@@ -44,17 +44,11 @@ class GateMap:
     def update(self, observation: VisionObservation) -> list[GateRecord]:
         self._gates = [
             GateRecord(
-                gate_id=gate.gate_id or f"observation_gate_{index + 1}",
+                gate_id=gate.gate_id,
                 position_local_ned_m=tuple(float(value) for value in gate.position_local_ned),
-                quaternion=(
-                    (1.0, 0.0, 0.0, 0.0)
-                    if gate.orientation_local_ned_quat is None
-                    else tuple(float(value) for value in gate.orientation_local_ned_quat)
-                ),
+                quaternion=gate.orientation_local_ned_quat,
                 position_confidence=float(gate.position_confidence),
-                quaternion_confidence=0.0
-                if gate.orientation_confidence is None
-                else float(gate.orientation_confidence),
+                quaternion_confidence=gate.orientation_confidence,
                 sequence=index,
                 observation_count=1,
                 last_observed_cycle=observation.frame_id,

@@ -351,6 +351,8 @@ class Logger:
             "outer_cycle",
             "cycle",
             "sim_time_ns",
+            "system_mode",
+            "modes",
             "reason",
             "error_type",
             "error",
