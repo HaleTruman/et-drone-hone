@@ -359,12 +359,14 @@ function drawEvaluationLayers(frame) {
       const color = "#50ff64";
       if (el.showEvalTruthCorners.checked) {
         drawQuad(target.outer_corners_px, color, 2);
+        drawQuad(target.inner_corners_px, "#50b464", 1.5);
       }
       if (el.showEvalTruthBbox.checked) {
         drawXyxyBox(target.bbox_xyxy_px, color, 1, el.showEvalLabels.checked ? target.gate_label : "");
       }
       if (el.showEvalTruthCorners.checked) {
         drawPointSet(target.outer_corners_px, color, 2.5);
+        drawPointSet(target.inner_corners_px, "#50b464", 2);
       }
     });
   }
@@ -374,6 +376,7 @@ function drawEvaluationLayers(frame) {
       const color = "#00dcff";
       if (el.showEvalPredCorners.checked) {
         drawQuad(detection.outer_corners_px, color, 3);
+        drawQuad(detection.inner_corners_px, "#0096ff", 2);
       }
       if (el.showEvalPredBbox.checked) {
         const label = el.showEvalLabels.checked ? predictionLabel(detection, index) : "";
@@ -381,6 +384,7 @@ function drawEvaluationLayers(frame) {
       }
       if (el.showEvalPredCorners.checked) {
         drawPointSet(detection.outer_corners_px, color, 3);
+        drawPointSet(detection.inner_corners_px, "#0096ff", 2.5);
       }
     });
   }
