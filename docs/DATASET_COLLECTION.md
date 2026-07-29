@@ -12,4 +12,3 @@ This includes:
 - writing `metadata.json` and `metadata.jsonl`
 
 It should not own the algorithm that lays out the race track or randomizes gate positions.
-

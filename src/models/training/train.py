@@ -14,7 +14,7 @@ import numpy as np
 import torch
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 
 from src.models import config
 from src.models.training.dataset import (
@@ -29,8 +29,10 @@ from src.models.training.model import GateDetector
 from src.models.training.targets import (
     CameraCalibration,
     GateFrame,
+    KEYPOINT_COUNT,
     fit_camera_calibration,
     load_gate_samples,
+    scale_frames_for_training,
 )
 
 
@@ -46,6 +48,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--backbone-lr-scale", type=float, default=config.BACKBONE_LR_SCALE)
     parser.add_argument("--weight-decay", type=float, default=config.WEIGHT_DECAY)
     parser.add_argument("--validation-fraction", type=float, default=config.VALIDATION_FRACTION)
+    parser.add_argument(
+        "--partial-frame-sampling-weight",
+        type=float,
+        default=config.PARTIAL_FRAME_SAMPLING_WEIGHT,
+        help=(
+            "Sampling weight for train frames containing truncated, occluded, "
+            "or otherwise invisible labeled corners. Use 1.0 to disable."
+        ),
+    )
     parser.add_argument("--patience", type=int, default=config.PATIENCE)
     parser.add_argument("--input-height", type=int, default=config.INPUT_HEIGHT)
     parser.add_argument("--input-width", type=int, default=config.INPUT_WIDTH)
@@ -107,11 +118,25 @@ def main() -> None:
         f"Loading training samples from {args.data_root} "
         f"for runs: {', '.join(args.train_runs)}"
     )
-    all_train_frames, rejected = load_gate_samples(args.data_root, args.train_runs)
+    native_train_frames, rejected = load_gate_samples(args.data_root, args.train_runs)
+    all_train_frames = scale_frames_for_training(
+        native_train_frames,
+        args.input_width,
+        args.input_height,
+    )
     log_status(
-        f"Loaded {len(all_train_frames)} frames with "
+        f"Loaded {len(native_train_frames)} native frames and scaled them to "
+        f"{args.input_width}x{args.input_height} for training with "
         f"{sum(len(frame.gates) for frame in all_train_frames)} usable gates; "
         f"{len(rejected)} gate/frame records rejected"
+    )
+    configured_pixel_scale_x = args.input_width / config.DATASET_FRAME_WIDTH
+    configured_pixel_scale_y = args.input_height / config.DATASET_FRAME_HEIGHT
+    log_status(
+        "Configured metadata-to-NN pixel scale "
+        f"x={configured_pixel_scale_x:.6f}, y={configured_pixel_scale_y:.6f} "
+        f"for {config.DATASET_FRAME_WIDTH}x{config.DATASET_FRAME_HEIGHT} -> "
+        f"{args.input_width}x{args.input_height}"
     )
     train_frames, validation_frames = split_train_validation(
         all_train_frames,
@@ -144,10 +169,22 @@ def main() -> None:
     train_dataset = GateDetectionDataset(train_frames, augment=True)
     validation_dataset = GateDetectionDataset(validation_frames, augment=False)
     generator = torch.Generator().manual_seed(args.seed)
+    train_sampler = build_partial_frame_sampler(
+        train_frames,
+        args.partial_frame_sampling_weight,
+        generator,
+    )
+    if train_sampler is not None:
+        partial_count = sum(1 for frame in train_frames if frame_has_partial_gate(frame))
+        log_status(
+            f"Using partial-frame sampler: {partial_count}/{len(train_frames)} "
+            f"train frames weighted x{args.partial_frame_sampling_weight:g}"
+        )
     train_loader = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
-        shuffle=True,
+        shuffle=train_sampler is None,
+        sampler=train_sampler,
         num_workers=args.workers,
         pin_memory=device.type == "cuda",
         worker_init_fn=seed_worker,
@@ -168,7 +205,8 @@ def main() -> None:
     log_status(
         f"Building Keypoint R-CNN model, input_size={input_size}, "
         f"pretrained={args.pretrained}, score_threshold={args.score_threshold}, "
-        f"detections_per_image={args.detections_per_image}"
+        f"detections_per_image={args.detections_per_image}, "
+        f"keypoints={KEYPOINT_COUNT}"
     )
     model = GateDetector(
         pretrained=args.pretrained,
@@ -176,6 +214,7 @@ def main() -> None:
         score_threshold=args.score_threshold,
         detections_per_image=args.detections_per_image,
         box_nms_threshold=args.box_nms_threshold,
+        keypoint_count=KEYPOINT_COUNT,
         allow_random_init_on_pretrained_failure=(
             args.allow_random_init_on_pretrained_failure
         ),
@@ -305,6 +344,7 @@ def main() -> None:
             f"val={validation_loss:.4f} "
             f"F1={validation_metrics['detection_f1']:.3f} "
             f"corner={_format_metric(validation_metrics['matched_corner_mean_distance_px'], 'px')} "
+            f"pos_l2={_format_metric(validation_metrics['position_l2_mean_m'], 'm')} "
             f"yaw180={_format_metric(validation_metrics['orientation_mae_deg']['yaw_mod_180'], 'deg')} "
             f"time={epoch_record['elapsed_seconds']:.1f}s"
         )
@@ -431,6 +471,39 @@ def move_batch(
     )
 
 
+def build_partial_frame_sampler(
+    frames: list[GateFrame],
+    partial_frame_sampling_weight: float,
+    generator: torch.Generator,
+) -> WeightedRandomSampler | None:
+    if partial_frame_sampling_weight <= 1.0:
+        return None
+    weights = [
+        partial_frame_sampling_weight if frame_has_partial_gate(frame) else 1.0
+        for frame in frames
+    ]
+    if all(weight == 1.0 for weight in weights):
+        return None
+    return WeightedRandomSampler(
+        weights=torch.as_tensor(weights, dtype=torch.double),
+        num_samples=len(weights),
+        replacement=True,
+        generator=generator,
+    )
+
+
+def frame_has_partial_gate(frame: GateFrame) -> bool:
+    for gate in frame.gates:
+        visibility = (
+            gate.all_keypoint_visibility
+            if gate.all_keypoint_visibility is not None
+            else gate.keypoint_visibility
+        )
+        if len(visibility) and np.any(np.asarray(visibility) <= 0.0):
+            return True
+    return False
+
+
 def save_checkpoint(
     path: Path,
     model: GateDetector,
@@ -451,15 +524,34 @@ def save_checkpoint(
                 "pretrained_requested": bool(args.pretrained),
                 "pretrained_initialization": model.pretrained_loaded,
                 "input_size": [args.input_height, args.input_width],
+                "dataset_frame_size": [
+                    config.DATASET_FRAME_HEIGHT,
+                    config.DATASET_FRAME_WIDTH,
+                ],
+                "pixel_scale": {
+                    "x": args.input_width / config.DATASET_FRAME_WIDTH,
+                    "y": args.input_height / config.DATASET_FRAME_HEIGHT,
+                },
                 "score_threshold": args.score_threshold,
                 "detections_per_image": args.detections_per_image,
+                "keypoint_count": KEYPOINT_COUNT,
+                "keypoint_order": [
+                    "outer_TL",
+                    "outer_TR",
+                    "outer_BL",
+                    "outer_BR",
+                    "inner_TL",
+                    "inner_TR",
+                    "inner_BL",
+                    "inner_BR",
+                ],
                 "box_nms_threshold": args.box_nms_threshold,
                 "duplicate_iou_threshold": args.duplicate_iou_threshold,
                 "suppress_contained_duplicates": args.suppress_contained_duplicates,
                 "duplicate_containment_area_ratio": (
                     args.duplicate_containment_area_ratio
                 ),
-                "keypoint_order": ["image_TL", "image_TR", "image_BL", "image_BR"],
+                "partial_frame_sampling_weight": args.partial_frame_sampling_weight,
                 "yaw_period_degrees": 180,
             },
             "camera_calibration": calibration.to_dict(),
@@ -517,6 +609,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--duplicate-iou-threshold must be between zero and one")
     if args.duplicate_containment_area_ratio < 0.0:
         raise ValueError("--duplicate-containment-area-ratio cannot be negative")
+    if args.partial_frame_sampling_weight < 1.0:
+        raise ValueError("--partial-frame-sampling-weight must be at least 1.0")
     overlap = set(args.train_runs) & set(args.test_runs)
     if overlap:
         raise ValueError(f"Runs cannot be both training and held-out test data: {overlap}")

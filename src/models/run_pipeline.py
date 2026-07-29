@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import random
 import re
 import subprocess
 import sys
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from src.models import config
 from src.models.training.targets import discover_run_dirs, run_display_name
@@ -18,12 +23,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--train-runs",
         nargs="+",
-        help="Training runs. By default, uses every discovered run except the newest.",
+        help=(
+            "Training runs. By default, uses every discovered run except one "
+            "seeded-random held-out run."
+        ),
     )
     parser.add_argument(
         "--test-runs",
         nargs="+",
-        help="Held-out runs. By default, uses the newest discovered run.",
+        help="Held-out runs. By default, selects one discovered run at random.",
     )
     parser.add_argument("--output-dir", type=Path, default=config.MODEL_OUTPUT_DIR)
     parser.add_argument("--epochs", type=int, default=config.EPOCHS)
@@ -38,6 +46,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default=config.DEVICE)
     parser.add_argument("--seed", type=int, default=config.SEED)
     parser.add_argument("--patience", type=int, default=config.PATIENCE)
+    parser.add_argument(
+        "--partial-frame-sampling-weight",
+        type=float,
+        default=config.PARTIAL_FRAME_SAMPLING_WEIGHT,
+    )
     parser.add_argument("--freeze-backbone-epochs", type=int, default=config.FREEZE_BACKBONE_EPOCHS)
     parser.add_argument(
         "--overlay-count",
@@ -76,7 +89,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    root = Path(__file__).resolve().parents[2]
+    root = ROOT
     data_root = (root / args.data_root).resolve()
     output_dir = (root / args.output_dir).resolve()
     checkpoint = output_dir / "best.pt"
@@ -85,6 +98,7 @@ def main() -> None:
         data_root,
         args.train_runs,
         args.test_runs,
+        args.seed,
     )
     print(f"Training runs: {', '.join(train_runs)}")
     print(f"Held-out test runs: {', '.join(test_runs)}")
@@ -116,6 +130,8 @@ def main() -> None:
         str(args.seed),
         "--patience",
         str(args.patience),
+        "--partial-frame-sampling-weight",
+        str(args.partial_frame_sampling_weight),
         "--freeze-backbone-epochs",
         str(args.freeze_backbone_epochs),
         "--input-height",
@@ -189,7 +205,9 @@ def discover_run_split(
     data_root: Path,
     requested_train_runs: list[str] | None,
     requested_test_runs: list[str] | None,
+    seed: int = config.SEED,
 ) -> tuple[list[str], list[str]]:
+    data_root = data_root.resolve()
     discovered = sorted(
         (run_display_name(data_root, path) for path in discover_run_dirs(data_root)),
         key=_run_sort_key,
@@ -202,7 +220,8 @@ def discover_run_split(
             raise ValueError(
                 "Automatic splitting requires at least two runs so one can remain held out."
             )
-        return discovered[:-1], [discovered[-1]]
+        held_out = random.Random(seed).choice(discovered)
+        return [run_name for run_name in discovered if run_name != held_out], [held_out]
 
     test_runs = (
         list(requested_test_runs)

@@ -67,6 +67,8 @@ def finish_batch(batch_number):
         start_batch(batch_number + 1)
         return
 
+    if config.SAVE_FRAMES:
+        dataset_collection_runtime.restore_capture_every_frame()
     unreal.log(f"All {config.RUN_COUNT} dataset generation batch(es) complete")
 
 

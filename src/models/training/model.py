@@ -18,7 +18,7 @@ from src.models.training.targets import KEYPOINT_COUNT
 
 
 class GateDetector(nn.Module):
-    """One-class detector with four side-invariant keypoints per gate."""
+    """One-class detector with outer and inner gate keypoints."""
 
     def __init__(
         self,
@@ -27,10 +27,12 @@ class GateDetector(nn.Module):
         score_threshold: float = 0.7,
         detections_per_image: int = 12,
         box_nms_threshold: float = 0.5,
+        keypoint_count: int = KEYPOINT_COUNT,
         allow_random_init_on_pretrained_failure: bool = False,
         **_: object,
     ) -> None:
         super().__init__()
+        self.keypoint_count = keypoint_count
         weights = KeypointRCNN_ResNet50_FPN_Weights.DEFAULT if pretrained else None
         anchor_generator = AnchorGenerator(
             sizes=((8,), (16,), (32,), (64,), (128,)),
@@ -65,7 +67,7 @@ class GateDetector(nn.Module):
                 weights=None,
                 weights_backbone=None,
                 num_classes=2,
-                num_keypoints=KEYPOINT_COUNT,
+                num_keypoints=keypoint_count,
                 rpn_anchor_generator=anchor_generator,
                 min_size=input_size[0],
                 max_size=input_size[1],
@@ -85,7 +87,7 @@ class GateDetector(nn.Module):
         )
         detector.roi_heads.keypoint_predictor = KeypointRCNNPredictor(
             keypoint_features,
-            KEYPOINT_COUNT,
+            keypoint_count,
         )
 
         self.detector = detector

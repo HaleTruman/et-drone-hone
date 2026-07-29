@@ -1,0 +1,254 @@
+================================================================================
+INSTRUCTION SET: REFACTOR GATE DETECTION + POSE TRAINING FRAMEWORK
+For an LLM coding agent operating on an existing Unreal-generated dataset
+and CNN training pipeline for AI Grand Prix-style quadrotor gate perception.
+================================================================================
+
+PURPOSE
+-------
+Convert the existing training framework so that the network:
+  - Predicts full metric relative pose (t_cam + orientation) as the primary output
+  - Derives 2-D keypoints by projecting a known 3-D gate model
+  - Explicitly predicts per-keypoint visibility
+  - Correctly handles partial visibility, truncation (off-screen), and occlusion
+  - Avoids the common “perfect axis-aligned rectangle” collapse
+  - Respects the front/back appearance ambiguity of the gates
+  - Matches the competition camera model (640×360, known intrinsics)
+  - Produces measurements compatible with the robust gate-mapping / object-SLAM
+    strategy (relative pose in camera frame)
+
+Do NOT invent new coordinate conventions. Follow the project standards:
+  - World / inertial: NED
+  - Body: FRD (or project default)
+  - Camera origin coincides with body origin, tilted +20° about body Y
+  - Camera frame used in labels: right / up / forward
+  - Gate outer size 2.7 m × 2.7 m, inner 1.5 m × 1.5 m, depth 0.26 m
+
+
+1. DATASET / METADATA PREPROCESSING
+-----------------------------------
+
+1.1 High-resolution rendering (optional but recommended)
+- Source frames may be rendered at 1920×1080 (or any 16:9 multiple) for quality.
+- Final training images MUST be exactly 640×360.
+- Downscale with a high-quality filter (OpenCV INTER_AREA or Lanczos).
+- After downscaling, all 2-D labels (keypoints, bboxes) must be scaled by 1/3
+  or, preferably, re-projected from 3-D using the competition intrinsics.
+
+1.2 Camera model (hard-code or store once per dataset)
+  width, height = 640, 360
+  cx, cy = 320.0, 180.0
+  fx, fy = 320.0, 320.0
+  VFoV = 90°
+  no lens distortion
+  body-to-camera: translation = [0,0,0], tilt = +20° about body Y
+
+1.3 Units
+- Convert every position and t_cam vector to metres.
+- Store an explicit “units”: “m” field or guarantee the conversion in the
+  dataloader. Unreal default is usually centimetres; do not leave this implicit.
+
+1.4 Canonical orientation (front/back ambiguity)
+Gates look identical from front and back. At metadata generation (or in a
+one-time preprocessing pass):
+- Force a consistent normal direction using the target_gate / sequential track
+  order / expected approach direction.
+- Choose the orientation whose normal has a positive (or larger) component
+  along the expected flight direction through the gate.
+- Store both the canonical relative quaternion and the original world pose.
+- The network is trained only on the canonical side. The mapping layer will
+  resolve residual 180° flips later.
+
+1.5 Required label fields per gate (create a clean “labels” block)
+For every gate that has any visibility:
+  t_cam_m          : [right, up, forward] in metres (camera frame)
+  q_cam            : unit quaternion [w, x, y, z]  (or 6-D representation)
+  keypoints_3d     : 8×3 outer+inner corners in gate-local frame (fixed)
+  keypoints_2d     : 8×2 pixel coordinates (may lie outside [0,W]×[0,H])
+  keypoint_visibility : 8 floats or binaries
+      (1 = inside frame AND line-of-sight free, 0 otherwise)
+  is_target        : bool
+  label            : string (AIGP_GateN)
+  bbox_xyxy        : optional, derived from keypoints if desired
+
+Also keep the original rich metadata for debugging, but the training loop
+should read only the clean labels block.
+
+
+2. NETWORK OUTPUT HEADS (PRIMARY CHANGE)
+----------------------------------------
+
+Replace or augment any pure 2-D keypoint / bbox head with the following
+primary outputs:
+
+A. Pose head (main output)
+   - t_cam : 3-D translation (metres) in camera frame
+   - orientation : quaternion (4) or continuous 6-D representation
+   - Optional uncertainty / confidence scalar
+
+B. Visibility head
+   - 8 logits (one per corner) → sigmoid → visibility probabilities
+
+C. (Optional but useful) Keypoint residual head
+   - 8×2 residual offsets that refine the projected keypoints
+   - Supervised ONLY on visible corners
+
+D. (Optional) Gate presence / objectness score
+
+The 2-D keypoints that are used for visualisation or secondary losses are
+OBTAINED BY PROJECTION, not by free regression:
+
+  projected_kpts_2d = project(known_3d_gate_corners, t_cam, q_cam, K)
+
+where K is the 640×360 intrinsic matrix.
+This single change eliminates the “perfect rectangle” collapse.
+
+
+3. LOSS FUNCTION
+----------------
+
+L = L_pose + λ_vis * L_visibility + λ_proj * L_reprojection
+    + λ_geo * L_geometric + λ_res * L_residual   (if residual head exists)
+
+3.1 Pose loss
+- Translation: smooth-L1 or Huber on t_cam (metres)
+- Orientation: geodesic distance on SO(3) or quaternion loss that is invariant
+  to the double cover (min(d(q, q_gt), d(q, -q_gt)))
+- Because orientation was canonicalised, a plain geodesic loss is sufficient.
+  If residual front/back ambiguity is still desired, expand the min over the
+  180° flip around the gate local up-axis.
+
+3.2 Visibility loss
+- Binary cross-entropy or focal loss on the 8 visibility predictions
+  against the ground-truth keypoint_visibility flags.
+
+3.3 Reprojection loss
+- Project the known 3-D corners with the predicted pose.
+- Apply smooth-L1 only on the corners whose GT visibility > threshold.
+- This term keeps the pose head honest even when many corners are missing.
+
+3.4 Geometric consistency (optional but stabilising)
+- Enforce known outer/inner side lengths after unprojection
+- Opposite sides parallel / equal length
+- Planarity of the four outer (and four inner) points
+
+3.5 Residual keypoint loss (if present)
+- Only on visible corners; zero weight on invisible ones.
+
+Do NOT apply a strong independent 2-D keypoint regression loss that lets the
+network ignore the pose head. The pose → project path must remain the dominant
+route for 2-D coordinates.
+
+
+4. HANDLING PARTIAL / OCCLUDED / OFF-SCREEN GATES
+-------------------------------------------------
+
+- Always supervise the full pose (t_cam + q) regardless of how many corners
+  are visible.
+- Visibility head tells downstream code which projected corners are trustworthy.
+- At inference:
+    visible = [i for i,v in enumerate(vis) if v > thresh]
+    if len(visible) >= 4:
+        # optional: run robust PnP on the projected+refined visible corners
+        # as a refinement or consistency check
+    else:
+        rely on the direct pose head
+- Allow projected coordinates to fall outside the image; never clamp them
+  during training.
+- Heavily oversample truncated and occluded examples in the training set
+  (easy to generate in Unreal). Use a curriculum if the “perfect rectangle”
+  mode reappears: start with mostly fully-visible gates, then increase the
+  fraction of partial examples.
+
+
+5. ORIENTATION REPRESENTATION
+-----------------------------
+
+- Prefer quaternion or 6-D continuous representation for the network head.
+- Store Euler angles only for human debugging / logging.
+- At loss time always handle the quaternion double-cover (q and -q).
+- Canonicalisation (section 1.4) removes the front/back 180° ambiguity from
+  the training labels; the mapping layer is responsible for any remaining
+  sequential consistency.
+
+
+6. TRAINING PIPELINE CHANGES
+----------------------------
+
+- Dataloader must return:
+    image (640×360 RGB)
+    list of gates, each with t_cam_m, q_cam, keypoint_visibility, is_target, …
+- Collate function must handle a variable number of gates per image
+  (including zero).
+- Augmentations: standard photometric + small geometric (do not break the
+  known intrinsics relationship). Avoid heavy random crops that destroy the
+  calibration.
+- Evaluation metrics:
+    - Pose error: translation (m) + rotation (deg) on gates with sufficient
+      visibility
+    - Keypoint error only on visible corners
+    - Visibility classification accuracy / AP
+    - Detection AP treating a gate as true-positive when pose error is below
+      thresholds (e.g. 0.3 m / 15°)
+
+
+7. INFERENCE / INTERFACE TO MAPPING LAYER
+-----------------------------------------
+
+The vision model must emit, for every detected gate:
+  t_cam          (metres, camera frame)
+  orientation    (quaternion or rotation matrix)
+  confidence / visibility summary
+  (optional) 8 projected keypoints + their visibility scores
+
+This matches the expected measurement model of the robust gate-mapping
+strategy (relative pose in camera frame, later transformed by
+T_NED_body * T_body_cam).
+
+
+8. IMPLEMENTATION ORDER (for the coding agent)
+----------------------------------------------
+
+1. Add / verify the clean “labels” block and metric conversion in the dataset
+   preprocessing script.
+2. Implement the camera projection function (known 3-D gate model → 2-D)
+   using the exact competition intrinsics.
+3. Change the network heads: primary pose head + visibility head.
+4. Rewrite the loss to be pose-centric with masked reprojection.
+5. Add the optional residual keypoint head if desired.
+6. Update the dataloader and training loop.
+7. Add evaluation that reports both pose error and visibility metrics.
+8. Verify on a held-out set that heavily truncated gates no longer collapse
+   to axis-aligned rectangles and that predicted keypoints lie on the
+   correctly perspective-distorted quadrilateral.
+
+
+9. NON-GOALS / THINGS TO AVOID
+------------------------------
+
+- Do not train a free 8-keypoint regressor as the primary output; that path
+  produced the perfect-rectangle failure mode.
+- Do not clamp keypoints to the image border during training.
+- Do not ignore the visibility flags; they are essential for correct loss
+  masking and for downstream PnP.
+- Do not introduce a new camera or body frame convention.
+- Do not leave units in centimetres.
+
+
+10. SUCCESS CRITERIA
+--------------------
+
+After the refactor the following must hold:
+- On fully visible gates the projected keypoints match the classic
+  perspective quadrilateral (not a rectangle unless the gate is truly
+  fronto-parallel).
+- On heavily truncated gates the network still outputs a coherent full pose
+  and the projected invisible corners lie outside the image in the
+  geometrically correct locations.
+- Visibility scores are high only for corners that are truly observable.
+- The emitted (t_cam, orientation) can be consumed directly by the existing
+  robust gate-mapping code with only trivial format conversion.
+
+================================================================================
+END OF INSTRUCTION SET
+================================================================================

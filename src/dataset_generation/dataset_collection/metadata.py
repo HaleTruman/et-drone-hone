@@ -4,7 +4,11 @@ import json
 
 import unreal
 
-from src.dataset_generation.common import rotator_to_dict, vector_to_dict, component_name
+from src.dataset_generation.common import (
+    rotator_to_dict,
+    vector_to_meters_dict,
+    component_name,
+)
 from src.dataset_generation.config import (
     BBOX_CORNER_NAMES,
     GATE_CORNER_NAMES,
@@ -13,11 +17,17 @@ from src.dataset_generation.config import (
     FRAME_HEIGHT,
     SAVE_FRAME_METADATA,
 )
-from src.dataset_generation.dataset_collection.outputs import frame_file_path, frame_metadata_path, frame_metadata_jsonl_path, current_run_dir
+from src.dataset_generation.dataset_collection.outputs import (
+    dataset_camera_intrinsics_path,
+    frame_file_path,
+    frame_metadata_path,
+    frame_metadata_jsonl_path,
+    current_run_dir,
+)
 from src.dataset_generation.dataset_collection.projection import (
-    world_location_to_camera_frame, world_location_to_camera_frame_ruf, gate_orientation_in_camera_frame,
+    world_location_to_camera_frame, world_location_to_camera_frame_ruf,
     gate_orientation_axes_camera_frame_ruf, gate_relative_euler_camera_frame, project_world_to_render_frame,
-    bbox_from_projected_points,
+    bbox_from_projected_points, camera_intrinsics, quaternion_from_relative_euler_deg,
 )
 from src.dataset_generation.dataset_collection.visibility import trace_visibility_to_point, image_visibility
 
@@ -150,13 +160,48 @@ def component_world_location(component):
 
 def missing_marker_projection():
     return {
-        "world": None,
-        "camera_frame": None,
-        "pixel": None,
+        "world_m": None,
+        "camera_frame_m": None,
+        "pixel_px": None,
         "in_front_of_camera": False,
         "inside_frame": False,
         "missing": True,
     }
+
+
+def nested_corner_metadata(corners):
+    nested = {"outer": {}, "inner": {}}
+    for corner_name, projection in corners.items():
+        parts = corner_name.split("_")
+        if len(parts) < 3:
+            continue
+        ring = parts[1].lower()
+        location = parts[2].lower()
+        if ring in nested:
+            nested[ring][location] = projection
+    return nested
+
+
+def write_dataset_camera_intrinsics(camera):
+    intrinsics = camera_intrinsics(camera)
+    payload = {
+        "camera": {
+            "label": camera.get_actor_label(),
+            "intrinsics": intrinsics,
+            "coordinate_frame": {
+                "relative_position_axes": ["right", "up", "forward"],
+                "relative_orientation_euler_order": "yaw_deg, pitch_deg, roll_deg",
+                "relative_orientation_quat_identity": {
+                    "w": 1.0,
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0,
+                },
+            },
+        }
+    }
+    with open(dataset_camera_intrinsics_path(), "w", encoding="utf-8") as intrinsics_file:
+        json.dump(payload, intrinsics_file, indent=2)
 
 
 def project_bbox_markers(camera, gate):
@@ -177,6 +222,7 @@ def project_bbox_markers(camera, gate):
 
 def gate_metadata_for_frame(world_context, camera, gate):
     gate_location = gate.get_actor_location()
+    relative_orientation_euler_deg = gate_relative_euler_camera_frame(camera, gate)
     corner_components = gate_corner_components(gate)
     corners = {}
     corner_locations = {}
@@ -199,9 +245,9 @@ def gate_metadata_for_frame(world_context, camera, gate):
                 continue
 
         corners[corner_name] = {
-            "world": None,
-            "camera_frame": None,
-            "pixel": None,
+            "world_m": None,
+            "camera_frame_m": None,
+            "pixel_px": None,
             "in_front_of_camera": False,
             "inside_frame": False,
             "visibility": {
@@ -233,24 +279,29 @@ def gate_metadata_for_frame(world_context, camera, gate):
     return {
         "label": gate.get_actor_label(),
         "visible": bool(visible),
-        "world_location": vector_to_dict(gate_location),
-        "world_rotation": rotator_to_dict(gate.get_actor_rotation()),
-        "camera_frame_location": vector_to_dict(
+        "world_location_m": vector_to_meters_dict(gate_location),
+        "world_rotation_deg": rotator_to_dict(gate.get_actor_rotation()),
+        "camera_frame_location_m": vector_to_meters_dict(
             world_location_to_camera_frame(camera, gate_location)
         ),
-        "relative_position_camera_frame": world_location_to_camera_frame_ruf(
-            camera,
-            gate_location,
-        ),
-        "camera_frame_orientation_axes": gate_orientation_in_camera_frame(camera, gate),
+        "relative_position_camera_frame_m": {
+            axis: value / 100.0
+            for axis, value in world_location_to_camera_frame_ruf(
+                camera,
+                gate_location,
+            ).items()
+        },
         "relative_orientation_axes_camera_frame": gate_orientation_axes_camera_frame_ruf(
             camera,
             gate,
         ),
-        "relative_orientation_euler_deg": gate_relative_euler_camera_frame(camera, gate),
-        "corners": corners,
+        "relative_orientation_euler_deg": relative_orientation_euler_deg,
+        "relative_orientation_quat": quaternion_from_relative_euler_deg(
+            relative_orientation_euler_deg
+        ),
+        "corners": nested_corner_metadata(corners),
         "bbox_corners": bbox_corners,
-        "bbox_2d": bbox_2d,
+        "bbox_2d_px": bbox_2d,
         "visible_in_frame": bool(visible),
     }
 
@@ -272,12 +323,12 @@ def write_frame_metadata(world_context, camera, gates, frame_number, pose, frame
         "run_dir": current_run_dir(),
         "frame_path": frame_path,
         "frame_saved": bool(frame_saved),
-        "frame_width": FRAME_WIDTH,
-        "frame_height": FRAME_HEIGHT,
+        "frame_width_px": FRAME_WIDTH,
+        "frame_height_px": FRAME_HEIGHT,
         "camera": {
             "label": camera.get_actor_label(),
-            "world_location": vector_to_dict(camera.get_actor_location()),
-            "world_rotation": rotator_to_dict(camera.get_actor_rotation()),
+            "world_location_m": vector_to_meters_dict(camera.get_actor_location()),
+            "world_rotation_deg": rotator_to_dict(camera.get_actor_rotation()),
         },
         "target_gate": target_gate,
         "gates": visible_gates,

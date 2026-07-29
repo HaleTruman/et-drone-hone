@@ -282,7 +282,13 @@ function validationFrameUrl(validationName, frame) {
 
 function loadImage(src) {
   return new Promise((resolve, reject) => {
-    state.image.onload = resolve;
+    state.image.onload = () => {
+      if (state.image.naturalWidth && state.image.naturalHeight) {
+        el.canvas.width = state.image.naturalWidth;
+        el.canvas.height = state.image.naturalHeight;
+      }
+      resolve();
+    };
     state.image.onerror = reject;
     state.image.src = `${src}?t=${Date.now()}`;
   });
@@ -307,7 +313,7 @@ function drawRunFrame() {
     const color = colors[index % colors.length];
 
     if (el.showBbox.checked) {
-      drawBox(gate.bbox_2d, color, [], gate.label);
+      drawBox(gate.bbox_2d_px || gate.bbox_2d, color, [], gate.label);
     }
 
     if (el.showCorners.checked) {
@@ -343,6 +349,11 @@ function drawEvaluationLayers(frame) {
   if (!frame) return;
   if (state.evaluationImageMode !== "source") return;
 
+  const scaleX = frame.frame_width_px ? el.canvas.width / frame.frame_width_px : 1;
+  const scaleY = frame.frame_height_px ? el.canvas.height / frame.frame_height_px : 1;
+  ctx.save();
+  ctx.scale(scaleX, scaleY);
+
   if (el.showEvalTruthBbox.checked || el.showEvalTruthCorners.checked) {
     (frame.targets || []).forEach((target, index) => {
       const color = "#50ff64";
@@ -377,19 +388,24 @@ function drawEvaluationLayers(frame) {
   if (el.showEvalLabels.checked) {
     drawEvaluationLegend(frame);
   }
+  ctx.restore();
 }
 
 function drawBox(box, color, dash, label) {
-  if (!box || box.width <= 0 || box.height <= 0) return;
+  const x = box && (box.x_min_px ?? box.x_min);
+  const y = box && (box.y_min_px ?? box.y_min);
+  const width = box && (box.width_px ?? box.width);
+  const height = box && (box.height_px ?? box.height);
+  if (!box || width <= 0 || height <= 0) return;
 
   ctx.save();
   ctx.strokeStyle = color;
   ctx.lineWidth = label === "visible" ? 2 : 1;
   ctx.setLineDash(dash);
-  ctx.strokeRect(box.x_min, box.y_min, box.width, box.height);
+  ctx.strokeRect(x, y, width, height);
   ctx.fillStyle = color;
   ctx.font = "12px Arial";
-  ctx.fillText(label, box.x_min + 4, Math.max(12, box.y_min - 4));
+  ctx.fillText(label, x + 4, Math.max(12, y - 4));
   ctx.restore();
 }
 
@@ -464,19 +480,22 @@ function drawEvaluationLegend(frame) {
 
 function predictionLabel(detection, index) {
   let label = `#${index + 1} ${formatNumber(detection.score, 2)}`;
-  const position = detection.relative_position_camera_frame_cm;
+  const position = detection.relative_position_camera_frame_m || detection.relative_position_camera_frame_cm;
   const orientation = detection.relative_orientation_euler_deg;
   if (position && orientation) {
+    const suffix = detection.relative_position_camera_frame_m ? "m" : "cm";
+    const decimals = detection.relative_position_camera_frame_m ? 2 : 0;
     label +=
-      ` R/U/F ${formatNumber(position.right, 0)}/${formatNumber(position.up, 0)}/${formatNumber(position.forward, 0)}cm` +
+      ` R/U/F ${formatNumber(position.right, decimals)}/${formatNumber(position.up, decimals)}/${formatNumber(position.forward, decimals)}${suffix}` +
       ` Y180/P/R ${formatNumber(orientation.yaw_mod_180_deg, 1)}/${formatNumber(orientation.pitch_deg, 1)}/${formatNumber(orientation.roll_deg, 1)}`;
   }
   return label;
 }
 
 function drawCorners(corners) {
-  for (const [name, corner] of Object.entries(corners)) {
-    if (!corner || !corner.pixel || !corner.inside_frame) continue;
+  for (const [name, corner] of cornerEntries(corners)) {
+    const pixel = corner && (corner.pixel_px || corner.pixel);
+    if (!corner || !pixel || !corner.inside_frame) continue;
     const visible = corner.visibility && corner.visibility.visible;
     const color = cornerColors[name] || "#ffffff";
 
@@ -485,11 +504,26 @@ function drawCorners(corners) {
     ctx.strokeStyle = "#000";
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(corner.pixel.x, corner.pixel.y, 2, 0, Math.PI * 2);
+    ctx.arc(pixel.x, pixel.y, 2, 0, Math.PI * 2);
     ctx.stroke();
     ctx.fill();
     ctx.restore();
   }
+}
+
+function cornerEntries(corners) {
+  if (!corners) return [];
+  if (corners.outer || corners.inner) {
+    const entries = [];
+    for (const [ring, group] of Object.entries(corners)) {
+      if (!group || typeof group !== "object") continue;
+      for (const [location, corner] of Object.entries(group)) {
+        entries.push([`Corner_${ring}_${location.toUpperCase()}`, corner]);
+      }
+    }
+    return entries;
+  }
+  return Object.entries(corners);
 }
 
 function updateRunFrameInfo(frame) {
@@ -587,7 +621,7 @@ function updateEvaluationGateList(frame) {
       item.className = "gate gate-match";
       item.innerHTML = `
         <strong>Prediction ${index + 1} score ${formatNumber(detection.score, 3)}</strong>
-        ${renderPoseBlock("Estimate", detection.relative_position_camera_frame_cm, detection.relative_orientation_euler_deg)}
+        ${renderPoseBlock("Estimate", detection.relative_position_camera_frame_m || detection.relative_position_camera_frame_cm, detection.relative_orientation_euler_deg, detection.relative_position_camera_frame_m ? "m" : "cm")}
         <span>Reprojection error: ${formatNumber(detection.pose_reprojection_error_px, 2)} px</span>
       `;
       el.gateList.appendChild(item);
@@ -614,7 +648,7 @@ function updateEvaluationGateList(frame) {
     item.innerHTML = `
       <strong>Missed truth: ${escapeHtml(target.gate_label)}</strong>
       ${renderVisibilityTag(getVisibilityTag(target))}
-      ${renderPoseBlock("Truth", target.relative_position_camera_frame_cm, target.relative_orientation_euler_deg)}
+      ${renderPoseBlock("Truth", target.relative_position_camera_frame_m || target.relative_position_camera_frame_cm, target.relative_orientation_euler_deg, target.relative_position_camera_frame_m ? "m" : "cm")}
     `;
     el.gateList.appendChild(item);
   }
@@ -626,7 +660,7 @@ function updateEvaluationGateList(frame) {
     item.innerHTML = `
       <strong>False positive ${detectionIndex + 1} score ${formatNumber(detection.score, 3)}</strong>
       ${renderVisibilityTag(getVisibilityTag(detection))}
-      ${renderPoseBlock("Estimate", detection.relative_position_camera_frame_cm, detection.relative_orientation_euler_deg)}
+      ${renderPoseBlock("Estimate", detection.relative_position_camera_frame_m || detection.relative_position_camera_frame_cm, detection.relative_orientation_euler_deg, detection.relative_position_camera_frame_m ? "m" : "cm")}
       <span>Reprojection error: ${formatNumber(detection.pose_reprojection_error_px, 2)} px</span>
     `;
     el.gateList.appendChild(item);
@@ -637,8 +671,8 @@ function renderMatch(frame, match) {
   const target = frame.targets[match.targetIndex];
   const detection = frame.detections[match.detectionIndex];
   const positionError = vectorError(
-    detection.relative_position_camera_frame_cm,
-    target.relative_position_camera_frame_cm,
+    detection.relative_position_camera_frame_m || detection.relative_position_camera_frame_cm,
+    target.relative_position_camera_frame_m || target.relative_position_camera_frame_cm,
     ["right", "up", "forward"],
   );
   const orientationError = orientationErrors(
@@ -654,11 +688,11 @@ function renderMatch(frame, match) {
       ${renderVisibilityTag(getVisibilityTag(target), "Truth")}
       ${renderVisibilityTag(getVisibilityTag(detection), "Estimate")}
     </div>
-    ${renderPoseBlock("Truth", target.relative_position_camera_frame_cm, target.relative_orientation_euler_deg)}
-    ${renderPoseBlock("Estimate", detection.relative_position_camera_frame_cm, detection.relative_orientation_euler_deg)}
+    ${renderPoseBlock("Truth", target.relative_position_camera_frame_m || target.relative_position_camera_frame_cm, target.relative_orientation_euler_deg, target.relative_position_camera_frame_m ? "m" : "cm")}
+    ${renderPoseBlock("Estimate", detection.relative_position_camera_frame_m || detection.relative_position_camera_frame_cm, detection.relative_orientation_euler_deg, detection.relative_position_camera_frame_m ? "m" : "cm")}
     <div class="metric-grid">
-      <span>Position error</span><b>${formatVector(positionError.values, 1)} cm</b>
-      <span>Position L2</span><b>${formatNumber(positionError.l2, 1)} cm</b>
+      <span>Position error</span><b>${formatVector(positionError.values, 2)} m</b>
+      <span>Position L2</span><b>${formatNumber(positionError.l2, 2)} m</b>
       <span>Orientation error</span><b>${formatVector(orientationError, 1)} deg</b>
     </div>
   `;
@@ -691,9 +725,9 @@ function getVisibilityTag(item) {
   if (item.visible_in_frame === false) return "off-screen";
   if (item.visible === false) return "occluded";
 
-  const corners = item.corners && Object.values(item.corners);
+  const corners = item.corners && cornerEntries(item.corners).map(([, corner]) => corner);
   if (corners && corners.length) {
-    const outerCorners = corners.filter((corner) => corner && corner.pixel);
+    const outerCorners = corners.filter((corner) => corner && (corner.pixel_px || corner.pixel));
     const insideCount = outerCorners.filter((corner) => corner.inside_frame).length;
     const visibleCount = outerCorners.filter(
       (corner) => corner.visibility && corner.visibility.visible,
@@ -707,7 +741,9 @@ function getVisibilityTag(item) {
 
   if (item.outer_corners_px) {
     const points = item.outer_corners_px;
-    const insideCount = points.filter(([x, y]) => x >= 0 && x < 640 && y >= 0 && y < 360).length;
+    const width = el.canvas.width || state.image.naturalWidth || 1920;
+    const height = el.canvas.height || state.image.naturalHeight || 1080;
+    const insideCount = points.filter(([x, y]) => x >= 0 && x < width && y >= 0 && y < height).length;
     if (insideCount > 0 && insideCount < points.length) return "partial";
     if (insideCount === 0) return "off-screen";
   }
@@ -734,12 +770,13 @@ function renderVisibilityTag(tag, prefix = "") {
   return `<span class="${className}">${escapeHtml(label)}</span>`;
 }
 
-function renderPoseBlock(label, position, orientation) {
+function renderPoseBlock(label, position, orientation, unit = "m") {
   if (!position || !orientation) return `<span>${label}: no pose</span>`;
+  const decimals = unit === "m" ? 2 : 1;
   return `
     <div class="pose-block">
       <span>${label}</span>
-      <code>R/U/F ${formatNumber(position.right, 1)} / ${formatNumber(position.up, 1)} / ${formatNumber(position.forward, 1)} cm</code>
+      <code>R/U/F ${formatNumber(position.right, decimals)} / ${formatNumber(position.up, decimals)} / ${formatNumber(position.forward, decimals)} ${unit}</code>
       <code>Y/P/R ${formatNumber(orientation.yaw_mod_180_deg, 1)} / ${formatNumber(orientation.pitch_deg, 1)} / ${formatNumber(orientation.roll_deg, 1)} deg</code>
     </div>
   `;

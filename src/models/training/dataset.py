@@ -11,7 +11,7 @@ import torch
 from torch.utils.data import Dataset
 from torchvision.transforms import functional as transform_functional
 
-from src.models.training.targets import GateFrame
+from src.models.training.targets import KEYPOINT_COUNT, GateFrame
 
 
 class GateDetectionDataset(Dataset):
@@ -29,6 +29,11 @@ class GateDetectionDataset(Dataset):
         sample = self.samples[index]
         with Image.open(sample.image_path) as source:
             image = source.convert("RGB")
+        if image.size != (sample.width, sample.height):
+            image = image.resize(
+                (sample.width, sample.height),
+                Image.Resampling.BILINEAR,
+            )
         horizontal_flip = self.augment and random.random() < 0.5
         if horizontal_flip:
             image = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
@@ -51,16 +56,14 @@ class GateDetectionDataset(Dataset):
             keypoints = torch.from_numpy(
                 np.stack(
                     [
-                        np.column_stack(
-                            (gate.outer_corners, gate.keypoint_visibility)
-                        )
+                        _training_keypoints_for_gate(gate)
                         for gate in sample.gates
                     ]
                 )
             ).float()
         else:
             boxes = torch.zeros((0, 4), dtype=torch.float32)
-            keypoints = torch.zeros((0, 4, 3), dtype=torch.float32)
+            keypoints = torch.zeros((0, KEYPOINT_COUNT, 3), dtype=torch.float32)
         labels = torch.ones((len(sample.gates),), dtype=torch.int64)
         area = (
             (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
@@ -83,12 +86,44 @@ class GateDetectionDataset(Dataset):
             target["keypoints"][:, :, 0] = (
                 sample.width - 1 - target["keypoints"][:, :, 0]
             )
-            target["keypoints"] = target["keypoints"][:, [1, 0, 3, 2], :]
+            target["keypoints"] = target["keypoints"][:, _horizontal_flip_order(target["keypoints"].shape[1]), :]
         return image_tensor, target, index
 
 
 # Import-compatible alias.
 GatePoseDataset = GateDetectionDataset
+
+
+def _training_keypoints_for_gate(gate: object) -> np.ndarray:
+    points = gate.all_corners if gate.all_corners is not None else gate.outer_corners
+    visibility = (
+        gate.all_keypoint_visibility
+        if gate.all_keypoint_visibility is not None
+        else gate.keypoint_visibility
+    )
+    if len(points) < KEYPOINT_COUNT:
+        pad_count = KEYPOINT_COUNT - len(points)
+        points = np.concatenate(
+            (
+                points,
+                np.repeat(points[-1:], pad_count, axis=0),
+            ),
+            axis=0,
+        )
+        visibility = np.concatenate(
+            (visibility, np.zeros((pad_count,), dtype=np.float32)),
+            axis=0,
+        )
+    return np.column_stack((points[:KEYPOINT_COUNT], visibility[:KEYPOINT_COUNT]))
+
+
+def _horizontal_flip_order(keypoint_count: int) -> list[int]:
+    order = [1, 0, 3, 2]
+    if keypoint_count >= 8:
+        order.extend([5, 4, 7, 6])
+    if keypoint_count > len(order):
+        order.extend(range(len(order), keypoint_count))
+    return order[:keypoint_count]
 
 
 def detection_collate(

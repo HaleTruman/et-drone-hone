@@ -41,6 +41,10 @@ def vec_prop(data, serial_offset, prop_idx, default=None):
     return struct.unpack_from("<ddd", data, pos + 49)
 
 
+def xyz_m(values):
+    return {"x": values[0] / 100.0, "y": values[1] / 100.0, "z": values[2] / 100.0}
+
+
 def main():
     data = ASSET.read_bytes()
     names = parse_name_map(data)
@@ -91,7 +95,7 @@ def main():
             if loc is None or scale is None:
                 raise RuntimeError(f"Missing transform for {component_name} at serial offset {serial_offset}")
 
-            size = tuple(abs(value * 100.0) for value in scale)
+            size_m = tuple(abs(value) for value in scale)
             rows.append(
                 {
                     "component_name": component_name,
@@ -100,11 +104,11 @@ def main():
                     "kind": "column" if component_name.startswith("Outer_Structure_Column") else "pylon",
                     "actor_label": "AI_Hangar_Enclosed_Interior_150x300m",
                     "actor_asset": "Content/__ExternalActors__/Hangar/9/HV/QBXWTM9RBYMCDVQYYY0XAD.uasset",
-                    "world_location_cm": {"x": loc[0], "y": loc[1], "z": loc[2]},
+                    "world_location_m": xyz_m(loc),
                     "world_rotation_deg": {"pitch": rot[0], "yaw": rot[1], "roll": rot[2]},
                     "relative_scale3d": {"x": scale[0], "y": scale[1], "z": scale[2]},
-                    "size_cm": {"x": size[0], "y": size[1], "z": size[2]},
-                    "size_source": "RelativeScale3D multiplied by 100 cm Unreal basic-shape mesh bounds",
+                    "size_m": {"x": size_m[0], "y": size_m[1], "z": size_m[2]},
+                    "size_source": "RelativeScale3D multiplied by 1 m Unreal basic-shape mesh bounds",
                     "export_record_offset": export_record_offset,
                     "serial_offset": serial_offset,
                 }
@@ -113,8 +117,8 @@ def main():
     rows.sort(
         key=lambda row: (
             row["kind"],
-            row["world_location_cm"]["x"],
-            row["world_location_cm"]["y"],
+            row["world_location_m"]["x"],
+            row["world_location_m"]["y"],
             row["component_name"],
         )
     )

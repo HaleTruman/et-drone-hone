@@ -15,6 +15,10 @@ def vec(value):
     return {"x": value.x, "y": value.y, "z": value.z}
 
 
+def vec_m(value):
+    return {"x": value.x / 100.0, "y": value.y / 100.0, "z": value.z / 100.0}
+
+
 def rot(value):
     return {"pitch": value.pitch, "yaw": value.yaw, "roll": value.roll}
 
@@ -104,16 +108,16 @@ def main():
                 "component_name": name,
                 "kind": "column" if name.startswith("Outer_Structure_Column_") else "pylon",
                 "actor_label": TARGET_ACTOR_LABEL,
-                "world_location_cm": vec(component.get_component_location()),
+                "world_location_m": vec_m(component.get_component_location()),
                 "world_rotation_deg": rot(component.get_component_rotation()),
                 "world_scale": vec(component.get_component_scale()),
-                "local_bounds_min_cm": vec(local_min) if local_min else None,
-                "local_bounds_max_cm": vec(local_max) if local_max else None,
-                "local_size_cm": vec(local_size) if local_size else None,
-                "scaled_local_size_cm": vec(scaled_local_size) if scaled_local_size else None,
-                "world_bounds_origin_cm": vec(bounds_origin) if bounds_origin else None,
-                "world_bounds_extent_cm": vec(bounds_extent) if bounds_extent else None,
-                "world_bounds_size_cm": vec(bounds_size) if bounds_size else None,
+                "local_bounds_min_m": vec_m(local_min) if local_min else None,
+                "local_bounds_max_m": vec_m(local_max) if local_max else None,
+                "local_size_m": vec_m(local_size) if local_size else None,
+                "scaled_local_size_m": vec_m(scaled_local_size) if scaled_local_size else None,
+                "world_bounds_origin_m": vec_m(bounds_origin) if bounds_origin else None,
+                "world_bounds_extent_m": vec_m(bounds_extent) if bounds_extent else None,
+                "world_bounds_size_m": vec_m(bounds_size) if bounds_size else None,
             }
         )
 

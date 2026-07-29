@@ -70,6 +70,37 @@ def find_scene_capture_for_render_target(render_target):
         "SceneCaptureComponent2D, then rerun the script."
     )
 
+
+def restore_scene_capture_every_frame_for_render_target():
+    render_target = unreal.load_asset(RENDER_TARGET_PATH)
+    if not render_target:
+        unreal.log_warning(
+            f"Could not load render target '{RENDER_TARGET_PATH}' to restore "
+            "SceneCaptureComponent2D Capture Every Frame."
+        )
+        return False
+
+    render_target_path = object_path_name(render_target)
+    restored = False
+    for actor in all_level_actors():
+        for component in actor_scene_capture_components(actor):
+            target = scene_capture_component_target(component)
+            if object_path_name(target) != render_target_path:
+                continue
+            if set_editor_property_if_present(component, "capture_every_frame", True):
+                restored = True
+                unreal.log(
+                    "Restored Capture Every Frame on SceneCaptureComponent2D "
+                    f"{component_name(component)} on actor {actor_label(actor)}."
+                )
+
+    if not restored:
+        unreal.log_warning(
+            "Could not restore Capture Every Frame; no matching "
+            "SceneCaptureComponent2D property was found."
+        )
+    return restored
+
 def set_editor_property_if_present(obj, property_name, value):
     try:
         obj.get_editor_property(property_name)

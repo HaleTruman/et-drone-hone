@@ -10,10 +10,16 @@ from src.dataset_generation.config import (
     ZERO_GATE_FRAME_PERCENT, ZERO_GATE_CAMERA_POSITIONS,
 )
 from src.dataset_generation.dataset_collection.camera_poses import (
-    camera_pose_for_gate, random_background_camera_pose, set_camera_pose,
+    CameraCoverageState,
+    coverage_camera_pose_for_gate_or_fallback,
+    random_background_camera_pose,
+    set_camera_pose,
 )
 from src.dataset_generation.dataset_collection.capture import load_render_target, find_scene_capture_for_render_target, sync_scene_capture_to_camera, export_render_target_frame
-from src.dataset_generation.dataset_collection.metadata import write_frame_metadata
+from src.dataset_generation.dataset_collection.metadata import (
+    write_dataset_camera_intrinsics,
+    write_frame_metadata,
+)
 import src.dataset_generation.dataset_collection.outputs as outputs
 from src.dataset_generation.dataset_collection.outputs import create_run_dir, reset_frame_metadata
 from src.dataset_generation.unreal_editor import (
@@ -98,9 +104,11 @@ def start_camera_sequence(camera, gates, batch_number, on_complete=None):
     )
     world_context = (editor_world() or camera) if (SAVE_FRAMES or SAVE_FRAME_METADATA) else None
     if SAVE_FRAME_METADATA:
+        write_dataset_camera_intrinsics(camera)
         reset_frame_metadata()
 
     poses = []
+    coverage_state = CameraCoverageState()
     if gates:
         normal_pose_count = len(gates) * CAMERA_POSITIONS_PER_GATE
         if ZERO_GATE_FRAME_PERCENT < 100.0:
@@ -112,7 +120,11 @@ def start_camera_sequence(camera, gates, batch_number, on_complete=None):
                         look_target,
                         yaw_offset,
                         pitch_offset,
-                    ) = camera_pose_for_gate(camera, gate)
+                    ) = coverage_camera_pose_for_gate_or_fallback(
+                        camera,
+                        gate,
+                        coverage_state,
+                    )
                     poses.append(
                         make_pose(
                             gate,
@@ -135,6 +147,7 @@ def start_camera_sequence(camera, gates, batch_number, on_complete=None):
                 f"Added {zero_gate_pose_count} zero-gate frame(s) to this run batch "
                 f"for ZERO_GATE_FRAME_PERCENT={ZERO_GATE_FRAME_PERCENT:.1f}."
             )
+        unreal.log(f"Camera coverage sampling summary: {coverage_state.compact_summary()}")
     else:
         for _ in range(ZERO_GATE_CAMERA_POSITIONS):
             poses.append(make_background_pose(camera))

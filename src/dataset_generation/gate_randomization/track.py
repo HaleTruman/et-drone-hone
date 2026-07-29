@@ -11,6 +11,8 @@ from src.dataset_generation.config import (
     TRACK_EDGE_MARGIN_CM, TRACK_WAYPOINTS_PER_GATE, TRACK_MIN_WAYPOINTS, TRACK_MAX_WAYPOINTS,
     TRACK_SPLINE_SAMPLES_PER_SEGMENT, TRACK_STEP_RANGE_CM, TRACK_TURN_RANGE_DEG,
     TRACK_Z_STEP_RANGE_CM, TRACK_VOLUME_ANCHOR_CHANCE,
+    TRACK_START_X_CM, TRACK_START_Y_CM, TRACK_START_Z_CM,
+    TRACK_END_X_CM, TRACK_END_Y_CM, TRACK_END_Z_CM,
     GATE_FORWARD_YAW_OFFSET_DEG, GATE_CENTER_SPLINE_Z_OFFSET_CM,
     OBSTACLE_CLEARANCE_CM, MAX_TRACK_LAYOUT_ATTEMPTS,
 )
@@ -36,6 +38,38 @@ def clamped_vector(x, y, z):
         clamp(y, Y_RANGE_CM),
         clamp(z, Z_RANGE_CM),
     )
+
+
+def configured_track_endpoint(x, y, z, label):
+    if not (
+        X_RANGE_CM[0] <= x <= X_RANGE_CM[1]
+        and Y_RANGE_CM[0] <= y <= Y_RANGE_CM[1]
+        and Z_RANGE_CM[0] <= z <= Z_RANGE_CM[1]
+    ):
+        raise ValueError(
+            f"Configured track {label} point ({x}, {y}, {z}) is outside "
+            f"X_RANGE_CM={X_RANGE_CM}, Y_RANGE_CM={Y_RANGE_CM}, Z_RANGE_CM={Z_RANGE_CM}."
+        )
+    return unreal.Vector(float(x), float(y), float(z))
+
+
+def track_start_point():
+    return configured_track_endpoint(
+        TRACK_START_X_CM,
+        TRACK_START_Y_CM,
+        TRACK_START_Z_CM,
+        "start",
+    )
+
+
+def track_end_point():
+    return configured_track_endpoint(
+        TRACK_END_X_CM,
+        TRACK_END_Y_CM,
+        TRACK_END_Z_CM,
+        "end",
+    )
+
 
 def catmull_rom(p0, p1, p2, p3, t):
     t2 = t * t
@@ -65,8 +99,8 @@ def catmull_rom(p0, p1, p2, p3, t):
     )
 
 def random_track_waypoints(gate_count):
-    if gate_count <= 1:
-        return [random_location()]
+    start = track_start_point()
+    end = track_end_point()
 
     x_min = X_RANGE_CM[0] + TRACK_EDGE_MARGIN_CM
     x_max = X_RANGE_CM[1] - TRACK_EDGE_MARGIN_CM
@@ -75,13 +109,14 @@ def random_track_waypoints(gate_count):
 
     waypoint_count = int(math.ceil(gate_count * TRACK_WAYPOINTS_PER_GATE))
     waypoint_count = max(TRACK_MIN_WAYPOINTS, min(TRACK_MAX_WAYPOINTS, waypoint_count))
+    waypoint_count = max(2, waypoint_count)
 
     anchors = shuffled_volume_anchors(x_min, x_max, y_min, y_max)
-    current = anchors.pop()
-    heading = random.uniform(0.0, 360.0)
+    current = start
+    heading = unreal.MathLibrary.find_look_at_rotation(start, end).yaw
     waypoints = [current]
 
-    for _ in range(waypoint_count - 1):
+    for _ in range(waypoint_count - 2):
         if anchors and random.random() < TRACK_VOLUME_ANCHOR_CHANCE:
             current = anchors.pop()
             heading = unreal.MathLibrary.find_look_at_rotation(waypoints[-1], current).yaw
@@ -105,8 +140,7 @@ def random_track_waypoints(gate_count):
             current = clamped_vector(next_x, next_y, next_z)
         waypoints.append(current)
 
-    if random.choice((False, True)):
-        waypoints.reverse()
+    waypoints.append(end)
 
     return waypoints
 
@@ -163,6 +197,37 @@ def sample_points_by_distance(points, count):
         gate_center_from_spline_location(sample["location"])
         for sample in sample_points_and_tangents_by_distance(points, count)
     ]
+
+
+def polyline_clearance_sample_points(points, max_spacing_cm):
+    if not points:
+        return []
+
+    max_spacing_cm = max(1.0, float(max_spacing_cm))
+    sampled = [points[0]]
+    for index in range(1, len(points)):
+        previous = points[index - 1]
+        current = points[index]
+        segment_length = distance(previous, current)
+        step_count = max(1, int(math.ceil(segment_length / max_spacing_cm)))
+        for step_index in range(1, step_count + 1):
+            alpha = step_index / float(step_count)
+            sampled.append(
+                clamped_vector(
+                    lerp(previous.x, current.x, alpha),
+                    lerp(previous.y, current.y, alpha),
+                    lerp(previous.z, current.z, alpha),
+                )
+            )
+    return sampled
+
+
+def track_path_clears_obstacles(path_points, clearance_cm):
+    sample_spacing = max(50.0, float(clearance_cm) * 0.5)
+    return all_points_clear_obstacles(
+        polyline_clearance_sample_points(path_points, sample_spacing),
+        clearance_cm,
+    )
 
 
 def sample_points_and_tangents_by_distance(points, count):
@@ -239,7 +304,9 @@ def generate_track_layout(count):
             gate_center_from_spline_location(sample["location"])
             for sample in samples
         ]
-        if all_points_clear_obstacles(locations, OBSTACLE_CLEARANCE_CM):
+        gates_clear = all_points_clear_obstacles(locations, OBSTACLE_CLEARANCE_CM)
+        path_clear = track_path_clears_obstacles(path_points, OBSTACLE_CLEARANCE_CM)
+        if gates_clear and path_clear:
             break
         last_samples = samples
         last_path_points = path_points
@@ -247,8 +314,9 @@ def generate_track_layout(count):
         samples = last_samples
         path_points = last_path_points
         unreal.log_warning(
-            f"Could not generate a track with all gates at least {OBSTACLE_CLEARANCE_CM} cm "
-            f"from obstacle volumes after {MAX_TRACK_LAYOUT_ATTEMPTS} attempts; using last layout."
+            f"Could not generate a track with all gates and spline path at least "
+            f"{OBSTACLE_CLEARANCE_CM} cm from obstacle volumes after "
+            f"{MAX_TRACK_LAYOUT_ATTEMPTS} attempts; using last layout."
         )
 
     locations = [

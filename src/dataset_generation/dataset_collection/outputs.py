@@ -52,6 +52,9 @@ def runs_root_dir():
     os.makedirs(output_dir, exist_ok=True)
     return output_dir
 
+def dataset_camera_intrinsics_path():
+    return os.path.join(current_dataset_dir(), "camera_intrinsics.json")
+
 def create_run_dir():
     runs_dir = runs_root_dir()
     highest_index = 0

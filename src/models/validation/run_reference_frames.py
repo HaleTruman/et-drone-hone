@@ -240,7 +240,7 @@ def build_metrics(
         1
         for record in records
         for detection in record["detections"]
-        if detection.get("relative_position_camera_frame_cm")
+        if detection.get("relative_position_camera_frame_m")
         and detection.get("relative_orientation_euler_deg")
     )
     total_detections = sum(detection_counts)

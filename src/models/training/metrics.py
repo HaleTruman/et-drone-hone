@@ -11,6 +11,7 @@ from src.models.geometry import solve_gate_pose
 from src.models.training.targets import (
     CameraCalibration,
     GateFrame,
+    OUTER_KEYPOINT_COUNT,
 )
 
 
@@ -37,12 +38,25 @@ def decode_detections(
             else np.ones(keypoints.shape[:2], dtype=np.float32)
         )
         for index in np.flatnonzero(scores >= score_threshold):
-            pose = solve_gate_pose(keypoints[index], frame_calibration)
+            all_corners = keypoints[index].astype(np.float32)
+            outer_corners = all_corners[:OUTER_KEYPOINT_COUNT]
+            inner_corners = (
+                all_corners[OUTER_KEYPOINT_COUNT:OUTER_KEYPOINT_COUNT * 2]
+                if all_corners.shape[0] >= OUTER_KEYPOINT_COUNT * 2
+                else None
+            )
+            pose = solve_gate_pose(outer_corners, frame_calibration)
             frame_detections.append(
                 {
                     "score": float(scores[index]),
                     "bbox_xyxy": boxes[index].astype(np.float32),
-                    "outer_corners": keypoints[index].astype(np.float32),
+                    "outer_corners": outer_corners.astype(np.float32),
+                    "inner_corners": (
+                        inner_corners.astype(np.float32)
+                        if inner_corners is not None
+                        else None
+                    ),
+                    "keypoints_2d": all_corners.astype(np.float32),
                     "keypoint_scores": keypoint_scores_array[index].astype(np.float32),
                     "pose": pose,
                 }
@@ -124,10 +138,25 @@ def calculate_metrics(
     false_negative = 0
     box_ious: list[float] = []
     corner_distances: list[np.ndarray] = []
+    visible_corner_distances: list[np.ndarray] = []
+    all_corner_distances: list[np.ndarray] = []
+    visible_all_corner_distances: list[np.ndarray] = []
     position_errors: list[np.ndarray] = []
     orientation_errors: list[np.ndarray] = []
+    visible_outer_corner_count = 0
+    total_outer_corner_count = 0
+    visible_label_corner_count = 0
+    total_label_corner_count = 0
 
     for detections, sample in zip(decoded, samples):
+        for target in sample.gates:
+            total_outer_corner_count += len(target.keypoint_visibility)
+            visible_outer_corner_count += int((target.keypoint_visibility > 0.0).sum())
+            if target.all_keypoint_visibility is not None:
+                total_label_corner_count += len(target.all_keypoint_visibility)
+                visible_label_corner_count += int(
+                    (target.all_keypoint_visibility > 0.0).sum()
+                )
         matches, unmatched_predictions, unmatched_targets = match_detections(
             detections,
             sample,
@@ -140,16 +169,38 @@ def calculate_metrics(
             prediction = detections[prediction_index]
             target = sample.gates[target_index]
             box_ious.append(iou)
-            corner_distances.append(
-                np.linalg.norm(
-                    np.asarray(prediction["outer_corners"]) - target.outer_corners,
-                    axis=1,
-                )
+            distances = np.linalg.norm(
+                np.asarray(prediction["outer_corners"]) - target.outer_corners,
+                axis=1,
             )
+            corner_distances.append(distances)
+            visible_mask = target.keypoint_visibility > 0.0
+            if visible_mask.any():
+                visible_corner_distances.append(distances[visible_mask])
+            prediction_keypoints = prediction.get("keypoints_2d")
+            if (
+                prediction_keypoints is not None
+                and target.all_corners is not None
+                and target.all_keypoint_visibility is not None
+            ):
+                predicted_all = np.asarray(prediction_keypoints)
+                target_all = np.asarray(target.all_corners)
+                count = min(len(predicted_all), len(target_all))
+                if count:
+                    all_distances = np.linalg.norm(
+                        predicted_all[:count] - target_all[:count],
+                        axis=1,
+                    )
+                    all_corner_distances.append(all_distances)
+                    all_visible_mask = target.all_keypoint_visibility[:count] > 0.0
+                    if all_visible_mask.any():
+                        visible_all_corner_distances.append(
+                            all_distances[all_visible_mask]
+                        )
             pose = prediction.get("pose")
             if pose is not None:
                 position_errors.append(
-                    np.abs(np.asarray(pose["position_cm"]) - target.position)
+                    np.abs(np.asarray(pose["position_m"]) - target.position)
                 )
                 predicted_orientation = np.asarray(pose["orientation_deg"])
                 orientation_errors.append(
@@ -178,6 +229,21 @@ def calculate_metrics(
         if corner_distances
         else np.empty((0, 4), dtype=np.float32)
     )
+    visible_corner_array = (
+        np.concatenate(visible_corner_distances)
+        if visible_corner_distances
+        else np.empty((0,), dtype=np.float32)
+    )
+    all_corner_array = (
+        np.concatenate(all_corner_distances)
+        if all_corner_distances
+        else np.empty((0,), dtype=np.float32)
+    )
+    visible_all_corner_array = (
+        np.concatenate(visible_all_corner_distances)
+        if visible_all_corner_distances
+        else np.empty((0,), dtype=np.float32)
+    )
     position_array = (
         np.stack(position_errors)
         if position_errors
@@ -201,16 +267,25 @@ def calculate_metrics(
         "detection_f1": 2.0 * precision * recall / max(1e-12, precision + recall),
         "matched_bbox_iou_mean": _mean_or_none(np.asarray(box_ious)),
         "matched_corner_mean_distance_px": _mean_or_none(corner_array),
+        "matched_visible_corner_mean_distance_px": _mean_or_none(visible_corner_array),
+        "matched_all_corner_mean_distance_px": _mean_or_none(all_corner_array),
+        "matched_visible_all_corner_mean_distance_px": _mean_or_none(
+            visible_all_corner_array
+        ),
         "matched_corner_distance_px": {
             name: _mean_or_none(corner_array[:, index])
             for index, name in enumerate(("TL", "TR", "BL", "BR"))
         },
+        "target_visible_outer_corner_count": visible_outer_corner_count,
+        "target_outer_corner_count": total_outer_corner_count,
+        "target_visible_label_corner_count": visible_label_corner_count,
+        "target_label_corner_count": total_label_corner_count,
         "pose_solution_count": len(position_errors),
-        "position_mae_cm": {
+        "position_mae_m": {
             name: _mean_or_none(position_array[:, index])
             for index, name in enumerate(("right", "up", "forward"))
         },
-        "position_l2_mean_cm": _mean_or_none(
+        "position_l2_mean_m": _mean_or_none(
             np.linalg.norm(position_array, axis=1)
             if len(position_array)
             else np.asarray([])

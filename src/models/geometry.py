@@ -21,8 +21,8 @@ def solve_gate_pose(
     image_points = np.asarray(corners_px, dtype=np.float64).reshape(4, 2)
     if not np.isfinite(image_points).all():
         return None
-    width = calibration.gate_width_cm
-    height = calibration.gate_height_cm
+    width = calibration.gate_width_m
+    height = calibration.gate_height_m
     object_points = np.asarray(
         [
             [-width * 0.5, -height * 0.5],
@@ -90,7 +90,7 @@ def solve_gate_pose(
         np.linalg.norm(reprojection - image_points, axis=1).mean()
     )
     return {
-        "position_cm": np.asarray(
+        "position_m": np.asarray(
             [translation[0], -translation[1], translation[2]],
             dtype=np.float32,
         ),

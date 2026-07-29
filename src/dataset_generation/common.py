@@ -21,6 +21,13 @@ def vector_to_dict(vector):
         "z": float(vector.z),
     }
 
+def vector_to_meters_dict(vector):
+    return {
+        "x": float(vector.x) / 100.0,
+        "y": float(vector.y) / 100.0,
+        "z": float(vector.z) / 100.0,
+    }
+
 def rotator_to_dict(rotator):
     return {
         "pitch": float(rotator.pitch),

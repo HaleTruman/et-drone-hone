@@ -37,10 +37,28 @@ Replace `Codex` with another LLM/client name when generating config for a differ
 Model defaults live in `src/models/config.py`. The main training/evaluation pipeline is:
 
 ```powershell
-python -m src.models.run_pipeline
+.\.venv\Scripts\python.exe -m src.models.run_pipeline
 ```
 
 Generated run names use nested identifiers such as `dataset_001/run_001`.
+
+Use the project's virtual environment Python when training or evaluating. The
+venv currently contains the CUDA-enabled PyTorch build, so activation is
+optional as long as the venv interpreter is used directly:
+
+```powershell
+.\.venv\Scripts\python.exe -m src.models.training.train
+```
+
+The model device defaults to `auto`, which uses GPU/CUDA when
+`torch.cuda.is_available()` is true and falls back to CPU otherwise. You can
+force a device with `--device cuda` or `--device cpu`.
+
+To confirm GPU availability before training:
+
+```powershell
+.\.venv\Scripts\python.exe -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU only')"
+```
 
 ## Viewer
 

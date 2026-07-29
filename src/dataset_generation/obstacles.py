@@ -38,22 +38,32 @@ def load_obstacles():
             if not line:
                 continue
             record = json.loads(line)
-            location = record.get("world_location_cm", {})
-            size = record.get("size_cm", {})
+            if "world_location_m" in record:
+                location = record.get("world_location_m", {})
+                location_scale = 100.0
+            else:
+                location = record.get("world_location_cm", {})
+                location_scale = 1.0
+            if "size_m" in record:
+                size = record.get("size_m", {})
+                size_scale = 100.0
+            else:
+                size = record.get("size_cm", {})
+                size_scale = 1.0
             rotation = record.get("world_rotation_deg", {})
             obstacles.append(
                 {
                     "name": record.get("component_name", ""),
                     "kind": record.get("kind", ""),
                     "center": (
-                        float(location.get("x", 0.0)),
-                        float(location.get("y", 0.0)),
-                        float(location.get("z", 0.0)),
+                        float(location.get("x", 0.0)) * location_scale,
+                        float(location.get("y", 0.0)) * location_scale,
+                        float(location.get("z", 0.0)) * location_scale,
                     ),
                     "half_size": (
-                        float(size.get("x", 0.0)) * 0.5,
-                        float(size.get("y", 0.0)) * 0.5,
-                        float(size.get("z", 0.0)) * 0.5,
+                        float(size.get("x", 0.0)) * size_scale * 0.5,
+                        float(size.get("y", 0.0)) * size_scale * 0.5,
+                        float(size.get("z", 0.0)) * size_scale * 0.5,
                     ),
                     "yaw_deg": float(rotation.get("yaw", 0.0)),
                 }

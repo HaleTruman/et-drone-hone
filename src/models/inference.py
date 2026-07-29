@@ -177,6 +177,14 @@ def write_inference_overlays(
             corners = detection["outer_corners_px"]
             polygon = [corners[i] for i in (0, 1, 3, 2, 0)]
             draw.line([tuple(point) for point in polygon], fill=(0, 220, 255), width=3)
+            inner_corners = detection.get("inner_corners_px")
+            if inner_corners is not None:
+                inner_polygon = [inner_corners[i] for i in (0, 1, 3, 2, 0)]
+                draw.line(
+                    [tuple(point) for point in inner_polygon],
+                    fill=(0, 150, 255),
+                    width=2,
+                )
             draw.rectangle(tuple(box), outline=(0, 220, 255), width=2)
             draw.text(
                 (box[0], max(0.0, box[1] - 12.0)),

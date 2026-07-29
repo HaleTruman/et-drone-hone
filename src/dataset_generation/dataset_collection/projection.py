@@ -4,7 +4,7 @@ import math
 
 import unreal
 
-from src.dataset_generation.common import dot, vector_to_dict, lerp
+from src.dataset_generation.common import dot, vector_to_dict, vector_to_meters_dict, lerp
 from src.dataset_generation.config import FRAME_WIDTH, FRAME_HEIGHT, CAMERA_FRAME_MARGIN
 from src.dataset_generation.dataset_collection.camera_poses import camera_frame_half_angles
 
@@ -142,6 +142,40 @@ def gate_relative_euler_camera_frame(camera, gate):
         "roll_deg": float(roll_deg),
     }
 
+def quaternion_from_relative_euler_deg(euler_deg):
+    yaw = math.radians(float(euler_deg["yaw_deg"]))
+    pitch = math.radians(float(euler_deg["pitch_deg"]))
+    roll = math.radians(float(euler_deg["roll_deg"]))
+
+    half_yaw = yaw * 0.5
+    half_pitch = pitch * 0.5
+    half_roll = roll * 0.5
+
+    yaw_w, yaw_y = math.cos(half_yaw), math.sin(half_yaw)
+    pitch_w, pitch_x = math.cos(half_pitch), math.sin(half_pitch)
+    roll_w, roll_z = math.cos(half_roll), math.sin(half_roll)
+
+    w, x, y, z = quat_multiply(
+        quat_multiply((yaw_w, 0.0, yaw_y, 0.0), (pitch_w, pitch_x, 0.0, 0.0)),
+        (roll_w, 0.0, 0.0, roll_z),
+    )
+    return {
+        "w": float(w),
+        "x": float(x),
+        "y": float(y),
+        "z": float(z),
+    }
+
+def quat_multiply(a, b):
+    aw, ax, ay, az = a
+    bw, bx, by, bz = b
+    return (
+        aw * bw - ax * bx - ay * by - az * bz,
+        aw * bx + ax * bw + ay * bz - az * by,
+        aw * by - ax * bz + ay * bw + az * bx,
+        aw * bz + ax * by - ay * bx + az * bw,
+    )
+
 def camera_projection_params(camera):
     max_yaw_offset, max_pitch_offset = camera_frame_half_angles(camera)
     horizontal_fov = (max_yaw_offset / CAMERA_FRAME_MARGIN) * 2.0
@@ -149,6 +183,22 @@ def camera_projection_params(camera):
     focal_x = (FRAME_WIDTH * 0.5) / math.tan(math.radians(horizontal_fov) * 0.5)
     focal_y = (FRAME_HEIGHT * 0.5) / math.tan(math.radians(vertical_fov) * 0.5)
     return focal_x, focal_y
+
+def camera_intrinsics(camera):
+    focal_x, focal_y = camera_projection_params(camera)
+    max_yaw_offset, max_pitch_offset = camera_frame_half_angles(camera)
+    horizontal_fov = (max_yaw_offset / CAMERA_FRAME_MARGIN) * 2.0
+    vertical_fov = (max_pitch_offset / CAMERA_FRAME_MARGIN) * 2.0
+    return {
+        "frame_width_px": FRAME_WIDTH,
+        "frame_height_px": FRAME_HEIGHT,
+        "focal_x_px": float(focal_x),
+        "focal_y_px": float(focal_y),
+        "principal_x_px": FRAME_WIDTH * 0.5,
+        "principal_y_px": FRAME_HEIGHT * 0.5,
+        "horizontal_fov_deg": float(horizontal_fov),
+        "vertical_fov_deg": float(vertical_fov),
+    }
 
 def project_world_to_render_frame(camera, world_location):
     camera_space = world_location_to_camera_frame(camera, world_location)
@@ -163,9 +213,9 @@ def project_world_to_render_frame(camera, world_location):
         pixel_y = None
 
     return {
-        "world": vector_to_dict(world_location),
-        "camera_frame": vector_to_dict(camera_space),
-        "pixel": None
+        "world_m": vector_to_meters_dict(world_location),
+        "camera_frame_m": vector_to_meters_dict(camera_space),
+        "pixel_px": None
         if pixel_x is None
         else {
             "x": float(pixel_x),
@@ -185,7 +235,7 @@ def bbox_from_projected_points(projected_points):
     visible_pixels = []
 
     for projected in projected_points:
-        pixel = projected.get("pixel") if projected else None
+        pixel = projected.get("pixel_px") if projected else None
         if not pixel:
             continue
 
@@ -211,19 +261,19 @@ def bbox_from_projected_points(projected_points):
 
     return {
         "bottom_left": {
-            "x": left_x,
-            "y": top_y,
+            "x_px": left_x,
+            "y_px": top_y,
         },
         "top_right": {
-            "x": right_x,
-            "y": bottom_y,
+            "x_px": right_x,
+            "y_px": bottom_y,
         },
-        "x_min": left_x,
-        "y_min": top_y,
-        "x_max": right_x,
-        "y_max": bottom_y,
-        "width": max(0.0, right_x - left_x),
-        "height": max(0.0, bottom_y - top_y),
+        "x_min_px": left_x,
+        "y_min_px": top_y,
+        "x_max_px": right_x,
+        "y_max_px": bottom_y,
+        "width_px": max(0.0, right_x - left_x),
+        "height_px": max(0.0, bottom_y - top_y),
         "intersects_frame": bool(intersects_frame),
         "point_count": len(pixels),
         "inside_point_count": len(visible_pixels),

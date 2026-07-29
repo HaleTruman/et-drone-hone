@@ -25,6 +25,7 @@ from src.models.training.targets import (
     CameraCalibration,
     GateFrame,
     load_gate_samples,
+    scale_frames_for_training,
 )
 from src.models.training.train import choose_device
 
@@ -129,9 +130,12 @@ def main() -> None:
         f"Loading evaluation samples from {args.data_root} "
         f"for runs: {', '.join(args.runs)}"
     )
-    samples, rejected = load_gate_samples(args.data_root, args.runs)
+    native_samples, rejected = load_gate_samples(args.data_root, args.runs)
+    input_height, input_width = tuple(config["input_size"])
+    samples = scale_frames_for_training(native_samples, input_width, input_height)
     log_status(
-        f"Loaded {len(samples)} frames with "
+        f"Loaded {len(native_samples)} native frames and scaled them to "
+        f"{input_width}x{input_height} for evaluation with "
         f"{sum(len(sample.gates) for sample in samples)} usable gates; "
         f"{len(rejected)} gate/frame records rejected"
     )
@@ -237,6 +241,7 @@ def build_model_from_checkpoint(
         score_threshold=score_threshold,
         detections_per_image=int(config.get("detections_per_image", 32)),
         box_nms_threshold=float(config.get("box_nms_threshold", 0.5)),
+        keypoint_count=int(config.get("keypoint_count", 4)),
     )
 
 
@@ -324,7 +329,16 @@ def calculate_threshold_sweep(
                 "matched_corner_mean_distance_px": metrics[
                     "matched_corner_mean_distance_px"
                 ],
-                "position_l2_mean_cm": metrics["position_l2_mean_cm"],
+                "matched_visible_corner_mean_distance_px": metrics[
+                    "matched_visible_corner_mean_distance_px"
+                ],
+                "matched_all_corner_mean_distance_px": metrics[
+                    "matched_all_corner_mean_distance_px"
+                ],
+                "matched_visible_all_corner_mean_distance_px": metrics[
+                    "matched_visible_all_corner_mean_distance_px"
+                ],
+                "position_l2_mean_m": metrics["position_l2_mean_m"],
                 "orientation_mean_mae_deg": metrics["orientation_mean_mae_deg"],
             }
         )
@@ -341,22 +355,11 @@ def write_predictions(
             record = {
                 "sample_id": sample.sample_id,
                 "image_path": str(sample.image_path),
+                "frame_width_px": sample.width,
+                "frame_height_px": sample.height,
                 "detections": [_detection_to_dict(item) for item in detections],
                 "targets": [
-                    {
-                        "gate_label": gate.gate_label,
-                        "outer_corners_px": gate.outer_corners.tolist(),
-                        "bbox_xyxy_px": gate.bbox_xyxy.tolist(),
-                        "relative_position_camera_frame_cm": dict(
-                            zip(("right", "up", "forward"), gate.position.tolist())
-                        ),
-                        "relative_orientation_euler_deg": dict(
-                            zip(
-                                ("yaw_mod_180_deg", "pitch_deg", "roll_deg"),
-                                gate.orientation_deg.tolist(),
-                            )
-                        ),
-                    }
+                    _target_to_dict(gate)
                     for gate in sample.gates
                 ],
             }
@@ -381,22 +384,31 @@ def write_overlays(
         sample = samples[index]
         with Image.open(sample.image_path) as source:
             image = source.convert("RGB")
+        if image.size != (sample.width, sample.height):
+            image = image.resize(
+                (sample.width, sample.height),
+                Image.Resampling.BILINEAR,
+            )
         draw = ImageDraw.Draw(image)
         for gate in sample.gates:
             _draw_quad(draw, gate.outer_corners, (80, 255, 100), width=2)
+            if gate.inner_corners is not None:
+                _draw_quad(draw, gate.inner_corners, (80, 180, 100), width=1)
             draw.rectangle(tuple(gate.bbox_xyxy), outline=(80, 255, 100), width=1)
         for detection_index, detection in enumerate(decoded[index]):
             corners = np.asarray(detection["outer_corners"])
             box = np.asarray(detection["bbox_xyxy"])
             _draw_quad(draw, corners, (0, 220, 255), width=3)
+            if detection.get("inner_corners") is not None:
+                _draw_quad(draw, np.asarray(detection["inner_corners"]), (0, 150, 255), width=2)
             draw.rectangle(tuple(box), outline=(0, 220, 255), width=2)
             pose = detection.get("pose")
             label = f"#{detection_index + 1} {detection['score']:.2f}"
             if pose is not None:
-                position = np.asarray(pose["position_cm"])
+                position = np.asarray(pose["position_m"])
                 orientation = np.asarray(pose["orientation_deg"])
                 label += (
-                    f"  R/U/F {position[0]:.0f}/{position[1]:.0f}/{position[2]:.0f}cm"
+                    f"  R/U/F {position[0]:.2f}/{position[1]:.2f}/{position[2]:.2f}m"
                     f"  Y180/P/R {orientation[0]:.1f}/{orientation[1]:.1f}/{orientation[2]:.1f}"
                 )
             text_position = (float(box[0]), max(0.0, float(box[1]) - 12.0))
@@ -446,11 +458,15 @@ def _detection_to_dict(detection: dict[str, object]) -> dict[str, object]:
         "outer_corners_px": np.asarray(detection["outer_corners"]).tolist(),
         "keypoint_scores": np.asarray(detection["keypoint_scores"]).tolist(),
     }
+    if detection.get("inner_corners") is not None:
+        result["inner_corners_px"] = np.asarray(detection["inner_corners"]).tolist()
+    if detection.get("keypoints_2d") is not None:
+        result["keypoints_2d_px"] = np.asarray(detection["keypoints_2d"]).tolist()
     if "track_id" in detection:
         result["track_id"] = int(detection["track_id"])
     if pose is not None:
-        result["relative_position_camera_frame_cm"] = dict(
-            zip(("right", "up", "forward"), np.asarray(pose["position_cm"]).tolist())
+        result["relative_position_camera_frame_m"] = dict(
+            zip(("right", "up", "forward"), np.asarray(pose["position_m"]).tolist())
         )
         result["relative_orientation_euler_deg"] = dict(
             zip(
@@ -464,12 +480,42 @@ def _detection_to_dict(detection: dict[str, object]) -> dict[str, object]:
     return result
 
 
+def _target_to_dict(gate: object) -> dict[str, object]:
+    result = {
+        "gate_label": gate.gate_label,
+        "is_target": gate.is_target,
+        "outer_corners_px": np.asarray(gate.outer_corners).tolist(),
+        "outer_keypoint_visibility": np.asarray(gate.keypoint_visibility).tolist(),
+        "bbox_xyxy_px": np.asarray(gate.bbox_xyxy).tolist(),
+        "relative_position_camera_frame_m": dict(
+            zip(("right", "up", "forward"), np.asarray(gate.position).tolist())
+        ),
+        "relative_orientation_euler_deg": dict(
+            zip(
+                ("yaw_mod_180_deg", "pitch_deg", "roll_deg"),
+                np.asarray(gate.orientation_deg).tolist(),
+            )
+        ),
+    }
+    if gate.inner_corners is not None:
+        result["inner_corners_px"] = np.asarray(gate.inner_corners).tolist()
+    if gate.all_corners is not None:
+        result["keypoints_2d_px"] = np.asarray(gate.all_corners).tolist()
+    if gate.all_keypoint_visibility is not None:
+        result["keypoint_visibility"] = np.asarray(
+            gate.all_keypoint_visibility
+        ).tolist()
+    return result
+
+
 def _draw_quad(
     draw: ImageDraw.ImageDraw,
     corners: np.ndarray,
     color: tuple[int, int, int],
     width: int,
 ) -> None:
+    if not np.isfinite(corners).all():
+        return
     points = [tuple(point) for point in corners[[0, 1, 3, 2, 0]]]
     draw.line(points, fill=color, width=width, joint="curve")
 
