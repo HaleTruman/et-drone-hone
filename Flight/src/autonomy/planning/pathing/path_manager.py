@@ -5,7 +5,7 @@ from typing import Any
 
 import numpy as np
 
-from core.schema import Vec3, VisionObservation
+from core.schema import Vec3, VehicleState
 from mapping.gates import GateRecord
 
 
@@ -36,14 +36,6 @@ class PlannedPath:
         return payload
 
 
-@dataclass
-class _ObservedGateTrack:
-    track_id: str
-    gate: GateRecord
-    observation_count: int
-    last_observed_cycle: int | None
-
-
 class PathManager:
     def __init__(
         self,
@@ -59,8 +51,6 @@ class PathManager:
         gate_center_tolerance_m: float = 0.5,
         spline_corner_tightness: float = 0.5,
         planning_mode: str = "gate_map",
-        gate_association_distance_m: float = 6.0,
-        gate_min_observations: int = 1,
     ):
         self.spline_generator = spline_generator
         self.spacing_m = max(0.1, float(spacing_m))
@@ -77,17 +67,10 @@ class PathManager:
         self.gate_center_tolerance_m = max(0.0, float(gate_center_tolerance_m))
         self.spline_corner_tightness = float(np.clip(float(spline_corner_tightness), 0.0, 1.0))
         self.planning_mode = _normalize_planning_mode(planning_mode)
-        self.gate_association_distance_m = max(0.0, float(gate_association_distance_m))
-        self.gate_min_observations = max(1, int(gate_min_observations))
         self._waypoints = np.empty((0, 3))
         self._segment_lengths = np.empty((0,))
         self._cumulative_lengths = np.array([0.0], dtype=float)
-        self._observed_gate_tracks: dict[str, _ObservedGateTrack] = {}
-        self._observed_gate_track_sequence = 0
-        self.primary_gate_position_local_ned_m: tuple[float, float, float] | None = None
-        self.secondary_gate_position_local_ned_m: tuple[float, float, float] | None = None
-        self.primary_gate_id: str | None = None
-        self.secondary_gate_id: str | None = None
+        self.test_path: PlannedPath | None = None
 
     def update_from_gate_map(self, gates: Iterable[GateRecord], limit: int = 3) -> np.ndarray:
         return self.set_waypoints(
@@ -99,7 +82,6 @@ class PathManager:
         gates: Iterable[GateRecord],
         *,
         position_local_ned_m: Vec3 | None = None,
-        activate: bool = True,
     ) -> PlannedPath:
         started = perf_counter()
         start_position = None if position_local_ned_m is None else _vec3(position_local_ned_m, "position_local_ned_m")
@@ -108,7 +90,7 @@ class PathManager:
         points = self._sample_spline(anchors)
         points = self._constrain_gate_centers(points, planned_gates)
         gate_center_errors = self._gate_center_errors(points, planned_gates)
-        if activate and len(points) >= 2:
+        if len(points) >= 2:
             self.set_waypoints(points)
         return PlannedPath(
             points_relative_ned_m=points,
@@ -122,71 +104,39 @@ class PathManager:
             source="gate_map",
         )
 
-    def plan_from_observed_gates(
+    def plan_from_gate_centers(
         self,
         gates: Iterable[GateRecord],
         *,
         position_local_ned_m: Vec3,
-        activate: bool = True,
     ) -> PlannedPath:
         started = perf_counter()
         position = _vec3(position_local_ned_m, "position_local_ned_m")
-        visible_track_ids = self._update_observed_gate_tracks(gates)
-        planned_gates = self._planning_observed_gates(visible_track_ids, position)
-        self._set_primary_secondary_gates(planned_gates)
-
-        anchors = self._anchors_for_gates(planned_gates, start_position_local_ned_m=position)
-        points = self._sample_spline(anchors)
-        points = self._constrain_gate_centers(points, planned_gates)
-        gate_center_errors = self._gate_center_errors(points, planned_gates)
-        if activate and len(points) >= 2:
-            self.set_waypoints(points)
-        return PlannedPath(
-            points_relative_ned_m=points,
-            anchors_relative_ned_m=anchors.astype(float).tolist(),
-            gate_ids=[gate.gate_id for gate in planned_gates],
-            gate_center_errors_m=gate_center_errors,
-            gate_center_tolerance_m=float(self.gate_center_tolerance_m),
-            spline_corner_tightness=float(self.spline_corner_tightness),
-            spacing_m=float(self.spacing_m),
-            computation_ms=(perf_counter() - started) * 1000.0,
-            source="observed_next_two",
-        )
-
-    def plan_from_observation_centers(
-        self,
-        observation: VisionObservation | None,
-        *,
-        position_local_ned_m: Vec3,
-        activate: bool = True,
-    ) -> PlannedPath:
-        started = perf_counter()
-        position = _vec3(position_local_ned_m, "position_local_ned_m")
-        observed_gate_centers = [] if observation is None else [
+        gate_centers = [
             (
                 gate,
-                _vec3(gate.position_local_ned, f"observation.gates[{index}].position_local_ned"),
+                _vec3(gate.position_local_ned_m, f"gates[{index}].position_local_ned_m"),
             )
-            for index, gate in enumerate(observation.gates)
+            for index, gate in enumerate(gates)
         ]
-        observed_gate_centers.sort(key=lambda item: float(np.linalg.norm(item[1])))
-        observed_gates = [gate for gate, _ in observed_gate_centers]
-        gate_centers = [position + relative_center for _, relative_center in observed_gate_centers]
+        gate_centers.sort(key=lambda item: float(np.linalg.norm(item[1] - position)))
+        planned_gates = [gate for gate, _ in gate_centers]
+        centers = [center for _, center in gate_centers]
 
-        anchors = self._dedupe_points(np.asarray([position, *gate_centers], dtype=float))
+        anchors = self._dedupe_points(np.asarray([position, *centers], dtype=float))
         points = self._sample_spline(anchors)
-        if activate and len(points) >= 2:
+        if len(points) >= 2:
             self.set_waypoints(points)
         elif len(points) < 2 and len(self._waypoints) >= 2:
             points = self.get_waypoints().astype(float).tolist()
 
         gate_ids = [
-            str(gate.gate_id or f"observation_gate_{index + 1}")
-            for index, gate in enumerate(observed_gates)
+            str(gate.gate_id or f"gate_{index + 1}")
+            for index, gate in enumerate(planned_gates)
         ]
         gate_center_errors = {
             gate_id: self._minimum_distance(points, center)
-            for gate_id, center in zip(gate_ids, gate_centers)
+            for gate_id, center in zip(gate_ids, centers)
         }
         return PlannedPath(
             points_relative_ned_m=points,
@@ -200,41 +150,29 @@ class PathManager:
             source="center_targets",
         )
 
-    def plan_for_mode(
+    def plan(
         self,
         *,
-        gate_map_gates: Iterable[GateRecord],
-        position_local_ned_m: Vec3,
-        observed_gates: Iterable[GateRecord] = (),
-        latest_observation: VisionObservation | None = None,
-        test_path: PlannedPath | None = None,
-        activate: bool = True,
+        gates: Iterable[GateRecord],
+        vehicle_state: VehicleState,
     ) -> PlannedPath:
-        if self.planning_mode == "test_path":
-            if test_path is None:
-                raise ValueError("test_path planning mode requires a test_path.")
-            if activate:
-                self.set_waypoints(test_path.points_relative_ned_m)
-            return test_path
+        position_local_ned_m = vehicle_state.position_local_ned_m
 
-        if self.planning_mode == "observed_next_two":
-            return self.plan_from_observed_gates(
-                observed_gates,
-                position_local_ned_m=position_local_ned_m,
-                activate=activate,
-            )
+        if self.planning_mode == "test_path":
+            if self.test_path is None:
+                raise ValueError("test_path planning mode requires PathManager.test_path.")
+            self.set_waypoints(self.test_path.points_relative_ned_m)
+            return self.test_path
 
         if self.planning_mode == "center_targets":
-            return self.plan_from_observation_centers(
-                latest_observation,
+            return self.plan_from_gate_centers(
+                gates,
                 position_local_ned_m=position_local_ned_m,
-                activate=activate,
             )
 
         return self.plan_from_gate_map(
-            gate_map_gates,
+            gates,
             position_local_ned_m=position_local_ned_m,
-            activate=activate,
         )
 
     def _planning_gates(
@@ -275,93 +213,6 @@ class PathManager:
             ),
         )[: self.max_gates]
 
-    def _planning_observed_gates(self, visible_track_ids: set[str], position: np.ndarray) -> list[GateRecord]:
-        def distance_m(gate: GateRecord) -> float:
-            return float(np.linalg.norm(np.asarray(gate.position_local_ned_m, dtype=float) - position))
-
-        return sorted(
-            [
-                self._observed_gate_tracks[track_id].gate
-                for track_id in visible_track_ids
-                if self._observed_gate_tracks[track_id].observation_count >= self.gate_min_observations
-                and distance_m(self._observed_gate_tracks[track_id].gate) > self.passed_gate_distance_m
-                and distance_m(self._observed_gate_tracks[track_id].gate) >= self.exclusion_distance_m
-                and (
-                    self.max_gate_distance_m is None
-                    or distance_m(self._observed_gate_tracks[track_id].gate) <= self.max_gate_distance_m
-                )
-            ],
-            key=lambda gate: (
-                distance_m(gate),
-                gate.sequence is None,
-                gate.sequence,
-                gate.gate_id,
-            ),
-        )[: self.max_gates]
-
-    def _update_observed_gate_tracks(self, gates: Iterable[GateRecord]) -> set[str]:
-        visible_track_ids: set[str] = set()
-        for gate in gates:
-            track_id = self._matching_observed_gate_track_id(gate, excluded_track_ids=visible_track_ids)
-            if track_id is None:
-                track_id = self._new_observed_gate_track_id(gate)
-                self._observed_gate_tracks[track_id] = _ObservedGateTrack(
-                    track_id=track_id,
-                    gate=gate,
-                    observation_count=1,
-                    last_observed_cycle=gate.last_observed_cycle,
-                )
-            else:
-                track = self._observed_gate_tracks[track_id]
-                track.gate = gate
-                track.observation_count += 1
-                track.last_observed_cycle = gate.last_observed_cycle
-            visible_track_ids.add(track_id)
-        return visible_track_ids
-
-    def _matching_observed_gate_track_id(
-        self,
-        gate: GateRecord,
-        *,
-        excluded_track_ids: set[str],
-    ) -> str | None:
-        if gate.gate_id in self._observed_gate_tracks and gate.gate_id not in excluded_track_ids:
-            track = self._observed_gate_tracks[gate.gate_id]
-            distance = float(
-                np.linalg.norm(
-                    np.asarray(track.gate.position_local_ned_m, dtype=float)
-                    - np.asarray(gate.position_local_ned_m, dtype=float)
-                )
-            )
-            if distance <= self.gate_association_distance_m:
-                return gate.gate_id
-
-        gate_position = np.asarray(gate.position_local_ned_m, dtype=float)
-        closest_id: str | None = None
-        closest_distance = self.gate_association_distance_m
-        for track_id, track in self._observed_gate_tracks.items():
-            if track_id in excluded_track_ids:
-                continue
-            distance = float(np.linalg.norm(np.asarray(track.gate.position_local_ned_m, dtype=float) - gate_position))
-            if distance <= closest_distance:
-                closest_id = track_id
-                closest_distance = distance
-        return closest_id
-
-    def _new_observed_gate_track_id(self, gate: GateRecord) -> str:
-        if gate.gate_id and gate.gate_id not in self._observed_gate_tracks:
-            return gate.gate_id
-        self._observed_gate_track_sequence += 1
-        return f"observed_gate_{self._observed_gate_track_sequence}"
-
-    def _set_primary_secondary_gates(self, gates: list[GateRecord]) -> None:
-        primary = gates[0] if len(gates) >= 1 else None
-        secondary = gates[1] if len(gates) >= 2 else None
-        self.primary_gate_position_local_ned_m = None if primary is None else primary.position_local_ned_m
-        self.secondary_gate_position_local_ned_m = None if secondary is None else secondary.position_local_ned_m
-        self.primary_gate_id = None if primary is None else primary.gate_id
-        self.secondary_gate_id = None if secondary is None else secondary.gate_id
-
     def set_waypoints(self, waypoints: Iterable[Vec3]) -> np.ndarray:
         self._waypoints = _waypoint_array(waypoints)
         self._refresh_lengths()
@@ -374,7 +225,6 @@ class PathManager:
         width_m: float = 8.0,
         height_m: float = 1.0,
         point_count: int = 31,
-        activate: bool = True,
     ) -> PlannedPath:
         started = perf_counter()
         length = float(length_m)
@@ -391,11 +241,8 @@ class PathManager:
         down = -1.5 * height + 0.5 * height * np.sin(2.0 * np.pi * north / length)
         waypoints = np.column_stack((north, east, down))
         waypoints = waypoints - waypoints[0]
-        if activate:
-            points = self.set_waypoints(waypoints).astype(float).tolist()
-        else:
-            points = _waypoint_array(waypoints).astype(float).tolist()
-        return PlannedPath(
+        points = self.set_waypoints(waypoints).astype(float).tolist()
+        self.test_path = PlannedPath(
             points_relative_ned_m=points,
             anchors_relative_ned_m=points,
             gate_ids=[],
@@ -406,6 +253,7 @@ class PathManager:
             computation_ms=(perf_counter() - started) * 1000.0,
             source="test_path",
         )
+        return self.test_path
 
     def build_straight_line(
         self,
@@ -414,7 +262,6 @@ class PathManager:
         point_count: int = 30,
         up_down_angle_deg: float = 0.0,
         left_right_angle_deg: float = 0.0,
-        activate: bool = True,
     ) -> PlannedPath:
         """Build a straight local-NED path from the origin.
 
@@ -438,11 +285,8 @@ class PathManager:
         down = -distance * np.sin(up_down_rad)
 
         waypoints = np.column_stack((north, east, down))
-        if activate:
-            points = self.set_waypoints(waypoints).astype(float).tolist()
-        else:
-            points = _waypoint_array(waypoints).astype(float).tolist()
-        return PlannedPath(
+        points = self.set_waypoints(waypoints).astype(float).tolist()
+        self.test_path = PlannedPath(
             points_relative_ned_m=points,
             anchors_relative_ned_m=points,
             gate_ids=[],
@@ -453,6 +297,7 @@ class PathManager:
             computation_ms=(perf_counter() - started) * 1000.0,
             source="straight_line",
         )
+        return self.test_path
 
     def generate_spline(self) -> object:
         if self.spline_generator is None:
@@ -692,6 +537,6 @@ def _vec3(value: Vec3, name: str) -> np.ndarray:
 
 def _normalize_planning_mode(value: str) -> str:
     mode = str(value).strip().lower()
-    if mode in {"gate_map", "observed_next_two", "center_targets", "test_path"}:
+    if mode in {"gate_map", "center_targets", "test_path"}:
         return mode
-    raise ValueError("planning_mode must be 'gate_map', 'observed_next_two', 'center_targets', or 'test_path'")
+    raise ValueError("planning_mode must be 'gate_map', 'center_targets', or 'test_path'")
