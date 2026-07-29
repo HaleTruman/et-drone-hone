@@ -1,4 +1,4 @@
-"""3D view of gate map camera/body/local transform results."""
+"""3D view of the gate records held by GateMap."""
 
 from __future__ import annotations
 
@@ -14,20 +14,8 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from core.coordinates import rotation_matrix_from_quaternion
-from core.schema import VehicleState
 from mapping.gates import GateMap
 from core.schema import VisionGateObservation, VisionObservation
-
-
-def vehicle_state_at_origin() -> VehicleState:
-    return VehicleState(
-        sim_time_ns=0,
-        position_local_ned_m=(0.0, 0.0, 0.0),
-        velocity_local_ned_mps=(0.0, 0.0, 0.0),
-        attitude_quaternion=(1.0, 0.0, 0.0, 0.0),
-        body_rates_frd_rps=(0.0, 0.0, 0.0),
-        acceleration_local_ned_mps2=(0.0, 0.0, 0.0),
-    )
 
 
 def unit(vector: np.ndarray) -> np.ndarray:
@@ -93,47 +81,25 @@ def set_equal_axes(ax, points: list[np.ndarray]) -> None:
 
 def show_gate_map_orientation_view(
     observation: VisionObservation,
-    vehicle_state: VehicleState,
-    *,
-    camera_tilt_deg: float = 20.0,
 ) -> None:
-    gate_map = GateMap(camera_tilt_deg=camera_tilt_deg)
+    gate_map = GateMap()
     if not observation.gates:
         raise ValueError("VisionObservation must include at least one gate.")
-    gate_map.update_from_observation(observation, vehicle_state)
+    gate_map.update(observation)
     gate_records = gate_map.gates
 
     origin = np.zeros(3, dtype=float)
-    drone_position = np.asarray(vehicle_state.position_local_ned_m, dtype=float)
-
-    body_to_local = rotation_matrix_from_quaternion(vehicle_state.attitude_quaternion)
-    camera_rotation = gate_map.camera_frd_to_body_frd_rotation()
-    body_forward_local = body_to_local @ np.array([1.0, 0.0, 0.0], dtype=float)
-    body_right_local = body_to_local @ np.array([0.0, 1.0, 0.0], dtype=float)
-    body_down_local = body_to_local @ np.array([0.0, 0.0, 1.0], dtype=float)
-    camera_forward_local = body_to_local @ camera_rotation @ np.array([1.0, 0.0, 0.0], dtype=float)
-    camera_right_local = body_to_local @ camera_rotation @ np.array([0.0, 1.0, 0.0], dtype=float)
-    camera_down_local = body_to_local @ camera_rotation @ np.array([0.0, 0.0, 1.0], dtype=float)
-    camera_up_local = -camera_down_local
 
     fig = plt.figure(figsize=(9, 8))
     ax = fig.add_subplot(111, projection="3d")
-    ax.set_title("Gate Map Transform View")
-    ax.set_xlabel("North / body forward +")
-    ax.set_ylabel("East / body right +")
+    ax.set_title("Gate Map View")
+    ax.set_xlabel("North +")
+    ax.set_ylabel("East +")
     ax.set_zlabel("Down +")
 
     draw_arrow(ax, origin, (1.0, 0.0, 0.0), "tab:blue", "N", 2.5)
     draw_arrow(ax, origin, (0.0, 1.0, 0.0), "tab:orange", "E", 2.5)
     draw_arrow(ax, origin, (0.0, 0.0, 1.0), "tab:green", "D", 2.5)
-    ax.scatter([drone_position[0]], [drone_position[1]], [drone_position[2]], color="tab:cyan", s=40)
-    ax.text(drone_position[0], drone_position[1], drone_position[2], "drone", color="tab:cyan")
-    draw_arrow(ax, drone_position, body_forward_local, "tab:cyan", "body F", 2.0)
-    draw_arrow(ax, drone_position, body_right_local, "tab:pink", "body R", 2.0)
-    draw_arrow(ax, drone_position, body_down_local, "tab:olive", "body D", 2.0)
-    draw_arrow(ax, drone_position, camera_forward_local, "tab:purple", "camera forward", 2.0)
-    draw_arrow(ax, drone_position, camera_right_local, "tab:red", "camera right", 2.0)
-    draw_arrow(ax, drone_position, camera_up_local, "tab:brown", "camera up", 2.0)
 
     gate_axis_points: list[np.ndarray] = []
     gate_colors = ["black", "tab:gray", "tab:green", "tab:blue", "tab:orange", "tab:red", "tab:purple"]
@@ -172,13 +138,6 @@ def show_gate_map_orientation_view(
         ax,
         [
             origin,
-            drone_position,
-            drone_position + body_forward_local * 2.0,
-            drone_position + body_right_local * 2.0,
-            drone_position + body_down_local * 2.0,
-            drone_position + camera_forward_local * 2.0,
-            drone_position + camera_right_local * 2.0,
-            drone_position + camera_up_local * 2.0,
             *gate_axis_points,
             np.array([3.0, 3.0, 3.0], dtype=float),
             np.array([-1.0, -1.0, -1.0], dtype=float),
@@ -187,8 +146,6 @@ def show_gate_map_orientation_view(
     ax.view_init(elev=24, azim=-58)
     ax.legend(
         [
-            "local/body axes",
-            "camera axes",
             "gate orientation",
             "gate plane",
         ],
@@ -209,7 +166,6 @@ def show_gate_map_orientation_view(
 
 
 def main() -> int:
-    vehicle_state = vehicle_state_at_origin()
     observation = VisionObservation(
         frame_id=1,
         sim_time_ns=0,
@@ -223,7 +179,7 @@ def main() -> int:
             )
         ],
     )
-    show_gate_map_orientation_view(observation, vehicle_state)
+    show_gate_map_orientation_view(observation)
     return 0
 
 
