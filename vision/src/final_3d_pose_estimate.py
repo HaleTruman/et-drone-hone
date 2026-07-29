@@ -152,10 +152,9 @@ class Final3DPoseEstimator:
             entry["passed"] = True
 
     def _gate_observation(self, track_id: str, entry: dict, r_wc: np.ndarray, c_t: np.ndarray) -> VisionGateObservation:
-        x_cam = r_wc.T @ (entry["position"] - c_t)  # CV convention: [right, down, forward]
-        # camera_odometry.py's Y=down (see its line-23 comment) vs. io_specification.md's
-        # required Y=up -- negate, or position_camera_m silently comes out upside down.
-        position_camera_m = (float(x_cam[0]), float(-x_cam[1]), float(x_cam[2]))
+        # Camera-relative NED: translate to the camera's current position only -- no rotation
+        # into the camera's own optical attitude, so axes stay north/east/down.
+        position_local_ned = tuple(float(v) for v in (entry["position"] - c_t))
         trace = {
             "track_id": track_id,
             "position_ned_m": tuple(float(v) for v in entry["position"]),
@@ -163,7 +162,7 @@ class Final3DPoseEstimator:
         }
         return VisionGateObservation(
             gate_id=track_id,
-            position_camera_m=position_camera_m,
+            position_local_ned=position_local_ned,
             position_confidence=self._confidence(entry),
             trace=trace,
         )

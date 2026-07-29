@@ -158,10 +158,10 @@ class VehicleState:
 @dataclass(frozen=True)
 class VisionGateObservation:
     gate_id: str
-    position_camera_m: tuple[float, float, float]
+    position_local_ned: Vec3
     position_confidence: float
-    orientation_camera: tuple[float, float, float] | None = None
-    orientation_confidence: float = 0.0
+    orientation_local_ned_quat: QuatWxyz | None = None
+    orientation_confidence: float | None = None
     trace: dict[str, Any] = field(default_factory=dict)
 
 
