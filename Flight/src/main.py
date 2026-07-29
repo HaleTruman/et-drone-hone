@@ -49,11 +49,13 @@ EXCLUSION_DISTANCE = 2.0
 GATE_MAX_PLANNING_DISTANCE_M = 40.0
 GATE_PASSED_DISTANCE_M = 2.0
 GATE_CENTER_TOLERANCE_M = 0.05
-SPLINE_CORNER_TIGHTNESS = 0.75
+SPLINE_CORNER_TIGHTNESS = 2
 
 # Control and output behavior.
 CONTROL_METHOD = "carrot_motor_test"
 CARROT_LOOKAHEAD_M = 1.5
+SPEED_LOOKAHEAD_M = 8
+FAILSAFE_DISTANCE = 10
 ALLOW_FLIGHT = True
 CREATE_VIDEO = False
 RECORD_SCREEN = False
@@ -139,14 +141,19 @@ def main() -> int:
     )
     
     carrot_controller = CarrotController(
-        speed_mps=10,
+        max_speed_mps=10,
         lookahead_m=CARROT_LOOKAHEAD_M,
+        speed_lookahead_m=SPEED_LOOKAHEAD_M,
         position_gain=5.5,
-        velocity_gain=1.5,
+        velocity_gain=0.75,
         initial_thrust=0.265
     )
     
-    hover_controller = HoverController()
+    hover_controller = HoverController(
+        lateral_velocity_gain=2.5,
+        vertical_velocity_gain=0.18,
+        vertical_acceleration_gain=0.035,
+    )
 
     # holders
     imu_data_t = None
@@ -236,7 +243,11 @@ def main() -> int:
             )
 
         else:
-            logger.log_event("stationary_imu_calibration_failed", reason="no_imu_samples")
+            logger.log_event(
+                "stationary_imu_calibration_failed",
+                reason="no_imu_samples",
+                system_mode=system_mode_manager.system_mode.value,
+            )
             raise ValueError("IMU calibration failed due to no or eratic samples.")
 
 
@@ -467,16 +478,36 @@ def main() -> int:
                         vehicle_state,
                     )
 
+                # CHECK FAILSAFE
+                if ALLOW_FLIGHT and system_mode_manager.is_racing():
+                    path_projection = path_manager.project(vehicle_state.position_local_ned_m)
+                    path_error_m = float(path_projection["cross_track_error_m"])
+                    if path_error_m > FAILSAFE_DISTANCE:
+                        system_mode_manager.update_mode("finish")
+                        carrot_target = None
+                        logger.log_event(
+                            "path_failsafe_finished",
+                            reason="path_deviation_exceeded",
+                            cross_track_error_m=path_error_m,
+                            failsafe_distance_m=FAILSAFE_DISTANCE,
+                            projection=path_projection,
+                            system_mode=system_mode_manager.system_mode.value,
+                            inner_cycle=inner_cycle,
+                            outer_cycle=outer_cycle,
+                            sim_time_ns=vehicle_state.sim_time_ns,
+                        )
 
                 # compute attitude target for path-following controller
-                carrot = path_manager.carrot_point(
-                    vehicle_state.position_local_ned_m,
-                    carrot_controller.lookahead_m,
-                )
-                carrot_target = carrot_controller.compute_control(
-                    vehicle_state=vehicle_state,
-                    carrot=carrot,
-                )
+                if ALLOW_FLIGHT and system_mode_manager.is_racing():
+                    carrot = path_manager.carrot_point(
+                        vehicle_state.position_local_ned_m,
+                        carrot_controller.lookahead_m,
+                        carrot_controller.speed_lookahead_m,
+                    )
+                    carrot_target = carrot_controller.compute_control(
+                        vehicle_state=vehicle_state,
+                        carrot=carrot,
+                    )
            
 
 
@@ -502,6 +533,7 @@ def main() -> int:
                         carrot = path_manager.carrot_point(
                             vehicle_state.position_local_ned_m,
                             carrot_controller.lookahead_m,
+                            carrot_controller.speed_lookahead_m,
                         )
                         carrot_target = carrot_controller.compute_control(
                             vehicle_state=vehicle_state,
@@ -525,6 +557,24 @@ def main() -> int:
                         "inner_loop_cycle": inner_cycle,
                         "outer_loop_cycle": outer_cycle,
                     }
+                elif ALLOW_FLIGHT and system_mode_manager.is_finished():
+                    hover_target = hover_controller.compute_control(vehicle_state)
+                    control_target = attitude_controller.compute_control(
+                        vehicle_state,
+                        desired_attitude_quaternion=hover_target["quaternion"],
+                        thrust=hover_target["thrust"],
+                    )
+
+                    mavlink_client.send_attitude_target(control_target)
+
+                    command_result = {
+                        "emitted": True,
+                        "sim_time_ns": telemetry.sim_time_ns,
+                        "reason": "finished_hover",
+                        "attitude_target": control_target,
+                        "inner_loop_cycle": inner_cycle,
+                        "outer_loop_cycle": outer_cycle,
+                    }
                 else:
                     command_result = {
                             "emitted": False,
@@ -537,6 +587,15 @@ def main() -> int:
 
 
             # timing
+            if isinstance(command_result, dict):
+                command_result.setdefault("system_mode", system_mode_manager.system_mode.value)
+                command_result.setdefault(
+                    "modes",
+                    {
+                        "system": system_mode_manager.system_mode.value,
+                    },
+                )
+
             next_inner_cycle_s += inner_period_s
             sleep_s = max(0.0, next_inner_cycle_s - time.perf_counter())
             loop_elapsed_ms = (time.perf_counter() - inner_loop_started_s) * 1000.0
@@ -602,7 +661,7 @@ def main() -> int:
 
     except KeyboardInterrupt:
         system_mode_manager.handle_fault("keyboard_interrupt")
-        logger.log_event("interrupted")
+        logger.log_event("interrupted", system_mode=system_mode_manager.system_mode.value)
 
     except Exception as error:
         if system_mode_manager.system_mode.value != "FAULT":
@@ -626,7 +685,11 @@ def main() -> int:
                     shutdown_telemetry = vehicle_state_estimator.update_telemetry(raw_shutdown_telemetry)
                 
             except Exception as error:  # noqa: BLE001
-                logger.log_event("shutdown_stop_failed", error=str(error))
+                logger.log_event(
+                    "shutdown_stop_failed",
+                    error=str(error),
+                    system_mode=system_mode_manager.system_mode.value,
+                )
         mavlink_client.shutdown()
         logger.log_event(
             "shutdown",

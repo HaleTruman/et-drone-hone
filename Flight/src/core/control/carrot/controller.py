@@ -14,8 +14,12 @@ class CarrotController:
     def __init__(
         self,
         *,
-        speed_mps: float = 3.0,
+        max_speed_mps: float = 3.0,
+        min_speed_mps: float = 0.5,
+        max_lateral_acceleration_mps2: float = 9.0,
+        speed_filter_time_constant_s: float = 0.5,
         lookahead_m: float = 3.0,
+        speed_lookahead_m: float | None = None,
         position_gain: float = 1.0,
         velocity_gain: float = 1.4,
         initial_thrust: float | None = None,
@@ -28,9 +32,19 @@ class CarrotController:
         nominal_dt_s: float = 0.02,
         max_adaptation_dt_s: float = 0.2,
         command_mapper: CommandMapper | None = None,
+        speed_mps: float | None = None,
     ):
-        self.speed_mps = float(speed_mps)
+        if speed_mps is not None:
+            max_speed_mps = float(speed_mps)
+        self.max_speed_mps = float(max_speed_mps)
+        self.min_speed_mps = float(min_speed_mps)
+        self.max_lateral_acceleration_mps2 = float(max_lateral_acceleration_mps2)
+        self.speed_filter_time_constant_s = float(speed_filter_time_constant_s)
         self.lookahead_m = max(0.0, float(lookahead_m))
+        self.speed_lookahead_m = max(
+            0.0,
+            float(self.lookahead_m if speed_lookahead_m is None else speed_lookahead_m),
+        )
         self.position_gain = float(position_gain)
         self.velocity_gain = float(velocity_gain)
         self.min_thrust = float(min_thrust)
@@ -52,7 +66,18 @@ class CarrotController:
         self.command_mapper = command_mapper or CommandMapper()
         self.last_payload: dict[str, Any] | None = None
         self._last_sim_time_ns: int | None = None
+        self._filtered_speed_mps: float | None = None
 
+        if self.max_speed_mps < 0.0:
+            raise ValueError("max_speed_mps cannot be negative")
+        if self.min_speed_mps < 0.0:
+            raise ValueError("min_speed_mps cannot be negative")
+        if self.min_speed_mps > self.max_speed_mps:
+            raise ValueError("min_speed_mps cannot be greater than max_speed_mps")
+        if self.max_lateral_acceleration_mps2 <= 0.0:
+            raise ValueError("max_lateral_acceleration_mps2 must be positive")
+        if self.speed_filter_time_constant_s < 0.0:
+            raise ValueError("speed_filter_time_constant_s cannot be negative")
         if self.gravity_mps2 <= 0.0:
             raise ValueError("gravity_mps2 must be positive")
         if self.min_thrust > self.max_thrust:
@@ -76,7 +101,21 @@ class CarrotController:
         carrot_position = self._vec3(carrot["position_local_ned_m"], "carrot.position_local_ned_m")
         tangent = self._unit(carrot["tangent_local_ned"], "carrot.tangent_local_ned")
 
-        desired_velocity = tangent * self.speed_mps
+        dt_s = self._sample_dt_s(vehicle_state.sim_time_ns)
+        curvature = self._nonnegative_float(carrot.get("curvature", 0.0), "carrot.curvature")
+        max_curvature_ahead = self._nonnegative_float(
+            carrot.get("max_curvature_ahead", curvature),
+            "carrot.max_curvature_ahead",
+        )
+        speed_target_mps = self._curvature_speed_mps(max(curvature, max_curvature_ahead))
+        current_along_track_speed_mps = max(0.0, float(np.dot(velocity, tangent)))
+        filtered_speed_mps = self._filtered_curvature_speed_mps(
+            speed_target_mps,
+            dt_s,
+            current_along_track_speed_mps,
+        )
+
+        desired_velocity = tangent * filtered_speed_mps
         position_error = carrot_position - position
         along_track_error = tangent * float(np.dot(position_error, tangent))
         cross_track_error = position_error - along_track_error
@@ -95,7 +134,6 @@ class CarrotController:
         if not math.isfinite(yaw):
             yaw = euler_from_quaternion(vehicle_state.attitude_quaternion)[2]
 
-        dt_s = self._sample_dt_s(vehicle_state.sim_time_ns)
         legacy_vertical_feedback = (
             self.vertical_velocity_gain * float(velocity[2])
             + self.vertical_acceleration_gain * float(acceleration[2])
@@ -121,7 +159,17 @@ class CarrotController:
             "along_track_m": float(carrot["along_track_m"]),
             "cross_track_error_m": float(carrot["cross_track_error_m"]),
             "lookahead_m": float(self.lookahead_m),
-            "speed_mps": float(self.speed_mps),
+            "speed_lookahead_m": float(carrot.get("speed_lookahead_m", self.speed_lookahead_m)),
+            "speed_preview_along_track_m": float(
+                carrot.get("speed_preview_along_track_m", carrot["along_track_m"])
+            ),
+            "current_along_track_speed_mps": float(current_along_track_speed_mps),
+            "commanded_speed_mps": float(filtered_speed_mps),
+            "max_speed_mps": float(self.max_speed_mps),
+            "curvature_limited_speed_mps": float(speed_target_mps),
+            "curvature": float(curvature),
+            "max_curvature_ahead": float(max_curvature_ahead),
+            "max_lateral_acceleration_mps2": float(self.max_lateral_acceleration_mps2),
         }
         payload["position_error_local_ned_m"] = [float(value) for value in position_error]
         payload["cross_track_position_error_local_ned_m"] = [float(value) for value in cross_track_error]
@@ -140,6 +188,37 @@ class CarrotController:
         }
         self.last_payload = payload
         return payload
+
+    def _curvature_speed_mps(self, curvature: float) -> float:
+        curvature_abs = abs(float(curvature))
+        if curvature_abs <= 1e-9:
+            return float(self.max_speed_mps)
+
+        curvature_limited = math.sqrt(self.max_lateral_acceleration_mps2 / curvature_abs)
+        return float(np.clip(curvature_limited, self.min_speed_mps, self.max_speed_mps))
+
+    def _filtered_curvature_speed_mps(
+        self,
+        speed_target_mps: float,
+        dt_s: float,
+        current_along_track_speed_mps: float,
+    ) -> float:
+        if self._filtered_speed_mps is None:
+            self._filtered_speed_mps = float(
+                np.clip(current_along_track_speed_mps, self.min_speed_mps, self.max_speed_mps)
+            )
+
+        if self.speed_filter_time_constant_s <= 1e-9:
+            self._filtered_speed_mps = float(speed_target_mps)
+            return self._filtered_speed_mps
+
+        alpha = float(dt_s) / (self.speed_filter_time_constant_s + float(dt_s))
+        alpha = float(np.clip(alpha, 0.0, 1.0))
+        self._filtered_speed_mps += alpha * (float(speed_target_mps) - self._filtered_speed_mps)
+        self._filtered_speed_mps = float(
+            np.clip(self._filtered_speed_mps, self.min_speed_mps, self.max_speed_mps)
+        )
+        return self._filtered_speed_mps
 
     def _sample_dt_s(self, sim_time_ns: int) -> float:
         sim_time = int(sim_time_ns)
@@ -203,6 +282,13 @@ class CarrotController:
         if norm <= 1e-12:
             raise ValueError(f"{name} cannot be zero")
         return array / norm
+
+    @staticmethod
+    def _nonnegative_float(value: Any, name: str) -> float:
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError(f"{name} must be finite")
+        return max(0.0, number)
 
     @staticmethod
     def _vec3(value: tuple[float, float, float], name: str) -> np.ndarray:

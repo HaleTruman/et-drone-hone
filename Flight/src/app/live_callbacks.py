@@ -407,8 +407,9 @@ def _vision_observation_figure(
     sync = nearest_cycle_for_frame(run, frame)
     telemetry = sync.cycle.get("telemetry") if isinstance(sync.cycle, dict) and isinstance(sync.cycle.get("telemetry"), dict) else {}
     attitude = _point4_value(telemetry.get("attitude_quaternion") or telemetry.get("attitude"))
+    drone_position = _point3_value(telemetry.get("position_local_ned_m"))
     for gate in gates:
-        camera_position = _observation_camera_position(gate, attitude)
+        camera_position = _observation_camera_position(gate, attitude, drone_position)
         if camera_position is None:
             continue
         plot_position = _camera_observation_point_to_plot(camera_position)
@@ -486,15 +487,14 @@ def _vision_observation_gates(observation_record: dict[str, Any] | None) -> list
 
 def _vision_observation_gate_payload(gate: dict[str, Any]) -> dict[str, Any]:
     position_confidence = gate.get("position_confidence") if gate.get("position_confidence") is not None else gate.get("confidence")
+    position_local_ned = _point3_value(gate.get("position_local_ned") or gate.get("position_local_ned_m"))
     return {
         **gate,
         "id": gate.get("id") or gate.get("gate_id"),
         "position_xyz": _point3_value(gate.get("position_xyz")),
-        "position_relative_ned_m": _point3_value(
-            gate.get("position_relative_ned_m")
-            or gate.get("position_local_ned")
-            or gate.get("position_local_ned_m")
-        ),
+        "position_local_ned": position_local_ned,
+        "position_local_ned_m": position_local_ned,
+        "position_relative_ned_m": _point3_value(gate.get("position_relative_ned_m")),
         "position_confidence": position_confidence,
         "orientation_xyz": _point3_value(gate.get("orientation_xyz")),
         "orientation_local_ned_quat": _point4_value(
@@ -506,11 +506,21 @@ def _vision_observation_gate_payload(gate: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _observation_camera_position(gate: dict[str, Any], attitude_quat: list[float] | None) -> list[float] | None:
+def _observation_camera_position(
+    gate: dict[str, Any],
+    attitude_quat: list[float] | None,
+    drone_position_local_ned_m: list[float] | None,
+) -> list[float] | None:
     position_xyz = _point3_value(gate.get("position_xyz"))
     if position_xyz:
         return position_xyz
-    relative_ned = _point3_value(gate.get("position_relative_ned_m"))
+    local_ned = _point3_value(gate.get("position_local_ned_m") or gate.get("position_local_ned"))
+    drone_position = _point3_value(drone_position_local_ned_m)
+    relative_ned = (
+        (np.asarray(local_ned, dtype=float) - np.asarray(drone_position, dtype=float)).tolist()
+        if local_ned is not None and drone_position is not None
+        else _point3_value(gate.get("position_relative_ned_m"))
+    )
     if relative_ned is None or attitude_quat is None:
         return None
     body_relative = _quat_to_matrix(attitude_quat).T @ np.asarray(relative_ned, dtype=float)

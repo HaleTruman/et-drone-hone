@@ -1,3 +1,4 @@
+import math
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from time import perf_counter
@@ -345,19 +346,38 @@ class PathManager:
             "segment_fraction": best_fraction,
         }
 
-    def carrot_point(self, position_local_ned_m: Vec3, lookahead_m: float) -> dict[str, Any]:
+    def carrot_point(
+        self,
+        position_local_ned_m: Vec3,
+        lookahead_m: float,
+        speed_lookahead_m: float | None = None,
+    ) -> dict[str, Any]:
         """Return a path point lookahead_m ahead of the current path projection."""
         projection = self.project(position_local_ned_m)
+        projection_distance_m = float(projection["along_track_m"])
         target_distance_m = min(
-            float(projection["along_track_m"]) + max(0.0, float(lookahead_m)),
+            projection_distance_m + max(0.0, float(lookahead_m)),
+            float(self._cumulative_lengths[-1]),
+        )
+        speed_preview_distance_m = min(
+            projection_distance_m
+            + max(0.0, float(lookahead_m if speed_lookahead_m is None else speed_lookahead_m)),
             float(self._cumulative_lengths[-1]),
         )
         point, tangent, segment_index = self._sample_at_distance(target_distance_m)
+        curvature = self._curvature_at_segment(segment_index)
+        max_curvature_ahead = self._max_curvature_between(projection_distance_m, speed_preview_distance_m)
         return {
             "position_local_ned_m": tuple(float(value) for value in point),
             "tangent_local_ned": tuple(float(value) for value in tangent),
             "along_track_m": target_distance_m,
             "cross_track_error_m": projection["cross_track_error_m"],
+            "curvature": float(curvature),
+            "max_curvature_ahead": float(max_curvature_ahead),
+            "speed_lookahead_m": float(
+                lookahead_m if speed_lookahead_m is None else speed_lookahead_m
+            ),
+            "speed_preview_along_track_m": speed_preview_distance_m,
             "projection_position_local_ned_m": projection["position_local_ned_m"],
             "projection_along_track_m": projection["along_track_m"],
             "segment_index": segment_index,
@@ -379,6 +399,50 @@ class PathManager:
         if norm <= 1e-12:
             return np.array((1.0, 0.0, 0.0), dtype=float)
         return segment / norm
+
+    def _curvature_at_segment(self, index: int) -> float:
+        self._require_path()
+        segment_index = min(max(int(index), 0), len(self._segment_lengths) - 1)
+        return max(
+            self._curvature_at_vertex(segment_index),
+            self._curvature_at_vertex(segment_index + 1),
+        )
+
+    def _max_curvature_between(self, start_distance_m: float, end_distance_m: float) -> float:
+        self._require_path()
+        start = float(np.clip(start_distance_m, 0.0, self._cumulative_lengths[-1]))
+        end = float(np.clip(end_distance_m, 0.0, self._cumulative_lengths[-1]))
+        if end < start:
+            start, end = end, start
+
+        start_index = int(np.searchsorted(self._cumulative_lengths, start, side="right") - 1)
+        end_index = int(np.searchsorted(self._cumulative_lengths, end, side="right") - 1)
+        start_index = min(max(start_index, 0), len(self._segment_lengths) - 1)
+        end_index = min(max(end_index, 0), len(self._segment_lengths) - 1)
+
+        max_curvature = 0.0
+        for vertex_index in range(start_index, end_index + 2):
+            max_curvature = max(max_curvature, self._curvature_at_vertex(vertex_index))
+        return float(max_curvature)
+
+    def _curvature_at_vertex(self, index: int) -> float:
+        if index <= 0 or index >= len(self._waypoints) - 1:
+            return 0.0
+
+        before = self._waypoints[index] - self._waypoints[index - 1]
+        after = self._waypoints[index + 1] - self._waypoints[index]
+        before_length = float(np.linalg.norm(before))
+        after_length = float(np.linalg.norm(after))
+        if before_length <= 1e-12 or after_length <= 1e-12:
+            return 0.0
+
+        before_tangent = before / before_length
+        after_tangent = after / after_length
+        turn_angle_rad = math.acos(float(np.clip(np.dot(before_tangent, after_tangent), -1.0, 1.0)))
+        arc_length_m = 0.5 * (before_length + after_length)
+        if arc_length_m <= 1e-12:
+            return 0.0
+        return float(turn_angle_rad / arc_length_m)
 
     def _refresh_lengths(self) -> None:
         if len(self._waypoints) < 2:

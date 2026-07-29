@@ -29,6 +29,9 @@ class SystemModeManager:
     def is_racing(self) -> bool:
         return self.system_mode == SystemMode.RACING
 
+    def is_finished(self) -> bool:
+        return self.system_mode == SystemMode.FINISHED
+
     def handle_fault(self, reason: str) -> SystemMode:
         self.fault_reason = reason
         self.system_mode = SystemMode.FAULT
