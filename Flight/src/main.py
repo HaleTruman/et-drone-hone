@@ -43,7 +43,7 @@ ARM_TIMEOUT_S = 5.0
 TARGET_HOLD_S = 0.75
 
 # Vision filtering and path planning.
-PLANNING_MODE = "center_targets" # test_path, center_targets, gate_map
+PLANNING_MODE = "test_path" # test_path, center_targets, gate_map
 PLANNING_GATE_COUNT = 2
 EXCLUSION_DISTANCE = 2.0
 GATE_MAX_PLANNING_DISTANCE_M = 40.0
