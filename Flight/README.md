@@ -44,7 +44,7 @@ src/
   app.py                          # Dash run viewer entry point
 
   core/
-    schemas.py                    # Runtime data shapes and MAVLink cache dataclasses
+    schema.py                     # Runtime data shapes and MAVLink cache dataclasses
     coordinates.py                # Quaternion/vector/frame helpers
     logging/                      # Structured run logger
     control/
@@ -67,9 +67,9 @@ src/
     perception/                   # Vision observations
 
   autonomy/
+    pathing/
+      path_manager.py           # Gate-map-derived path helper used by live loop/logs
     planning/
-      pathing/
-        path_manager.py           # Gate-map-derived path helper used by live loop/logs
       mpcc/                       # MPCC planner workbench
 
   app/
@@ -182,7 +182,7 @@ The reset readiness helper watches the IMU-integrated `MavlinkTelemetry.vehicle_
 
 ## Runtime Schemas and Boundaries
 
-Canonical dataclasses live in `src/core/schemas.py`.
+Canonical dataclasses live in `src/core/schema.py`.
 
 ### MAVLink Transport Shapes
 
@@ -332,7 +332,7 @@ JPEG bytes
 Configuration is held by `VisionPerceptionConfig`:
 
 - `checkpoint`
-  - CNN checkpoint, default `src/sensing/vision/cnn/cnn_last.pt`.
+  - CNN checkpoint, default `src/sensing/vision/models/cnn/cnn_last.pt`.
 - `regressor_checkpoint`
   - Regressor checkpoint, default `src/sensing/vision/regressor/regressor_last.pt`.
 - `device`

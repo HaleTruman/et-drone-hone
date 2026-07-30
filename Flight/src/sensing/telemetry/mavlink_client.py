@@ -1,5 +1,6 @@
 """MAVLink client and raw message cache for the AI GP simulator."""
 
+import copy
 import struct
 import threading
 import time
@@ -8,7 +9,7 @@ from typing import Any, Callable
 from pymavlink import mavutil
 
 from core.coordinates import vec3
-from core.schemas import (
+from core.schema import (
     CollisionEvent,
     MavlinkActuatorOutputStatus,
     MavlinkHeartbeat,
@@ -34,11 +35,13 @@ class MavlinkClient:
         endpoint: str = "udpin:127.0.0.1:14550",
         heartbeat_hz: float = 2.0,
         timesync_hz: float = 10.0,
+        sim_runtime: str = "VQ_2",
         connection_factory: Callable[[str], Any] | None = None,
     ):
         self.endpoint = endpoint
         self.heartbeat_hz = float(heartbeat_hz)
         self.timesync_hz = float(timesync_hz)
+        self.sim_runtime = _normalized_sim_runtime(sim_runtime)
         self._connection_factory = connection_factory
         self._connection: Any | None = None
         self._receiver_thread: threading.Thread | None = None
@@ -55,6 +58,7 @@ class MavlinkClient:
         self.latest_heartbeat: MavlinkHeartbeat | None = None
         self.latest_imu: MavlinkHighresImu | None = None
         self.latest_actuator_output: MavlinkActuatorOutputStatus | None = None
+        self.latest_sim_truth: dict[str, Any] | None = None
         self.race_status: RaceStatus | None = None
         self.collisions: list[CollisionEvent] = []
         self.latest_position_target: dict[str, Any] | None = None
@@ -148,6 +152,14 @@ class MavlinkClient:
             0,
             0,
         )
+
+    def clear_cached_telemetry(self) -> None:
+        self.latest_imu = None
+        self.latest_actuator_output = None
+        self.latest_sim_truth = None
+        self.race_status = None
+        self.collisions.clear()
+        self._latest_message_monotonic_s = None
 
     def send_position_target(self, target: dict[str, Any]) -> None:
         self.latest_position_target = target
@@ -297,6 +309,7 @@ class MavlinkClient:
             imu=self.latest_imu,
             system_status=self._latest_system_status(),
             reset_count=None,
+            sim_truth=self.latest_sim_truth,
             raw={"source": "mavlink_client"},
         )
     
@@ -317,6 +330,7 @@ class MavlinkClient:
     def snapshot(self) -> dict[str, Any]:
         return {
             "endpoint": self.endpoint,
+            "sim_runtime": self.sim_runtime,
             "connected": self.connected,
             "armed": self.armed,
             "status": asdict(self.status()),
@@ -324,6 +338,7 @@ class MavlinkClient:
             "latest_timesync": self._snapshot_value(self.latest_timesync),
             "latest_imu": self._snapshot_value(self.latest_imu),
             "latest_actuator_output": self._snapshot_value(self.latest_actuator_output),
+            "latest_sim_truth": copy.deepcopy(self.latest_sim_truth),
             "race_status": asdict(self.race_status) if self.race_status else None,
             "collisions": [asdict(collision) for collision in self.collisions],
             "latest_position_target": self.latest_position_target,
@@ -344,6 +359,12 @@ class MavlinkClient:
             self._on_actuator_output_status(msg)
         elif msg_type == "COLLISION":
             self._on_collision(msg)
+        elif self.sim_runtime == "VQ_1" and msg_type == "ODOMETRY":
+            self._on_sim_truth_odometry(msg)
+        elif self.sim_runtime == "VQ_1" and msg_type == "ATTITUDE":
+            self._on_sim_truth_attitude(msg)
+        elif self.sim_runtime == "VQ_1" and msg_type == "LOCAL_POSITION_NED":
+            self._on_sim_truth_local_position_ned(msg)
 
     def shutdown(self) -> None:
         self._running.clear()
@@ -431,6 +452,72 @@ class MavlinkClient:
         self.collisions.append(CollisionEvent(int(msg.id), int(msg.threat_level), float(msg.horizontal_minimum_delta)))
         self._mark_message_received()
 
+    def _on_sim_truth_odometry(self, msg: Any) -> None:
+        sim_truth = self._ensure_sim_truth()
+        payload = {
+            "sim_time_ns": int(msg.time_usec) * 1_000,
+            "time_usec": int(msg.time_usec),
+            "frame_id": int(msg.frame_id),
+            "child_frame_id": int(msg.child_frame_id),
+            "position_local_ned_m": vec3((float(msg.x), float(msg.y), float(msg.z))),
+            "attitude_quaternion": tuple(float(value) for value in msg.q),
+            "velocity_local_ned_mps": vec3((float(msg.vx), float(msg.vy), float(msg.vz))),
+            "body_rates_frd_rps": vec3(
+                (
+                    float(getattr(msg, "rollspeed", 0.0)),
+                    float(getattr(msg, "pitchspeed", 0.0)),
+                    float(getattr(msg, "yawspeed", 0.0)),
+                )
+            ),
+        }
+        sim_truth["odometry"] = payload
+        sim_truth["latest_sim_time_ns"] = payload["sim_time_ns"]
+        self._mark_message_received()
+
+    def _on_sim_truth_attitude(self, msg: Any) -> None:
+        sim_truth = self._ensure_sim_truth()
+        payload = {
+            "sim_time_ns": int(msg.time_boot_ms) * 1_000_000,
+            "time_boot_ms": int(msg.time_boot_ms),
+            "roll_pitch_yaw_rad": vec3((float(msg.roll), float(msg.pitch), float(msg.yaw))),
+            "body_rates_frd_rps": vec3(
+                (
+                    float(getattr(msg, "rollspeed", 0.0)),
+                    float(getattr(msg, "pitchspeed", 0.0)),
+                    float(getattr(msg, "yawspeed", 0.0)),
+                )
+            ),
+        }
+        sim_truth["attitude"] = payload
+        sim_truth["latest_sim_time_ns"] = max(
+            int(sim_truth.get("latest_sim_time_ns", 0)),
+            payload["sim_time_ns"],
+        )
+        self._mark_message_received()
+
+    def _on_sim_truth_local_position_ned(self, msg: Any) -> None:
+        sim_truth = self._ensure_sim_truth()
+        payload = {
+            "sim_time_ns": int(msg.time_boot_ms) * 1_000_000,
+            "time_boot_ms": int(msg.time_boot_ms),
+            "position_local_ned_m": vec3((float(msg.x), float(msg.y), float(msg.z))),
+            "velocity_local_ned_mps": vec3((float(msg.vx), float(msg.vy), float(msg.vz))),
+        }
+        sim_truth["local_position_ned"] = payload
+        sim_truth["latest_sim_time_ns"] = max(
+            int(sim_truth.get("latest_sim_time_ns", 0)),
+            payload["sim_time_ns"],
+        )
+        self._mark_message_received()
+
+    def _ensure_sim_truth(self) -> dict[str, Any]:
+        if self.latest_sim_truth is None:
+            self.latest_sim_truth = {
+                "runtime": self.sim_runtime,
+                "source": "mavlink_sim_truth",
+            }
+        return self.latest_sim_truth
+
     def _time_boot_ms(self) -> int:
         if self.latest_imu is not None:
             return self.latest_imu.time_boot_us // 1_000
@@ -459,3 +546,10 @@ class MavlinkClient:
         if self._connection is None:
             raise RuntimeError("MAVLink client is not connected")
         return self._connection
+
+
+def _normalized_sim_runtime(sim_runtime: str) -> str:
+    value = str(sim_runtime).strip().upper()
+    if value not in {"VQ_1", "VQ_2"}:
+        raise ValueError('sim_runtime must be "VQ_1" or "VQ_2"')
+    return value

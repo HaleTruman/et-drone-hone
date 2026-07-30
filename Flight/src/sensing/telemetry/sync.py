@@ -1,9 +1,9 @@
 from collections import deque
 from typing import Any, Iterable
 
-from core.schemas import MavlinkTelemetry
-from mapping.perception import VisionObservation
-from sensing.vision.vision_stream import VisionFrame
+from core.schema import MavlinkTelemetry
+from core.schema import VisionObservation
+from core.schema import VisionFrame
 
 
 class DataSynchronizer:

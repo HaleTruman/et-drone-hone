@@ -152,19 +152,23 @@ def _trajectory_figure(run: RunLog) -> go.Figure:
         plot_target = _ned_point_to_plot(target)
         all_points.append(plot_target)
         fig.add_trace(go.Scatter3d(x=[plot_target[0]], y=[plot_target[1]], z=[plot_target[2]], mode="markers", name="Target", marker={"color": "#16a34a", "size": 7, "symbol": "diamond"}))
-    planned_path = _latest_planned_path_points(run)
-    if planned_path:
-        plot_planned_path = [_ned_point_to_plot(point) for point in planned_path]
-        all_points.extend(plot_planned_path)
+    for path_points, name, color in (
+        (_latest_path_points(run, "test_paths", "test_path"), "Test path", "#ffffff"),
+        (_latest_path_points(run, "planned_paths", "planned_path"), "Planned path", "#dc2626"),
+    ):
+        if not path_points:
+            continue
+        plot_path = [_ned_point_to_plot(point) for point in path_points]
+        all_points.extend(plot_path)
         fig.add_trace(
             go.Scatter3d(
-                x=[point[0] for point in plot_planned_path],
-                y=[point[1] for point in plot_planned_path],
-                z=[point[2] for point in plot_planned_path],
+                x=[point[0] for point in plot_path],
+                y=[point[1] for point in plot_path],
+                z=[point[2] for point in plot_path],
                 mode="lines+markers",
-                name="Planned path",
-                line={"color": "#7c3aed", "width": 6},
-                marker={"color": "#7c3aed", "size": 3},
+                name=name,
+                line={"color": color, "width": 6},
+                marker={"color": color, "size": 3},
             )
         )
     frames = []
@@ -266,14 +270,21 @@ def _trajectory_axis_ranges(points: list[list[float]]) -> list[list[float]]:
 
 
 def _latest_planned_path_points(run: RunLog) -> list[list[float]]:
-    planned_paths = run.raw.get("planned_paths")
-    if isinstance(planned_paths, list):
-        for record in reversed(planned_paths):
-            planned_path = value_at(record, "planned_path", "points_local_ned_m")
+    return _latest_path_points(run, "planned_paths", "planned_path")
+
+
+def _latest_path_points(run: RunLog, collection_key: str, path_key: str) -> list[list[float]]:
+    path_records = run.raw.get(collection_key)
+    if isinstance(path_records, list):
+        for record in reversed(path_records):
+            planned_path = value_at(record, path_key, "points_local_ned_m")
+            if _is_point_list(planned_path):
+                return planned_path
+            planned_path = value_at(record, path_key, "points_relative_ned_m")
             if _is_point_list(planned_path):
                 return planned_path
     for cycle in reversed(run.cycles):
-        planned_path = value_at(cycle, "planned_path", "points_local_ned_m")
+        planned_path = value_at(cycle, path_key, "points_local_ned_m")
         if _is_point_list(planned_path):
             return planned_path
     return []

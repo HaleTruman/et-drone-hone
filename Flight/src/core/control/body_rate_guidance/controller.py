@@ -5,7 +5,7 @@ from typing import Any
 
 import numpy as np
 
-from core.schemas import VehicleState
+from core.schema import VehicleState
 
 
 @dataclass(frozen=True)

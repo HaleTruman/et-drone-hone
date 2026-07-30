@@ -1,4 +1,4 @@
-"""Local entrypoint for the racing-stack run explorer."""
+"""Local entrypoint for the flight log review UI."""
 
 import sys
 from pathlib import Path
@@ -12,10 +12,9 @@ def _ensure_src_on_path() -> None:
 
 def main() -> int:
     _ensure_src_on_path()
-    from app.dash_app import run
+    from ui.server import main as ui_main
 
-    run()
-    return 0
+    return ui_main()
 
 
 if __name__ == "__main__":

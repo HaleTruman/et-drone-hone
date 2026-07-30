@@ -26,6 +26,7 @@ class Logger:
             "vision_frames": [],
             "vision_observations": [],
             "planned_paths": [],
+            "test_paths": [],
         }
         self.telemetry_records: dict[str, Any] = {
             "schema_version": 2,
@@ -105,6 +106,11 @@ class Logger:
         self.records["planned_paths"].append(record)
         self._append_jsonl("planned_paths.jsonl", record)
 
+    def log_test_path(self, test_path: Any, **data: Any) -> None:
+        record = self._with_record_fields({"test_path": test_path, **data}, record_type="test_path")
+        self.records["test_paths"].append(record)
+        self._append_jsonl("test_paths.jsonl", record)
+
     def log_exception(self, event: str, error: BaseException, **context: Any) -> None:
         self.log_event(
             event,
@@ -154,6 +160,7 @@ class Logger:
             "vision_frames": len(self.records["vision_frames"]),
             "vision_observations": len(self.records["vision_observations"]),
             "planned_paths": len(self.records["planned_paths"]),
+            "test_paths": len(self.records["test_paths"]),
             "commands_emitted": command_count,
             "max_deadline_lateness_ms": self._max_deadline_lateness_ms,
             "max_loop_elapsed_ms": self._max_loop_elapsed_ms,
@@ -285,6 +292,7 @@ class Logger:
             "vision_frames.jsonl": self.records["vision_frames"],
             "vision_observations.jsonl": self.records["vision_observations"],
             "planned_paths.jsonl": self.records["planned_paths"],
+            "test_paths.jsonl": self.records["test_paths"],
         }
         for filename, records in streams.items():
             path = self._lists_dir() / filename
@@ -343,6 +351,8 @@ class Logger:
             "outer_cycle",
             "cycle",
             "sim_time_ns",
+            "system_mode",
+            "modes",
             "reason",
             "error_type",
             "error",

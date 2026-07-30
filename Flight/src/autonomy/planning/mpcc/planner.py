@@ -24,10 +24,16 @@ class MPCCPlanner:
         ref = generate_reference(current_state[0:3], gates, self.pack[3]["N"] + 1)
         X, U, theta, info = solve_mpcc(self.pack, np.asarray(current_state, float), ref, self.warm_start)
         misses = [float(np.min(np.linalg.norm(X[0:3].T - np.array(g["pos"], float), axis=1))) for g in gates]
-        gate_normal = np.asarray(R(np.asarray(gates[0]["quat"], float))[:, 0], float)
-        gate_progress = (X[0:3].T - np.asarray(gates[0]["pos"], float)) @ gate_normal
-        crossed = np.flatnonzero(gate_progress >= 0.0)
-        gate_crossing_step = int(crossed[0]) if len(crossed) else int(np.argmin(np.abs(gate_progress)))
+        gate_normals = [np.asarray(R(np.asarray(g["quat"], float))[:, 0], float) for g in gates]
+        gate_crossing_steps = []
+        for gate, gate_normal_i in zip(gates, gate_normals):
+            gate_progress = (X[0:3].T - np.asarray(gate["pos"], float)) @ gate_normal_i
+            crossed = np.flatnonzero(gate_progress >= 0.0)
+            gate_crossing_steps.append(
+                int(crossed[0]) if len(crossed) else int(np.argmin(np.abs(gate_progress)))
+            )
+        gate_crossing_step = gate_crossing_steps[0]
+        last_gate_crossing_step = gate_crossing_steps[-1]
         self.warm_start = {"X": X, "U": U}
         self.reference = ref
         q = X[6:10, 1]
@@ -41,10 +47,21 @@ class MPCCPlanner:
         info["gate_count"] = len(gates)
         info["gates"] = gates
         info["gate_misses_m"] = misses
+        info["gate_crossing_steps"] = gate_crossing_steps
+        info["gate_crossing_times_s"] = [
+            step * float(info.get("dt", self.pack[3]["dt"])) for step in gate_crossing_steps
+        ]
         info["gate_crossing_step"] = gate_crossing_step
         info["gate_crossing_time_s"] = gate_crossing_step * float(info.get("dt", self.pack[3]["dt"]))
+        info["last_gate_crossing_step"] = last_gate_crossing_step
+        info["last_gate_crossing_time_s"] = last_gate_crossing_step * float(info.get("dt", self.pack[3]["dt"]))
+        info["expected_total_time_start_to_last_gate_s"] = info["last_gate_crossing_time_s"]
         info["gate_speed_mps"] = float(np.linalg.norm(X[3:6, gate_crossing_step]))
-        info["gate_forward_speed_mps"] = float(np.dot(gate_normal, X[3:6, gate_crossing_step]))
+        info["gate_forward_speed_mps"] = float(np.dot(gate_normals[0], X[3:6, gate_crossing_step]))
+        info["last_gate_speed_mps"] = float(np.linalg.norm(X[3:6, last_gate_crossing_step]))
+        info["last_gate_forward_speed_mps"] = float(
+            np.dot(gate_normals[-1], X[3:6, last_gate_crossing_step])
+        )
         info["motor_rate_limit"] = self.pack[3].get("motor_rate_limit")
         print("Gate misses:", misses)
         if self.visualize_result:

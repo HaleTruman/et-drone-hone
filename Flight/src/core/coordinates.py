@@ -105,7 +105,7 @@ def quaternion_from_roll_pitch_yaw_deg(roll_deg: float, pitch_deg: float, yaw_de
     """
     Convert roll, pitch, yaw in degrees to quaternion (w, x, y, z).
     - Positive roll  = right bank
-    - Positive pitch = nose down (forward pitch)
+    - Positive pitch = nose up
     - Positive yaw   = nose right
     """
     # Convert to radians

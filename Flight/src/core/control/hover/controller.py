@@ -5,7 +5,7 @@ import numpy as np
 
 from core.control.command_mapper import CommandMapper
 from core.coordinates import euler_from_quaternion, quaternion_from_rotation_matrix
-from core.schemas import VehicleState
+from core.schema import VehicleState
 
 
 class HoverController:

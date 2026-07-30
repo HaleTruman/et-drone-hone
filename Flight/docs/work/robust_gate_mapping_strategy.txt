@@ -1,0 +1,222 @@
+================================================================================
+ROBUST GATE MAPPING / OBJECT-SLAM STRATEGY
+for AI Grand Prix-style Quadrotor Racing
+(Monocular vision @ ~10 Hz, known gate geometry, NED frames, no GPS)
+================================================================================
+
+PURPOSE
+-------
+Build and maintain a stable metric map of race gates in the NED inertial frame
+despite:
+  - False positive detections from the vision model
+  - High variance / inconsistent pose estimates of the same physical gate
+  - Temporary loss of detections (occlusion, looking away, motion blur)
+  - Lack of instance identity from the vision model
+
+The resulting map is used for:
+  - Correcting drone state estimate (localization)
+  - Providing ordered gate poses to CPC / NMPC for trajectory generation
+  - Multi-lap consistency and planning when gates are not currently visible
+
+This strategy does NOT require improving the vision model. It treats the vision
+output as a noisy, unordered set of relative gate poses and applies classical
+robust object-based SLAM techniques.
+
+
+COORDINATE CONVENTIONS (MUST BE FOLLOWED)
+-----------------------------------------
+- Inertial frame: NED (x North, y East, z Down)
+- Body frame: FRD (x Forward, y Right, z Down)
+- Camera origin coincides with body origin, but is tilted +20° about body Y-axis
+- Vision model outputs relative poses in the camera frame
+- All map gate poses are stored and updated in NED
+- Transform chain for a detection:
+    T_NED_gate = T_NED_body * T_body_cam * T_cam_gate
+
+Gate size is known (outer ~2.7 m, inner 1.5 m square) and is already used by
+the vision model to produce metric poses.
+
+
+KEY DESIGN PRINCIPLES
+---------------------
+1. Gates are static landmarks. Once confirmed, their process noise is near zero.
+2. Never initialize a permanent landmark from a single detection (delayed init).
+3. Strong geometric prediction of which map gates should be visible.
+4. Strict gating + sequential bias for data association.
+5. Robust fusion that rejects outliers and down-weights noisy observations.
+6. Explicit lifetime management and pruning of low-evidence landmarks.
+7. Prefer sequential "next expected gate" hypothesis heavily (racing is ordered).
+
+
+DATA STRUCTURES
+---------------
+
+GateLandmark (permanent map entry)
+  - id                  : unique integer
+  - pose_NED            : SE(3) or (position[3] + quaternion[4]) in NED
+  - information         : 6x6 (or reduced) information matrix / covariance
+  - observation_count   : total number of accepted observations
+  - last_seen_time      : timestamp of most recent accepted observation
+  - average_residual    : running mean of residual magnitude (for quality)
+  - sequential_index    : optional race-order index (0 = start, 1 = first race gate...)
+  - locked              : bool (optional; freeze pose after high confidence)
+
+CandidateTrack (temporary, not yet in map)
+  - id                  : temporary id
+  - observations        : short buffer of recent relative poses + timestamps
+  - estimated_pose_NED  : current best estimate (filtered)
+  - hit_count           : number of consistent observations so far
+  - last_seen_time
+  - associated_map_id   : optional (if it later matches an existing landmark)
+
+Map
+  - landmarks           : dict[id -> GateLandmark]
+  - candidates          : list or dict of CandidateTrack
+  - next_expected_id    : id (or sequential index) of the gate the vehicle should
+                          be heading toward
+  - origin_fixed        : bool (whether map origin has been anchored)
+
+
+MAIN PROCESSING LOOP (called on every vision packet ~10 Hz)
+-----------------------------------------------------------
+
+Input:
+  - current_drone_pose_NED   (from state estimator, with uncertainty)
+  - list of detections       (each: relative_pose_cam, optional confidence/covariance,
+                              optional image location)
+  - current_timestamp
+
+Steps:
+
+1. PREDICT
+   For every existing GateLandmark:
+     - Compute expected relative pose in camera frame using current_drone_pose_NED
+       and the known camera extrinsics (20° tilt).
+     - Form predicted measurement and its uncertainty (propagate map + drone uncertainty).
+     - Determine whether the gate is expected to be inside the camera frustum
+       (with some margin).
+
+2. ASSOCIATE
+   - Build cost matrix between current detections and predicted landmarks.
+   - Cost = Mahalanobis distance in relative pose space
+            (or combined position + angular distance).
+   - Apply hard gates:
+       position residual < ~0.5–0.8 m
+       orientation residual < ~15–25°
+       (tune these; start conservative)
+   - Strongly prefer association to the next_expected gate (lower cost or hard priority).
+   - Solve assignment (Hungarian or greedy nearest-neighbor under the gates).
+   - Result: matched pairs (detection ↔ landmark), unmatched detections,
+             unmatched predictions.
+
+3. UPDATE MATCHED LANDMARKS (robust static fusion)
+   For each successful match:
+     - Transform detection into NED using current_drone_pose.
+     - Compute residual against the landmark’s current pose_NED.
+     - If residual exceeds a robust threshold → reject as outlier (do not update).
+     - Else:
+         - Perform information-form (or EKF) update of the landmark pose.
+         - Use a small measurement weight if vision variance is high.
+         - Increment observation_count, update last_seen_time, update average_residual.
+         - Optionally: if observation_count is high and residual consistently low,
+           set locked = True (or greatly reduce process noise).
+
+4. HANDLE UNMATCHED DETECTIONS → CANDIDATES
+   - Try to associate unmatched detections to existing CandidateTracks
+     (simple nearest-neighbor in relative pose or image space, with looser gates).
+   - For associated candidates: append observation, update their internal filter,
+     increment hit_count.
+   - For completely new detections: spawn a new CandidateTrack.
+   - Prune candidates that have not been seen for a short time (e.g. 0.5–1.0 s)
+     or that have inconsistent internal observations.
+
+5. PROMOTE CANDIDATES TO LANDMARKS (delayed initialization)
+   For each CandidateTrack:
+     - If hit_count >= MIN_HITS (recommended start: 5–8 frames)
+       AND internal pose consistency is good
+       AND the candidate is geometrically plausible w.r.t. existing map
+           (rough inter-gate distance, sequential order, not overlapping existing gates)
+     - Then:
+         - Create a new GateLandmark from the candidate’s estimated pose.
+         - Assign a permanent id and sequential_index if possible.
+         - Remove the candidate.
+         - (Optional) Add a soft relative-pose factor to the previous gate in sequence.
+
+6. PRUNE LOW-EVIDENCE LANDMARKS
+   Periodically or every frame:
+     - Remove landmarks where:
+         observation_count is low  AND  (current_time - last_seen_time) is large
+     - Never prune high-count, previously well-observed landmarks even if temporarily
+       invisible (they are real track gates that are currently out of view).
+
+7. UPDATE DRONE STATE / LOCALIZATION (optional but recommended)
+   - Use only the high-confidence matched landmarks to form a pose correction
+     for the drone state estimator (relative pose measurements).
+   - This closes the loop between mapping and localization.
+
+8. UPDATE next_expected
+   - Advance the sequential pointer when the vehicle has passed a gate
+     (e.g. based on progress along the gate normal or CPC progress variable).
+
+
+RECOMMENDED STARTING PARAMETERS
+-------------------------------
+- MIN_HITS for promotion: 5–8 frames (~0.5–0.8 s at 10 Hz)
+- Position gate (association): 0.5–0.8 m
+- Orientation gate: 15–25 degrees
+- Outlier residual threshold (update): ~1.0–1.5× the association gate
+- Candidate timeout: 0.6–1.0 s
+- Landmark prune: observation_count < 8 AND not seen for > 3–5 s
+- Process noise on confirmed landmarks: near zero (1e-6 or smaller)
+- Camera tilt: +20° about body Y (as per competition spec)
+
+
+INTEGRATION WITH THE REST OF THE SYSTEM
+---------------------------------------
+- The map’s ordered list of GateLandmark poses (centers + opening normals)
+  becomes the reference geometry for CPC / NMPC.
+- A simple parametric path or piecewise linear path through gate centers can
+  be generated from the map for the progress variable s.
+- While the map is still incomplete (early in the run), fall back to a reactive
+  controller that flies toward the highest-confidence currently visible gate
+  (or the next_expected candidate).
+- Once a stable set of gates exists, switch to full map-based NMPC.
+- All transforms must respect the project’s NED / body / camera conventions
+  (see quadrotor coordinate systems skill / frames.md).
+
+
+EDGE CASES & ROBUSTNESS NOTES
+-----------------------------
+- First gate(s): the first well-confirmed landmark can be used to anchor the
+  map origin relative to the arming pose, or the map can float until a
+  consistent sequence is established.
+- Multiple similar-looking gates: sequential bias + geometric prediction is
+  the main defense. Appearance embeddings (if ever available) can be added later.
+- High-speed / large inter-frame motion: the prediction step using the drone
+  state estimate is critical. Keep the state estimator running at higher rate
+  than vision.
+- Vision model occasionally outputs completely wrong orientations: consider
+  estimating only position + yaw for the landmarks (constrain roll/pitch near 0
+  if gates are known to be upright), or use a robust orientation metric.
+- Latency: if vision has significant delay, predict the drone pose forward by
+  the estimated latency before performing association.
+
+
+IMPLEMENTATION PRIORITY (suggested order)
+-----------------------------------------
+1. Prediction + association with hard gates + sequential bias
+2. Candidate tracks + delayed promotion (MIN_HITS)
+3. Simple robust update (reject large residuals + information form or weighted average)
+4. Lifetime / pruning logic
+5. Feed high-confidence map into drone state correction and CPC reference
+6. Optional: short observation buffer + periodic robust re-estimation of each gate
+7. Optional: topology / inter-gate relative pose soft constraints
+
+
+This document is intended to be directly usable by a coding agent or human
+implementer. All numerical values are starting points and should be tuned on
+logged data from the simulator.
+
+
+END OF DOCUMENT
+================================================================================
