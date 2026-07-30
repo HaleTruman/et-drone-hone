@@ -68,6 +68,7 @@ class PathManager:
         self.gate_center_tolerance_m = max(0.0, float(gate_center_tolerance_m))
         self.spline_corner_tightness = float(np.clip(float(spline_corner_tightness), 0.0, 1.0))
         self.planning_mode = _normalize_planning_mode(planning_mode)
+        self._path_tail_length_m = 10.0
         self._waypoints = np.empty((0, 3))
         self._segment_lengths = np.empty((0,))
         self._cumulative_lengths = np.array([0.0], dtype=float)
@@ -90,6 +91,7 @@ class PathManager:
         anchors = self._anchors_for_gates(planned_gates, start_position_local_ned_m=start_position)
         points = self._sample_spline(anchors)
         points = self._constrain_gate_centers(points, planned_gates)
+        points = self._extend_path(_waypoint_array(points)).tolist()
         gate_center_errors = self._gate_center_errors(points, planned_gates)
         if len(points) >= 2:
             self.set_waypoints(points)
@@ -125,7 +127,7 @@ class PathManager:
         centers = [center for _, center in gate_centers]
 
         anchors = self._dedupe_points(np.asarray([position, *centers], dtype=float))
-        points = self._sample_spline(anchors)
+        points = self._extend_path(_waypoint_array(self._sample_spline(anchors))).tolist()
         if len(points) >= 2:
             self.set_waypoints(points)
         elif len(points) < 2 and len(self._waypoints) >= 2:
@@ -573,6 +575,25 @@ class PathManager:
                 if len(samples) >= self.max_points:
                     return np.asarray(samples, dtype=float).tolist()
         return np.asarray(samples, dtype=float).tolist()
+
+    def _extend_path(self, points: np.ndarray) -> np.ndarray:
+        if len(points) < 2 or self._path_tail_length_m <= 1e-9:
+            return points.astype(float)
+
+        tangent = points[-1] - points[-2]
+        tangent_norm = float(np.linalg.norm(tangent))
+        if tangent_norm <= 1e-12:
+            return points.astype(float)
+        tangent = tangent / tangent_norm
+
+        remaining_slots = self.max_points - len(points)
+        if remaining_slots <= 0:
+            return points.astype(float)
+
+        steps = min(remaining_slots, max(1, int(np.ceil(self._path_tail_length_m / self.spacing_m))))
+        distances = np.linspace(self._path_tail_length_m / steps, self._path_tail_length_m, steps)
+        tail = points[-1] + distances[:, np.newaxis] * tangent
+        return np.vstack((points, tail)).astype(float)
 
     @staticmethod
     def _dedupe_points(points: np.ndarray) -> np.ndarray:
