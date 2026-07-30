@@ -8,6 +8,7 @@ from core.control.hover.controller import HoverController
 from autonomy.pathing import PathManager
 from core.control.attitude import AttitudeController
 from core.control.carrot import CarrotController
+from core.control.path_follower import GeometricPathFollower, PathFollowerGains
 from core.logging import Logger, generate_mp4
 from core.logging.obs import OBSRecorder
 from core.schema import MavlinkHighresImu, StateRecord, VioCorrection
@@ -38,7 +39,7 @@ GATE_MAP_INIT_TIMEOUT_S = 1.5
 RESET_READY_TIMEOUT_S = 20.0
 RESET_STABLE_S = 0.5
 RESET_STABLE_MAX_SPEED_MPS = 0.03
-POST_RESET_DELAY_S = 1.5
+POST_RESET_DELAY_S = 0.6
 ARM_TIMEOUT_S = 5.0
 TARGET_HOLD_S = 0.75
 
@@ -48,15 +49,47 @@ PLANNING_GATE_COUNT = 2
 EXCLUSION_DISTANCE = 2.0
 GATE_MAX_PLANNING_DISTANCE_M = 40.0
 GATE_PASSED_DISTANCE_M = 2.0
-GATE_CENTER_TOLERANCE_M = 0.05
+GATE_CENTER_TOLERANCE_M = 0.15
 SPLINE_CORNER_TIGHTNESS = 0.75
+ADAPTIVE_SPLINE_TIGHTNESS = True
+DISTANT_SPLINE_CORNER_TIGHTNESS = 0.10
+MIN_SPLINE_CORNER_TIGHTNESS = 0.55
+MAX_SPLINE_CORNER_TIGHTNESS = 0.95
+GENTLE_TURN_ANGLE_DEG = 20.0
+SHARP_TURN_ANGLE_DEG = 70.0
+SHORT_SEGMENT_REFERENCE_M = 12.0
+LONG_SEGMENT_REFERENCE_M = 25.0
 
-# Control and output behavior.
-CONTROL_METHOD = "carrot_motor_test"
-CARROT_LOOKAHEAD_M = 1.4
-SPEED_LOOKAHEAD_M = 10
+# Control mode and safety envelope.
+CONTROL_METHOD = "geometric_path_follower"
 FAILSAFE_DISTANCE = 10
 ALLOW_FLIGHT = True
+
+# Path preview distances.
+CARROT_LOOKAHEAD_M = 1.4
+SPEED_LOOKAHEAD_M = 15
+GEOMETRIC_LOOKAHEAD_M = 6.0
+
+# Geometric path-following feedback.
+GEOMETRIC_CROSS_TRACK_GAIN = 3.0
+GEOMETRIC_CROSS_TRACK_DAMPING = 1.6
+GEOMETRIC_ACCELERATION_FILTER_ALPHA = 1.0
+
+# Speed planner.
+GEOMETRIC_MAX_SPEED_MPS = 20
+GEOMETRIC_MAX_LATERAL_ACCELERATION_MPS2 = 20.0
+GEOMETRIC_CURVATURE_SPEED_DEADBAND = 3.5
+GEOMETRIC_CURVATURE_SPEED_RAMP = 0.5
+
+# Curvature feed-forward.
+GEOMETRIC_CURVATURE_FEEDFORWARD_GAIN = 1.0
+GEOMETRIC_CURVATURE_FEEDFORWARD_MAX_ACCELERATION_MPS2 = 8.0
+
+# Thrust and acceleration limits.
+GEOMETRIC_HOVER_THRUST = 0.265
+GEOMETRIC_MAX_COMMANDED_ACCELERATION_MPS2 = 50
+
+# Output and recording.
 CREATE_VIDEO = False
 RECORD_SCREEN = False
 
@@ -121,7 +154,17 @@ def main() -> int:
         passed_gate_distance_m=GATE_PASSED_DISTANCE_M,
         gate_center_tolerance_m=GATE_CENTER_TOLERANCE_M,
         spline_corner_tightness=SPLINE_CORNER_TIGHTNESS,
+        adaptive_spline_tightness=ADAPTIVE_SPLINE_TIGHTNESS,
+        distant_spline_corner_tightness=DISTANT_SPLINE_CORNER_TIGHTNESS,
+        min_spline_corner_tightness=MIN_SPLINE_CORNER_TIGHTNESS,
+        max_spline_corner_tightness=MAX_SPLINE_CORNER_TIGHTNESS,
+        gentle_turn_angle_deg=GENTLE_TURN_ANGLE_DEG,
+        sharp_turn_angle_deg=SHARP_TURN_ANGLE_DEG,
+        short_segment_reference_m=SHORT_SEGMENT_REFERENCE_M,
+        long_segment_reference_m=LONG_SEGMENT_REFERENCE_M,
         planning_mode=PLANNING_MODE,
+        spacing_m=0.25,
+        max_points=1000
     )
 
 
@@ -133,11 +176,11 @@ def main() -> int:
     )
 
     attitude_controller = AttitudeController(
-        roll_gain=1.2,
-        pitch_gain=1.2,
-        yaw_gain=0.5,
+        roll_gain=1.5,
+        pitch_gain=1.5,
+        yaw_gain=0.6,
         damping=0.15,
-        max_body_rate_rps=3.0
+        max_body_rate_rps=10.0
     )
     
     carrot_controller = CarrotController(
@@ -147,6 +190,25 @@ def main() -> int:
         position_gain=5.5,
         velocity_gain=0.75,
         initial_thrust=0.265
+    )
+
+    geometric_path_follower = GeometricPathFollower(
+        path_manager,
+        gains=PathFollowerGains(
+            kp_cross=GEOMETRIC_CROSS_TRACK_GAIN,
+            kd_cross=GEOMETRIC_CROSS_TRACK_DAMPING,
+            acceleration_filter_alpha=GEOMETRIC_ACCELERATION_FILTER_ALPHA,
+            lookahead_m=GEOMETRIC_LOOKAHEAD_M,
+            speed_lookahead_m=SPEED_LOOKAHEAD_M,
+            v_max=GEOMETRIC_MAX_SPEED_MPS,
+            a_lat_max=GEOMETRIC_MAX_LATERAL_ACCELERATION_MPS2,
+            curvature_speed_deadband=GEOMETRIC_CURVATURE_SPEED_DEADBAND,
+            curvature_speed_ramp=GEOMETRIC_CURVATURE_SPEED_RAMP,
+            curvature_feedforward_gain=GEOMETRIC_CURVATURE_FEEDFORWARD_GAIN,
+            curvature_feedforward_max_acceleration_mps2=GEOMETRIC_CURVATURE_FEEDFORWARD_MAX_ACCELERATION_MPS2,
+            hover_thrust=GEOMETRIC_HOVER_THRUST,
+            max_commanded_acceleration_mps2=GEOMETRIC_MAX_COMMANDED_ACCELERATION_MPS2,
+        ),
     )
     
     hover_controller = HoverController(
@@ -162,6 +224,7 @@ def main() -> int:
     observation = None
     planned_path = None
     carrot_target = None
+    geometric_target = None
     vision_pending = None
     pending_vio_correction: VioCorrection | None = None
 
@@ -499,15 +562,18 @@ def main() -> int:
 
                 # compute attitude target for path-following controller
                 if ALLOW_FLIGHT and system_mode_manager.is_racing():
-                    carrot = path_manager.carrot_point(
-                        vehicle_state.position_local_ned_m,
-                        carrot_controller.lookahead_m,
-                        carrot_controller.speed_lookahead_m,
-                    )
-                    carrot_target = carrot_controller.compute_control(
-                        vehicle_state=vehicle_state,
-                        carrot=carrot,
-                    )
+                    if CONTROL_METHOD == "geometric_path_follower":
+                        geometric_target = geometric_path_follower.compute_control(vehicle_state)
+                    else:
+                        carrot = path_manager.carrot_point(
+                            vehicle_state.position_local_ned_m,
+                            carrot_controller.lookahead_m,
+                            carrot_controller.speed_lookahead_m,
+                        )
+                        carrot_target = carrot_controller.compute_control(
+                            vehicle_state=vehicle_state,
+                            carrot=carrot,
+                        )
            
 
 
@@ -528,23 +594,28 @@ def main() -> int:
                 command_result = None
 
                 if ALLOW_FLIGHT and system_mode_manager.is_racing():
-                    # carrot target
-                    if carrot_target is None:
-                        carrot = path_manager.carrot_point(
-                            vehicle_state.position_local_ned_m,
-                            carrot_controller.lookahead_m,
-                            carrot_controller.speed_lookahead_m,
-                        )
-                        carrot_target = carrot_controller.compute_control(
-                            vehicle_state=vehicle_state,
-                            carrot=carrot,
-                        )
+                    if CONTROL_METHOD == "geometric_path_follower":
+                        if geometric_target is None:
+                            geometric_target = geometric_path_follower.compute_control(vehicle_state)
+                        path_following_target = geometric_target
+                    else:
+                        if carrot_target is None:
+                            carrot = path_manager.carrot_point(
+                                vehicle_state.position_local_ned_m,
+                                carrot_controller.lookahead_m,
+                                carrot_controller.speed_lookahead_m,
+                            )
+                            carrot_target = carrot_controller.compute_control(
+                                vehicle_state=vehicle_state,
+                                carrot=carrot,
+                            )
+                        path_following_target = carrot_target
 
-                    if carrot_target:
+                    if path_following_target:
                         control_target = attitude_controller.compute_control(
                             vehicle_state,
-                            desired_attitude_quaternion=carrot_target["quaternion"],
-                            thrust=carrot_target["thrust"]
+                            desired_attitude_quaternion=path_following_target["quaternion"],
+                            thrust=path_following_target["thrust"]
                         )
                     
                     mavlink_client.send_attitude_target(control_target)
@@ -552,7 +623,7 @@ def main() -> int:
                     command_result = {
                         "emitted": True,
                         "sim_time_ns": telemetry.sim_time_ns,
-                        "reason": "carrot_path_following",
+                        "reason": path_following_target.get("source", "path_following") if path_following_target else "path_following",
                         "attitude_target": control_target,
                         "inner_loop_cycle": inner_cycle,
                         "outer_loop_cycle": outer_cycle,
@@ -639,6 +710,7 @@ def main() -> int:
                     "ran": outer_loop_ran,
                 },
                 carrot=carrot_controller.last_payload,
+                geometric_path_follower=geometric_path_follower.last_payload,
                 vision={
                     **vision_rx.snapshot(),
                     "perception": vision_perception.snapshot()
