@@ -43,18 +43,18 @@ ARM_TIMEOUT_S = 5.0
 TARGET_HOLD_S = 0.75
 
 # Vision filtering and path planning.
-PLANNING_MODE = "test_path" # test_path, center_targets, gate_map
+PLANNING_MODE = "center_targets" # test_path, center_targets, gate_map
 PLANNING_GATE_COUNT = 2
 EXCLUSION_DISTANCE = 2.0
 GATE_MAX_PLANNING_DISTANCE_M = 40.0
 GATE_PASSED_DISTANCE_M = 2.0
 GATE_CENTER_TOLERANCE_M = 0.05
-SPLINE_CORNER_TIGHTNESS = 2
+SPLINE_CORNER_TIGHTNESS = 0.75
 
 # Control and output behavior.
 CONTROL_METHOD = "carrot_motor_test"
-CARROT_LOOKAHEAD_M = 1.5
-SPEED_LOOKAHEAD_M = 8
+CARROT_LOOKAHEAD_M = 1.4
+SPEED_LOOKAHEAD_M = 10
 FAILSAFE_DISTANCE = 10
 ALLOW_FLIGHT = True
 CREATE_VIDEO = False
