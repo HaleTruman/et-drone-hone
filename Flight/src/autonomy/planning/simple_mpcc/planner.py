@@ -1,27 +1,46 @@
 import numpy as np
 try:
-    from quadrotor_dynamics import f, compute_total_thrust, kf
+    from quadrotor_dynamics import f, compute_total_thrust, kf, m, g
     from reference_path import generate_reference, R
     from mpcc_problem import setup_mpcc_problem
     from mpcc_solver import solve_mpcc
 except ImportError:
-    from .quadrotor_dynamics import f, compute_total_thrust, kf
+    from .quadrotor_dynamics import f, compute_total_thrust, kf, m, g
     from .reference_path import generate_reference, R
     from .mpcc_problem import setup_mpcc_problem
     from .mpcc_solver import solve_mpcc
 
 class MPCCPlanner:
-    def __init__(self, visualize_result=False):
+    def __init__(
+        self,
+        visualize_result=False,
+        gate_approach_m=2.0,
+        gate_exit_m=2.0,
+        gate_align_spacing_fraction=0.35,
+        hover_thrust_cmd=0.265,
+    ):
         self.pack = setup_mpcc_problem(f)
         self.warm_start = None
         self.reference = None
         self.visualize_result = visualize_result
+        self.gate_approach_m = gate_approach_m
+        self.gate_exit_m = gate_exit_m
+        self.gate_align_spacing_fraction = gate_align_spacing_fraction
+        self.hover_thrust_cmd = hover_thrust_cmd
+        self.model_hover_thrust_fraction = float(m * g / (4 * kf))
 
     def plan(self, current_state, gates):
         if len(gates) < 1:
             raise ValueError("MPCC planning requires at least one gate.")
 
-        ref = generate_reference(current_state[0:3], gates, self.pack[3]["N"] + 1)
+        ref = generate_reference(
+            current_state[0:3],
+            gates,
+            self.pack[3]["N"] + 1,
+            gate_approach_m=self.gate_approach_m,
+            gate_exit_m=self.gate_exit_m,
+            gate_align_spacing_fraction=self.gate_align_spacing_fraction,
+        )
         X, U, theta, info = solve_mpcc(self.pack, np.asarray(current_state, float), ref, self.warm_start)
         misses = [float(np.min(np.linalg.norm(X[0:3].T - np.array(g["pos"], float), axis=1))) for g in gates]
         gate_normals = [np.asarray(R(np.asarray(g["quat"], float))[:, 0], float) for g in gates]
@@ -38,10 +57,21 @@ class MPCCPlanner:
         self.reference = ref
         q = X[6:10, 1]
         q = q / np.linalg.norm(q)
-        thrust = float(np.clip(float(compute_total_thrust(U[:, 0])) / (4 * kf), 0, 1))
+        model_thrust_fraction = float(compute_total_thrust(U[:, 0])) / (4 * kf)
+        thrust = float(
+            np.clip(
+                model_thrust_fraction * self.hover_thrust_cmd / self.model_hover_thrust_fraction,
+                0,
+                1,
+            )
+        )
         info["theta"] = theta
         info["q_des"] = q
         info["thrust_cmd"] = thrust
+        info["model_thrust_fraction"] = model_thrust_fraction
+        info["model_hover_thrust_fraction"] = self.model_hover_thrust_fraction
+        info["hover_thrust_cmd"] = self.hover_thrust_cmd
+        info["thrust_output_scale"] = self.hover_thrust_cmd / self.model_hover_thrust_fraction
         info["planned_path_local_ned_m"] = X[0:3].T.tolist()
         info["reference_path_local_ned_m"] = ref["pos"].tolist()
         info["gate_count"] = len(gates)
