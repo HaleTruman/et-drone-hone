@@ -62,9 +62,9 @@ MIN_GATE_SEPARATION_M = 5.0  # duplicate-avoidance threshold: spawn-guard and me
 # rays (largest residual mass sat at 0.25-0.5m) with acceptable inlier loosening; 0.25 starved
 # landmarks of returning evidence and fed duplicate fragments, 0.5 loosened discipline enough
 # to spawn new fragments.
-BEAM_RADIUS_M = 0.4  # fixed (not range-scaled) target-size tolerance around each ray
+BEAM_RADIUS_M = 0.55  # fixed (not range-scaled) target-size tolerance around each ray
 ASSOCIATION_AMBIGUITY_MARGIN = 0.10  # normalized (residual / BEAM_RADIUS_M) cost margin
-ROBUST_LOSS_SCALE_M = 0.15
+ROBUST_LOSS_SCALE_M = 0.10 #(0.15, 0.25 should also be tested)
 # 4 (was 2, same sweep): suppresses marginal 2-inlier flicker fragments from ever publishing
 # or founding landmarks; drives publish gate, creation minimum, merge eligibility,
 # offset-learning and corroboration-anchor eligibility.
