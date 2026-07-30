@@ -21,6 +21,14 @@ class PlannedPath:
     spacing_m: float
     computation_ms: float
     source: str = "path_manager"
+    adaptive_spline_tightness: bool = False
+    distant_spline_corner_tightness: float | None = None
+    min_spline_corner_tightness: float | None = None
+    max_spline_corner_tightness: float | None = None
+    gentle_turn_angle_deg: float | None = None
+    sharp_turn_angle_deg: float | None = None
+    short_segment_reference_m: float | None = None
+    long_segment_reference_m: float | None = None
 
     def to_log_dict(self, *, origin_local_ned_m: Any | None = None) -> dict[str, Any]:
         payload = asdict(self)
@@ -51,6 +59,14 @@ class PathManager:
         passed_gate_distance_m: float = 2.0,
         gate_center_tolerance_m: float = 0.5,
         spline_corner_tightness: float = 0.5,
+        adaptive_spline_tightness: bool = True,
+        distant_spline_corner_tightness: float = 0.10,
+        min_spline_corner_tightness: float = 0.15,
+        max_spline_corner_tightness: float = 0.9,
+        gentle_turn_angle_deg: float = 20.0,
+        sharp_turn_angle_deg: float = 80.0,
+        short_segment_reference_m: float = 12.0,
+        long_segment_reference_m: float = 25.0,
         planning_mode: str = "gate_map",
     ):
         self.spline_generator = spline_generator
@@ -67,6 +83,20 @@ class PathManager:
         self.passed_gate_distance_m = max(0.0, float(passed_gate_distance_m))
         self.gate_center_tolerance_m = max(0.0, float(gate_center_tolerance_m))
         self.spline_corner_tightness = float(np.clip(float(spline_corner_tightness), 0.0, 1.0))
+        self.adaptive_spline_tightness = bool(adaptive_spline_tightness)
+        self.distant_spline_corner_tightness = float(np.clip(float(distant_spline_corner_tightness), 0.0, 1.0))
+        self.min_spline_corner_tightness = float(np.clip(float(min_spline_corner_tightness), 0.0, 1.0))
+        self.max_spline_corner_tightness = float(np.clip(float(max_spline_corner_tightness), 0.0, 1.0))
+        if self.distant_spline_corner_tightness > self.max_spline_corner_tightness:
+            raise ValueError("distant_spline_corner_tightness cannot exceed max_spline_corner_tightness")
+        if self.min_spline_corner_tightness > self.max_spline_corner_tightness:
+            raise ValueError("min_spline_corner_tightness cannot exceed max_spline_corner_tightness")
+        self.gentle_turn_angle_rad = math.radians(max(0.0, float(gentle_turn_angle_deg)))
+        self.sharp_turn_angle_rad = math.radians(max(0.0, float(sharp_turn_angle_deg)))
+        if self.gentle_turn_angle_rad > self.sharp_turn_angle_rad:
+            raise ValueError("gentle_turn_angle_deg cannot exceed sharp_turn_angle_deg")
+        self.short_segment_reference_m = max(1e-6, float(short_segment_reference_m))
+        self.long_segment_reference_m = max(self.short_segment_reference_m, float(long_segment_reference_m))
         self.planning_mode = _normalize_planning_mode(planning_mode)
         self._path_tail_length_m = 10.0
         self._waypoints = np.empty((0, 3))
@@ -105,6 +135,7 @@ class PathManager:
             spacing_m=float(self.spacing_m),
             computation_ms=(perf_counter() - started) * 1000.0,
             source="gate_map",
+            **self._planned_path_spline_metadata(),
         )
 
     def plan_from_gate_centers(
@@ -151,6 +182,7 @@ class PathManager:
             spacing_m=float(self.spacing_m),
             computation_ms=(perf_counter() - started) * 1000.0,
             source="center_targets",
+            **self._planned_path_spline_metadata(),
         )
 
     def plan(
@@ -255,6 +287,7 @@ class PathManager:
             spacing_m=float(self.spacing_m),
             computation_ms=(perf_counter() - started) * 1000.0,
             source="test_path",
+            **self._planned_path_spline_metadata(),
         )
         return self.test_path
 
@@ -299,6 +332,7 @@ class PathManager:
             spacing_m=float(self.spacing_m),
             computation_ms=(perf_counter() - started) * 1000.0,
             source="straight_line",
+            **self._planned_path_spline_metadata(),
         )
         return self.test_path
 
@@ -479,11 +513,13 @@ class PathManager:
             return self._sample_polyline(anchors)
 
         samples = [anchors[0]]
+        turn_tightness = self._anchor_turn_tightness(anchors)
         for index in range(len(anchors) - 1):
             p0 = anchors[max(index - 1, 0)]
             p1 = anchors[index]
             p2 = anchors[index + 1]
             p3 = anchors[min(index + 2, len(anchors) - 1)]
+            segment_tightness = self._segment_spline_tightness(turn_tightness, index)
             distance = float(np.linalg.norm(p2 - p1))
             steps = max(1, int(np.ceil(distance / self.spacing_m)))
             for step in range(1, steps + 1):
@@ -495,11 +531,84 @@ class PathManager:
                     + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t * t * t
                 )
                 line_point = p1 + (p2 - p1) * t
-                point = (1.0 - self.spline_corner_tightness) * point + self.spline_corner_tightness * line_point
+                point = (1.0 - segment_tightness) * point + segment_tightness * line_point
                 samples.append(point)
                 if len(samples) >= self.max_points:
                     return np.asarray(samples, dtype=float).tolist()
         return np.asarray(samples, dtype=float).tolist()
+
+    def _planned_path_spline_metadata(self) -> dict[str, Any]:
+        return {
+            "adaptive_spline_tightness": bool(self.adaptive_spline_tightness),
+            "distant_spline_corner_tightness": float(self.distant_spline_corner_tightness),
+            "min_spline_corner_tightness": float(self.min_spline_corner_tightness),
+            "max_spline_corner_tightness": float(self.max_spline_corner_tightness),
+            "gentle_turn_angle_deg": float(math.degrees(self.gentle_turn_angle_rad)),
+            "sharp_turn_angle_deg": float(math.degrees(self.sharp_turn_angle_rad)),
+            "short_segment_reference_m": float(self.short_segment_reference_m),
+            "long_segment_reference_m": float(self.long_segment_reference_m),
+        }
+
+    def _anchor_turn_tightness(self, anchors: np.ndarray) -> np.ndarray:
+        tightness = np.full(len(anchors), self.spline_corner_tightness, dtype=float)
+        if not self.adaptive_spline_tightness or len(anchors) < 3:
+            return tightness
+
+        angle_span = self.sharp_turn_angle_rad - self.gentle_turn_angle_rad
+        for index in range(1, len(anchors) - 1):
+            before = anchors[index] - anchors[index - 1]
+            after = anchors[index + 1] - anchors[index]
+            before_length = float(np.linalg.norm(before))
+            after_length = float(np.linalg.norm(after))
+            if before_length <= 1e-12 or after_length <= 1e-12:
+                continue
+
+            before_tangent = before / before_length
+            after_tangent = after / after_length
+            turn_angle = math.acos(float(np.clip(np.dot(before_tangent, after_tangent), -1.0, 1.0)))
+            if angle_span <= 1e-12:
+                angle_weight = 1.0 if turn_angle >= self.sharp_turn_angle_rad else 0.0
+            else:
+                angle_weight = float(np.clip(
+                    (turn_angle - self.gentle_turn_angle_rad) / angle_span,
+                    0.0,
+                    1.0,
+                ))
+            angle_weight = angle_weight * angle_weight * (3.0 - 2.0 * angle_weight)
+
+            local_spacing_m = min(before_length, after_length)
+            if self.long_segment_reference_m <= self.short_segment_reference_m:
+                distance_weight = 1.0 if local_spacing_m <= self.short_segment_reference_m else 0.0
+            else:
+                distance_weight = float(np.clip(
+                    (self.long_segment_reference_m - local_spacing_m)
+                    / (self.long_segment_reference_m - self.short_segment_reference_m),
+                    0.0,
+                    1.0,
+                ))
+            distance_weight = distance_weight * distance_weight * (3.0 - 2.0 * distance_weight)
+
+            close_turn_weight = distance_weight * (0.55 + 0.45 * angle_weight)
+            far_sharp_weight = 0.25 * angle_weight * (1.0 - distance_weight)
+            weight = float(np.clip(close_turn_weight + far_sharp_weight, 0.0, 1.0))
+            lower_tightness = (
+                self.distant_spline_corner_tightness
+                + distance_weight
+                * (self.min_spline_corner_tightness - self.distant_spline_corner_tightness)
+            )
+            tightness[index] = (
+                lower_tightness
+                + weight * (self.max_spline_corner_tightness - lower_tightness)
+            )
+
+        return tightness
+
+    def _segment_spline_tightness(self, anchor_tightness: np.ndarray, segment_index: int) -> float:
+        if not self.adaptive_spline_tightness:
+            return float(self.spline_corner_tightness)
+        start_tightness = anchor_tightness[segment_index]
+        end_tightness = anchor_tightness[segment_index + 1]
+        return float(max(start_tightness, end_tightness))
 
     def _constrain_gate_centers(self, points: list[list[float]], gates: list[GateRecord]) -> list[list[float]]:
         if not gates:
