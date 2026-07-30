@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np 
 
 from core.control.hover.controller import HoverController
-from autonomy.planning import PathManager
+from autonomy.pathing import PathManager
 from core.control.attitude import AttitudeController
 from core.control.carrot import CarrotController
 from core.logging import Logger, generate_mp4

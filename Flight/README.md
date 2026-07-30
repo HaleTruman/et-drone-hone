@@ -67,9 +67,9 @@ src/
     perception/                   # Vision observations
 
   autonomy/
+    pathing/
+      path_manager.py           # Gate-map-derived path helper used by live loop/logs
     planning/
-      pathing/
-        path_manager.py           # Gate-map-derived path helper used by live loop/logs
       mpcc/                       # MPCC planner workbench
 
   app/
