@@ -4,7 +4,7 @@ import copy
 import struct
 import threading
 import time
-from dataclasses import asdict
+from dataclasses import asdict, is_dataclass, replace
 from typing import Any, Callable
 from pymavlink import mavutil
 
@@ -303,14 +303,16 @@ class MavlinkClient:
             return None
 
         sim_time_ns = self._latest_sample_time_ns()
-        return MavlinkTelemetry(
-            sim_time_ns=sim_time_ns,
-            vehicle_state=None,
-            imu=self.latest_imu,
-            system_status=self._latest_system_status(),
-            reset_count=None,
-            sim_truth=self.latest_sim_truth,
-            raw={"source": "mavlink_client"},
+        return self._add_elapsed_time(
+            MavlinkTelemetry(
+                sim_time_ns=sim_time_ns,
+                vehicle_state=None,
+                imu=self.latest_imu,
+                system_status=self._latest_system_status(),
+                reset_count=None,
+                sim_truth=self.latest_sim_truth,
+                raw={"source": "mavlink_client"},
+            )
         )
     
     def status(self) -> RuntimeStatus:
@@ -395,35 +397,39 @@ class MavlinkClient:
     def _on_heartbeat(self, msg: Any) -> None:
         self.armed = bool(msg.base_mode & MAV_MODE_FLAG_SAFETY_ARMED)
         self.last_heartbeat_monotonic_s = time.monotonic()
-        self.latest_heartbeat = MavlinkHeartbeat(
-            type=getattr(msg, "type", None),
-            autopilot=getattr(msg, "autopilot", None),
-            base_mode=int(msg.base_mode),
-            custom_mode=getattr(msg, "custom_mode", None),
-            system_status=getattr(msg, "system_status", None),
-            mavlink_version=getattr(msg, "mavlink_version", None),
+        self.latest_heartbeat = self._add_elapsed_time(
+            MavlinkHeartbeat(
+                type=getattr(msg, "type", None),
+                autopilot=getattr(msg, "autopilot", None),
+                base_mode=int(msg.base_mode),
+                custom_mode=getattr(msg, "custom_mode", None),
+                system_status=getattr(msg, "system_status", None),
+                mavlink_version=getattr(msg, "mavlink_version", None),
+            )
         )
         self._mark_message_received()
 
     def _on_timesync(self, msg: Any) -> None:
-        self.latest_timesync = MavlinkTimesync(ts1=int(msg.ts1), tc1=int(msg.tc1))
+        self.latest_timesync = self._add_elapsed_time(MavlinkTimesync(ts1=int(msg.ts1), tc1=int(msg.tc1)))
         self._mark_message_received()
 
     def _on_highres_imu(self, msg: Any) -> None:
         magnetic_field_gauss = None
         if all(hasattr(msg, axis) for axis in ("xmag", "ymag", "zmag")):
             magnetic_field_gauss = vec3((float(msg.xmag), float(msg.ymag), float(msg.zmag)))
-        self.latest_imu = MavlinkHighresImu(
-            time_boot_us=int(msg.time_usec),
-            acceleration_body_frd_mps2=vec3((float(msg.xacc), float(msg.yacc), float(msg.zacc))),
-            gyro_body_frd_rps=vec3((float(msg.xgyro), float(msg.ygyro), float(msg.zgyro))),
-            magnetic_field_gauss=magnetic_field_gauss,
-            absolute_pressure_hpa=None if not hasattr(msg, "abs_pressure") else float(msg.abs_pressure),
-            differential_pressure_hpa=None if not hasattr(msg, "diff_pressure") else float(msg.diff_pressure),
-            pressure_altitude_m=None if not hasattr(msg, "pressure_alt") else float(msg.pressure_alt),
-            temperature_c=None if not hasattr(msg, "temperature") else float(msg.temperature),
-            fields_updated=None if not hasattr(msg, "fields_updated") else int(msg.fields_updated),
-            id=None if not hasattr(msg, "id") else int(msg.id),
+        self.latest_imu = self._add_elapsed_time(
+            MavlinkHighresImu(
+                time_boot_us=int(msg.time_usec),
+                acceleration_body_frd_mps2=vec3((float(msg.xacc), float(msg.yacc), float(msg.zacc))),
+                gyro_body_frd_rps=vec3((float(msg.xgyro), float(msg.ygyro), float(msg.zgyro))),
+                magnetic_field_gauss=magnetic_field_gauss,
+                absolute_pressure_hpa=None if not hasattr(msg, "abs_pressure") else float(msg.abs_pressure),
+                differential_pressure_hpa=None if not hasattr(msg, "diff_pressure") else float(msg.diff_pressure),
+                pressure_altitude_m=None if not hasattr(msg, "pressure_alt") else float(msg.pressure_alt),
+                temperature_c=None if not hasattr(msg, "temperature") else float(msg.temperature),
+                fields_updated=None if not hasattr(msg, "fields_updated") else int(msg.fields_updated),
+                id=None if not hasattr(msg, "id") else int(msg.id),
+            )
         )
         self._mark_message_received()
 
@@ -438,18 +444,26 @@ class MavlinkClient:
         _, sim_boot_ms, race_start_ms, race_finish_ns, gate_index, last_gate_time = struct.unpack_from(
             "<BQqqIq", raw_payload
         )
-        self.race_status = RaceStatus(sim_boot_ms, race_start_ms, race_finish_ns, gate_index, last_gate_time)
+        self.race_status = self._add_elapsed_time(
+            RaceStatus(sim_boot_ms, race_start_ms, race_finish_ns, gate_index, last_gate_time)
+        )
 
     def _on_actuator_output_status(self, msg: Any) -> None:
-        self.latest_actuator_output = MavlinkActuatorOutputStatus(
-            time_boot_us=int(msg.time_usec),
-            active=int(msg.active),
-            actuator=tuple(float(value) for value in msg.actuator),
+        self.latest_actuator_output = self._add_elapsed_time(
+            MavlinkActuatorOutputStatus(
+                time_boot_us=int(msg.time_usec),
+                active=int(msg.active),
+                actuator=tuple(float(value) for value in msg.actuator),
+            )
         )
         self._mark_message_received()
 
     def _on_collision(self, msg: Any) -> None:
-        self.collisions.append(CollisionEvent(int(msg.id), int(msg.threat_level), float(msg.horizontal_minimum_delta)))
+        self.collisions.append(
+            self._add_elapsed_time(
+                CollisionEvent(int(msg.id), int(msg.threat_level), float(msg.horizontal_minimum_delta))
+            )
+        )
         self._mark_message_received()
 
     def _on_sim_truth_odometry(self, msg: Any) -> None:
@@ -470,7 +484,7 @@ class MavlinkClient:
                 )
             ),
         }
-        sim_truth["odometry"] = payload
+        sim_truth["odometry"] = self._add_elapsed_time(payload)
         sim_truth["latest_sim_time_ns"] = payload["sim_time_ns"]
         self._mark_message_received()
 
@@ -488,7 +502,7 @@ class MavlinkClient:
                 )
             ),
         }
-        sim_truth["attitude"] = payload
+        sim_truth["attitude"] = self._add_elapsed_time(payload)
         sim_truth["latest_sim_time_ns"] = max(
             int(sim_truth.get("latest_sim_time_ns", 0)),
             payload["sim_time_ns"],
@@ -503,7 +517,7 @@ class MavlinkClient:
             "position_local_ned_m": vec3((float(msg.x), float(msg.y), float(msg.z))),
             "velocity_local_ned_mps": vec3((float(msg.vx), float(msg.vy), float(msg.vz))),
         }
-        sim_truth["local_position_ned"] = payload
+        sim_truth["local_position_ned"] = self._add_elapsed_time(payload)
         sim_truth["latest_sim_time_ns"] = max(
             int(sim_truth.get("latest_sim_time_ns", 0)),
             payload["sim_time_ns"],
@@ -532,6 +546,20 @@ class MavlinkClient:
         if self.latest_heartbeat is None or self.latest_heartbeat.system_status is None:
             return None
         return str(self.latest_heartbeat.system_status)
+
+    def _add_elapsed_time(self, value: Any) -> Any:
+        from core.initialization.initialization import DEFINED_START_TIME_NS
+        from core.utils import time_since_ns
+
+        elapsed_time_ns = time_since_ns(DEFINED_START_TIME_NS)
+        if isinstance(value, dict):
+            stamped = dict(value)
+            stamped["elapsed_time_ns"] = elapsed_time_ns
+            return stamped
+        if is_dataclass(value) and hasattr(value, "elapsed_time_ns"):
+            return replace(value, elapsed_time_ns=elapsed_time_ns)
+        setattr(value, "elapsed_time_ns", elapsed_time_ns)
+        return value
 
     def _mark_message_received(self) -> None:
         self._latest_message_monotonic_s = time.monotonic()

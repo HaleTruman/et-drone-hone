@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+import time
 
 from autonomy.pathing import PathManager
 from core.control.attitude import AttitudeController
@@ -23,6 +24,9 @@ from sensing.odometry import (
 from sensing.telemetry import MavlinkClient
 from sensing.vision import VisionStreamReceiver
 from sensing.vision.service import VisionPerceptionConfig, VisionPerceptionService
+
+# DEFINE START TIME
+DEFINED_START_TIME_NS: float = time.perf_counter_ns()
 
 # Simulator and network endpoints.
 MAVLINK_ENDPOINT = "udpin:127.0.0.1:14550"  # selects the MAVLink UDP endpoint used to talk to the simulator or vehicle bridge.

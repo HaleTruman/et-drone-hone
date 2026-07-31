@@ -285,6 +285,12 @@ def main() -> int:
                     # do things with the observation 
                     try:
                         observation = vision_future.result()
+                        state_frame_delta_ns = (
+                            frame_log["vehicle_state_elapsed_ns"] - frame_log["frame_elapsed_ns"]
+                            if frame_log.get("vehicle_state_elapsed_ns") is not None
+                            and frame_log.get("frame_elapsed_ns") is not None
+                            else None
+                        )
                         frame_log["gate_count"] = len(observation.gates)
                         frame_log["observation"] = observation.to_controller_payload(output_dir="memory")
                         logger.log_vision_observation(
@@ -293,6 +299,7 @@ def main() -> int:
                             inner_cycle=frame_log["inner_cycle"],
                             outer_cycle=frame_outer_cycle,
                             sim_time_ns=frame_log["sim_time_ns"],
+                            state_frame_delta_ns=state_frame_delta_ns,
                             gate_count=len(observation.gates),
                             perception=vision_perception.snapshot(),
                         )
@@ -342,7 +349,7 @@ def main() -> int:
                     )
 
                 # if there is no job queued and we have a frame
-                if vision_pending is None and latest_frame is not None:
+                if vision_pending is None and latest_frame is not None and vehicle_state is not None:
                     frame_log = {
                         "frame_id": latest_frame.frame_id,
                         "inner_cycle": inner_cycle,
@@ -350,6 +357,8 @@ def main() -> int:
                         "sim_time_ns": latest_frame.sim_time_ns,
                         "saved_path": latest_frame.saved_path,
                         "jpeg_size": len(latest_frame.jpeg_bytes),
+                        "vehicle_state_elapsed_ns": vehicle_state.elapsed_time_ns,
+                        "frame_elapsed_ns": latest_frame.elapsed_time_ns
                     }
 
                     # queue vision job

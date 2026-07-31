@@ -17,6 +17,7 @@ class VehicleState:
     attitude_quaternion: QuatWxyz
     body_rates_frd_rps: Vec3
     acceleration_local_ned_mps2: Vec3
+    elapsed_time_ns: int | None = None
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,7 @@ class VisionFrame:
     jpeg_bytes: bytes
     image: Any | None = None
     saved_path: str | None = None
+    elapsed_time_ns: int | None = None
 
 
 @dataclass(frozen=True)
@@ -82,6 +84,7 @@ class VisionObservation:
     gates: list[VisionGateObservation]
     source: str = "vision"
     trace: dict[str, Any] = field(default_factory=dict)
+    elapsed_time_ns: int | None = None
 
     @classmethod
     def from_controller_payload(cls, payload: dict[str, Any], *, source: str = "vision") -> "VisionObservation":
@@ -163,6 +166,7 @@ class RaceStatus:
     race_finish_time_ns: int
     active_gate_index: int
     last_gate_race_time: int
+    elapsed_time_ns: int | None = None
 
 
 @dataclass(frozen=True)
@@ -179,6 +183,7 @@ class CollisionEvent:
     collision_id: int
     threat_level: int
     impact_kg_mps: float
+    elapsed_time_ns: int | None = None
 
 
 @dataclass(frozen=True)
@@ -189,12 +194,14 @@ class MavlinkHeartbeat:
     custom_mode: Any
     system_status: Any
     mavlink_version: Any
+    elapsed_time_ns: int | None = None
 
 
 @dataclass(frozen=True)
 class MavlinkTimesync:
     ts1: int
     tc1: int
+    elapsed_time_ns: int | None = None
 
 
 @dataclass(frozen=True)
@@ -223,6 +230,7 @@ class MavlinkHighresImu:
     temperature_c: float | None = None
     fields_updated: int | None = None
     id: int | None = None
+    elapsed_time_ns: int | None = None
 
 
 @dataclass(frozen=True, init=False)
@@ -234,6 +242,7 @@ class MavlinkTelemetry:
     reset_count: int | None = None
     sim_truth: dict[str, Any] | None = None
     raw: dict[str, Any] = field(default_factory=dict)
+    elapsed_time_ns: int | None = None
 
     def __init__(
         self,
@@ -246,6 +255,7 @@ class MavlinkTelemetry:
         reset_count: int | None = None,
         sim_truth: dict[str, Any] | None = None,
         raw: dict[str, Any] | None = None,
+        elapsed_time_ns: int | None = None,
     ):
         object.__setattr__(self, "sim_time_ns", int(sim_time_ns))
         object.__setattr__(self, "vehicle_state", vehicle_state if vehicle_state is not None else odometry)
@@ -254,6 +264,7 @@ class MavlinkTelemetry:
         object.__setattr__(self, "reset_count", reset_count)
         object.__setattr__(self, "sim_truth", copy.deepcopy(sim_truth) if sim_truth is not None else None)
         object.__setattr__(self, "raw", raw or {})
+        object.__setattr__(self, "elapsed_time_ns", None if elapsed_time_ns is None else int(elapsed_time_ns))
 
     @property
     def odometry(self) -> VehicleState | None:
@@ -284,6 +295,7 @@ class StateRecord:
     sim_truth: dict[str, Any] | None = None
     raw: dict[str, Any] = field(default_factory=dict)
     state_update: dict[str, Any] = field(default_factory=dict)
+    elapsed_time_ns: int | None = None
 
     @classmethod
     def from_telemetry(
@@ -326,6 +338,7 @@ class StateRecord:
                 **state_update,
             },
             state_update=state_update,
+            elapsed_time_ns=telemetry.elapsed_time_ns,
         )
 
 
@@ -334,3 +347,4 @@ class MavlinkActuatorOutputStatus:
     time_boot_us: int
     active: int
     actuator: tuple[float, ...]
+    elapsed_time_ns: int | None = None
