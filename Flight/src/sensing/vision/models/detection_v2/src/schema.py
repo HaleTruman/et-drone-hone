@@ -70,48 +70,6 @@ class VoidDetectionGeometry:
 
 
 @dataclass(frozen=True, slots=True)
-class VoidPositionEstimate:
-    """Metric camera-frame position of one void, with its anisotropic error.
-
-    The error ellipsoid is roughly 40:1, elongated along the viewing ray:
-    `sigma_bearing_m` is the tight cross-ray direction and `sigma_range_m` the
-    soft along-ray one. Consumers must keep them separate rather than reducing
-    the estimate to an isotropic point.
-    """
-    source: GeometrySource
-    bearing_unit: tuple[float, float, float]
-    range_m: float
-    position_m: tuple[float, float, float]
-    sigma_bearing_m: float
-    sigma_range_m: float
-    scale_residual: float
-    channel_ranges_m: tuple[float, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class VoidNedEstimate:
-    """Metric void position in the run-local NED frame, published as a ray.
-
-    The estimate is a precise direction with a soft position along it (~40:1).
-    Rebuild the covariance with `void_ned.covariance_ned` rather than treating
-    `position_ned_m` as an isotropic point, which discards that structure.
-
-    The NED origin is per-run, set at vehicle initialisation, so positions are
-    comparable within a run and not across runs.
-    """
-    source: GeometrySource
-    frame_time_ns: int
-    camera_position_ned_m: tuple[float, float, float]
-    direction_ned: tuple[float, float, float]
-    range_m: float
-    position_ned_m: tuple[float, float, float]
-    sigma_bearing_m: float
-    sigma_range_m: float
-    scale_residual: float
-    pose_gap_ns: int
-
-
-@dataclass(frozen=True, slots=True)
 class EllipseTrackRecord:
     track_id: str
     frame_index: int
@@ -128,19 +86,6 @@ class TrackedVoidDetection:
     """Complete frame-local geometry associated with its persistent track."""
     track: EllipseTrackRecord
     geometry: VoidDetectionGeometry
-
-
-@dataclass(frozen=True, slots=True)
-class VoidDetectionFrame:
-    """All artifacts published for one live frame.
-
-    `frame_count` is the number of frames accepted by this detector instance,
-    including this frame. Each detection retains its stream-local frame index.
-    """
-    frame_id: int
-    sim_time_ns: int
-    frame_count: int
-    detections: tuple[TrackedVoidDetection, ...]
 
 
 @dataclass(frozen=True, slots=True)
