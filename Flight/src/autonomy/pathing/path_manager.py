@@ -45,6 +45,19 @@ class PlannedPath:
         return payload
 
 
+@dataclass(frozen=True)
+class PathProjection:
+    closest_point_local_ned_m: Vec3
+    tangent_local_ned: Vec3
+    along_track_m: float
+    cross_track_error_m: float
+    segment_index: int
+    segment_fraction: float
+
+    def to_log_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 class PathManager:
     def __init__(
         self,
@@ -336,6 +349,50 @@ class PathManager:
         )
         return self.test_path
 
+    def build_circular_path(
+        self,
+        *,
+        radius_m: float = 8.0,
+        point_count: int = 65,
+        clockwise: bool = False,
+    ) -> PlannedPath:
+        """Build a horizontal circular local-NED path that starts and ends at the origin.
+
+        The circle is offset east by ``radius_m`` so the first waypoint is
+        ``(0, 0, 0)`` and the final waypoint returns to ``(0, 0, 0)``. The
+        initial tangent points north when ``clockwise`` is false and south when
+        ``clockwise`` is true.
+        """
+        started = perf_counter()
+        radius = float(radius_m)
+        count = int(point_count)
+        if radius <= 0.0:
+            raise ValueError("radius_m must be positive")
+        if count < 4:
+            raise ValueError("point_count must be at least 4")
+
+        angle = np.linspace(0.0, 2.0 * np.pi, count)
+        direction = -1.0 if clockwise else 1.0
+        north = radius * np.sin(direction * angle)
+        east = radius * (1.0 - np.cos(direction * angle))
+        down = np.zeros_like(angle)
+
+        waypoints = np.column_stack((north, east, down))
+        points = self.set_waypoints(waypoints).astype(float).tolist()
+        self.test_path = PlannedPath(
+            points_relative_ned_m=points,
+            anchors_relative_ned_m=points,
+            gate_ids=[],
+            gate_center_errors_m={},
+            gate_center_tolerance_m=float(self.gate_center_tolerance_m),
+            spline_corner_tightness=float(self.spline_corner_tightness),
+            spacing_m=float(self.spacing_m),
+            computation_ms=(perf_counter() - started) * 1000.0,
+            source="circular_path",
+            **self._planned_path_spline_metadata(),
+        )
+        return self.test_path
+
     def generate_spline(self) -> object:
         if self.spline_generator is None:
             raise NotImplementedError("Inject the chosen spline generator.")
@@ -344,8 +401,32 @@ class PathManager:
     def get_waypoints(self) -> np.ndarray:
         return self._waypoints.copy()
 
-    def project(self, position_local_ned_m: Vec3) -> dict[str, Any]:
-        """Project a position onto the managed polyline path."""
+    def project(self, position_local_ned_m: Vec3) -> PathProjection:
+        """Project a query position onto the currently managed path.
+
+        ``position_local_ned_m`` is the local-NED point to compare against the
+        path. In normal flight-control usage this is the drone position from
+        ``VehicleState.position_local_ned_m`` at the time ``project()`` is
+        called, but the method accepts any local-NED query point.
+
+        The path is treated as a piecewise-linear polyline between the current
+        waypoint samples. Each segment is checked and the closest point on the
+        full path is returned. Segment fractions are clamped to the segment
+        endpoints, so query positions before the first waypoint or beyond the
+        final waypoint project to the nearest endpoint.
+
+        Returns:
+            PathProjection: Typed projection result containing:
+            - ``closest_point_local_ned_m``: closest point on the path.
+            - ``tangent_local_ned``: unit tangent of the selected path segment.
+            - ``along_track_m``: distance from path start to the projected point.
+            - ``cross_track_error_m``: Euclidean distance from the query position to the path.
+            - ``segment_index``: index of the selected segment start waypoint.
+            - ``segment_fraction``: normalized position on that segment in ``[0, 1]``.
+
+        Raises:
+            ValueError: If no valid path has been set.
+        """
         self._require_path()
         position = _vec3(position_local_ned_m, "position_local_ned_m")
 
@@ -373,14 +454,14 @@ class PathManager:
             + best_fraction * self._segment_lengths[best_segment_index]
         )
         tangent = self._segment_tangent(best_segment_index)
-        return {
-            "position_local_ned_m": tuple(float(value) for value in best_point),
-            "tangent_local_ned": tuple(float(value) for value in tangent),
-            "along_track_m": along_track_m,
-            "cross_track_error_m": float(np.sqrt(best_distance_sq)),
-            "segment_index": best_segment_index,
-            "segment_fraction": best_fraction,
-        }
+        return PathProjection(
+            closest_point_local_ned_m=tuple(float(value) for value in best_point),
+            tangent_local_ned=tuple(float(value) for value in tangent),
+            along_track_m=along_track_m,
+            cross_track_error_m=float(np.sqrt(best_distance_sq)),
+            segment_index=best_segment_index,
+            segment_fraction=best_fraction,
+        )
 
     def carrot_point(
         self,
@@ -388,9 +469,38 @@ class PathManager:
         lookahead_m: float,
         speed_lookahead_m: float | None = None,
     ) -> dict[str, Any]:
-        """Return a path point lookahead_m ahead of the current path projection."""
+        """Return a preview point ahead of the query position's path projection.
+
+        ``position_local_ned_m`` is the local-NED query point used to find the
+        current nearest point on the path. In normal flight-control usage this
+        is the drone position from ``VehicleState.position_local_ned_m`` at the
+        time ``carrot_point()`` is called.
+
+        The method first calls ``project()`` to find the query point's current
+        along-track distance. It then samples a target point ``lookahead_m``
+        meters farther along the path, clamped to the final waypoint if the
+        requested preview goes past the end of the path. ``speed_lookahead_m``
+        controls the farther preview window used for reporting
+        ``max_curvature_ahead``; when omitted, it defaults to ``lookahead_m``.
+
+        Returns a dictionary containing:
+        - ``position_local_ned_m``: preview/carrot point on the path.
+        - ``tangent_local_ned``: unit tangent at the preview point.
+        - ``along_track_m``: distance from path start to the preview point.
+        - ``cross_track_error_m``: distance from the query position to the path.
+        - ``curvature``: curvature estimate at the preview segment.
+        - ``max_curvature_ahead``: max curvature between the projection and speed preview point.
+        - ``speed_lookahead_m``: speed-preview distance used for curvature planning.
+        - ``speed_preview_along_track_m``: along-track end of the speed preview window.
+        - ``projection_closest_point_local_ned_m``: nearest point found by ``project()``.
+        - ``projection_along_track_m``: along-track distance of that nearest point.
+        - ``segment_index``: segment index used for the preview point.
+
+        Raises:
+            ValueError: If no valid path has been set.
+        """
         projection = self.project(position_local_ned_m)
-        projection_distance_m = float(projection["along_track_m"])
+        projection_distance_m = float(projection.along_track_m)
         target_distance_m = min(
             projection_distance_m + max(0.0, float(lookahead_m)),
             float(self._cumulative_lengths[-1]),
@@ -407,15 +517,15 @@ class PathManager:
             "position_local_ned_m": tuple(float(value) for value in point),
             "tangent_local_ned": tuple(float(value) for value in tangent),
             "along_track_m": target_distance_m,
-            "cross_track_error_m": projection["cross_track_error_m"],
+            "cross_track_error_m": projection.cross_track_error_m,
             "curvature": float(curvature),
             "max_curvature_ahead": float(max_curvature_ahead),
             "speed_lookahead_m": float(
                 lookahead_m if speed_lookahead_m is None else speed_lookahead_m
             ),
             "speed_preview_along_track_m": speed_preview_distance_m,
-            "projection_position_local_ned_m": projection["position_local_ned_m"],
-            "projection_along_track_m": projection["along_track_m"],
+            "projection_closest_point_local_ned_m": projection.closest_point_local_ned_m,
+            "projection_along_track_m": projection.along_track_m,
             "segment_index": segment_index,
         }
 

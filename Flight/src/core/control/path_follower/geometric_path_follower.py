@@ -1,7 +1,7 @@
 """Geometric path follower for local-NED quadrotor racing paths.
 
-The controller consumes the runtime :class:`core.schema.VehicleState` and a
-path provider with the same projection API as :class:`autonomy.pathing.PathManager`.
+The controller consumes the runtime :class:`core.schema.VehicleState` and an
+:class:`autonomy.pathing.PathManager`.
 It emits the repository's standard attitude-target payload:
 
     {"quaternion": [w, x, y, z], "thrust": normalized_thrust, ...}
@@ -15,66 +15,15 @@ Coordinate conventions:
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 import math
 
 import numpy as np
 
+from autonomy.pathing import PathManager
 from core.control.command_mapper import CommandMapper
-from core.coordinates import quaternion_from_rotation_matrix
-from core.schema import QuatWxyz, Vec3, VehicleState
-
-
-class PathProvider(Protocol):
-    """Projection/sampling surface used by PathManager."""
-
-    def project(self, position_local_ned_m: Vec3) -> dict[str, Any]: ...
-
-    def carrot_point(
-        self,
-        position_local_ned_m: Vec3,
-        lookahead_m: float,
-        speed_lookahead_m: float | None = None,
-    ) -> dict[str, Any]: ...
-
-
-@dataclass
-class PathFollowerGains:
-    # Cross-track position / velocity feedback.
-    kp_cross: float = 1.2
-    kd_cross: float = 1.4
-
-    # Along-track speed regulation.
-    kp_speed: float = 0.45
-
-    # Command smoothing. This runs on the outer-loop command updates.
-    acceleration_filter_alpha: float = 0.25
-
-    # Preview distances used for path heading and curvature-limited speed.
-    lookahead_m: float = 3.0
-    speed_lookahead_m: float = 10.0
-
-    # Speed planner.
-    v_max: float = 12.0
-    a_lat_max: float = 8.0
-    v_min: float = 1.5
-    curvature_speed_deadband: float = 0.04
-    curvature_speed_ramp: float = 0.08
-
-    # Proactive turn acceleration from path curvature preview. This banks/pitches
-    # before cross-track error builds up.
-    curvature_feedforward_gain: float = 1.0
-    curvature_feedforward_max_acceleration_mps2: float = 8.0
-
-    # Dynamic inversion / actuator limits.
-    hover_thrust: float = 0.265
-    max_commanded_acceleration_mps2: float = 6.0
-    min_normalized_thrust: float = 0.05
-    max_normalized_thrust: float = 1.0
-
-    # Optional simple quadratic drag compensation. Set to 0 to disable.
-    drag_coeff: float = 0.0
+from core.coordinates import quaternion_from_rotation_matrix, GRAVITY_MPS2
+from core.schema import QuatWxyz, VehicleState
 
 
 class GeometricPathFollower:
@@ -82,14 +31,56 @@ class GeometricPathFollower:
 
     def __init__(
         self,
-        path_provider: PathProvider,
-        gains: PathFollowerGains | None = None,
+        path_manager: PathManager,
         *,
-        gravity_mps2: float = 9.81,
+        kp_cross: float = 1.2,
+        kd_cross: float = 1.4,
+        kp_speed: float = 0.45,
+        acceleration_filter_alpha: float = 0.25,
+        lookahead_m: float = 3.0,
+        speed_lookahead_m: float = 10.0,
+        v_max: float = 12.0,
+        a_lat_max: float = 8.0,
+        v_min: float = 1.5,
+        curvature_speed_deadband: float = 0.04,
+        curvature_speed_ramp: float = 0.08,
+        curvature_feedforward_gain: float = 1.0,
+        curvature_feedforward_max_acceleration_mps2: float = 8.0,
+        hover_thrust: float = 0.265,
+        max_commanded_acceleration_mps2: float = 6.0,
+        max_upward_acceleration_mps2: float = 8.0,
+        max_downward_acceleration_mps2: float = 3.0,
+        max_tilt_deg: float = 60.0,
+        min_normalized_thrust: float = 0.05,
+        max_normalized_thrust: float = 1.0,
+        drag_coeff: float = 0.0,
+        gravity_mps2: float = GRAVITY_MPS2,
         command_mapper: CommandMapper | None = None,
     ) -> None:
-        self.path_provider = path_provider
-        self.gains = gains or PathFollowerGains()
+        self.path_manager = path_manager
+        self.kp_cross = float(kp_cross)
+        self.kd_cross = float(kd_cross)
+        self.kp_speed = float(kp_speed)
+        self.acceleration_filter_alpha = float(acceleration_filter_alpha)
+        self.lookahead_m = float(lookahead_m)
+        self.speed_lookahead_m = float(speed_lookahead_m)
+        self.v_max = float(v_max)
+        self.a_lat_max = float(a_lat_max)
+        self.v_min = float(v_min)
+        self.curvature_speed_deadband = float(curvature_speed_deadband)
+        self.curvature_speed_ramp = float(curvature_speed_ramp)
+        self.curvature_feedforward_gain = float(curvature_feedforward_gain)
+        self.curvature_feedforward_max_acceleration_mps2 = float(
+            curvature_feedforward_max_acceleration_mps2
+        )
+        self.hover_thrust = float(hover_thrust)
+        self.max_commanded_acceleration_mps2 = float(max_commanded_acceleration_mps2)
+        self.max_upward_acceleration_mps2 = float(max_upward_acceleration_mps2)
+        self.max_downward_acceleration_mps2 = float(max_downward_acceleration_mps2)
+        self.max_tilt_rad = math.radians(float(max_tilt_deg))
+        self.min_normalized_thrust = float(min_normalized_thrust)
+        self.max_normalized_thrust = float(max_normalized_thrust)
+        self.drag_coeff = float(drag_coeff)
         self.gravity_ned = np.array((0.0, 0.0, float(gravity_mps2)), dtype=float)
         self.command_mapper = command_mapper or CommandMapper()
         self.last_payload: dict[str, Any] | None = None
@@ -99,28 +90,30 @@ class GeometricPathFollower:
             raise ValueError("gravity_mps2 must be positive")
         self._validate_gains()
 
-    def set_path_provider(self, path_provider: PathProvider) -> None:
-        self.path_provider = path_provider
+    def set_path_manager(self, path_manager: PathManager) -> None:
+        self.path_manager = path_manager
 
     def compute_control(self, vehicle_state: VehicleState) -> dict[str, Any]:
-        position = _vec3(vehicle_state.position_local_ned_m, "position_local_ned_m")
-        velocity = _vec3(vehicle_state.velocity_local_ned_mps, "velocity_local_ned_mps")
+        position = np.asarray(vehicle_state.position_local_ned_m, dtype=float)
+        velocity = np.asarray(vehicle_state.velocity_local_ned_mps, dtype=float)
 
-        projection = self.path_provider.project(vehicle_state.position_local_ned_m)
-        preview = self.path_provider.carrot_point(
+        # Project the drone onto the path, then sample a lookahead point used for heading.
+        projection = self.path_manager.project(vehicle_state.position_local_ned_m)
+        preview = self.path_manager.carrot_point(
             vehicle_state.position_local_ned_m,
-            self.gains.lookahead_m,
-            self.gains.speed_lookahead_m,
+            self.lookahead_m,
+            self.speed_lookahead_m,
         )
 
-        closest = _vec3(projection["position_local_ned_m"], "projection.position_local_ned_m")
-        tangent = _unit(projection["tangent_local_ned"], "projection.tangent_local_ned")
+        closest = np.asarray(projection.closest_point_local_ned_m, dtype=float)
+        tangent = _unit(projection.tangent_local_ned, "projection.tangent_local_ned")
         heading = _unit(preview["tangent_local_ned"], "preview.tangent_local_ned")
         curvature = _nonnegative_float(
             preview.get("max_curvature_ahead", preview.get("curvature", 0.0)),
             "preview.max_curvature_ahead",
         )
 
+        # Split position and velocity error into along-path and cross-path components.
         position_error = position - closest
         along_track_error = tangent * float(np.dot(position_error, tangent))
         cross_track_error = position_error - along_track_error
@@ -132,27 +125,32 @@ class GeometricPathFollower:
             tangent=tangent,
             heading=heading,
             along_track_speed_mps=along_track_speed_mps,
-            preview_distance_m=float(preview["along_track_m"]) - float(projection["along_track_m"]),
+            preview_distance_m=float(preview["along_track_m"]) - float(projection.along_track_m),
         )
 
-        speed_acceleration_mps2 = self.gains.kp_speed * (
+        speed_acceleration_mps2 = self.kp_speed * (
             commanded_speed_mps - along_track_speed_mps
         )
+        # Cross-track feedback pulls back to the path; speed feedback pushes along it.
         desired_acceleration = (
-            -self.gains.kp_cross * cross_track_error
-            - self.gains.kd_cross * cross_track_velocity
+            -self.kp_cross * cross_track_error
+            - self.kd_cross * cross_track_velocity
             + speed_acceleration_mps2 * tangent
             + curvature_feedforward
         )
 
-        if self.gains.drag_coeff > 0.0:
+        if self.drag_coeff > 0.0:
             speed_mps = float(np.linalg.norm(velocity))
-            desired_acceleration = desired_acceleration + self.gains.drag_coeff * speed_mps * velocity
+            desired_acceleration = desired_acceleration + self.drag_coeff * speed_mps * velocity
 
         desired_acceleration = self._filtered_acceleration(
             self._limited_acceleration(desired_acceleration)
         )
+        desired_acceleration = self._tilt_limited_acceleration(
+            self._vertical_limited_acceleration(desired_acceleration)
+        )
 
+        # Convert the desired inertial acceleration into attitude plus normalized thrust.
         thrust_acceleration_ned = desired_acceleration - self.gravity_ned
         thrust_norm_mps2 = float(np.linalg.norm(thrust_acceleration_ned))
         if thrust_norm_mps2 <= 1e-9:
@@ -170,33 +168,33 @@ class GeometricPathFollower:
 
         thrust = float(
             np.clip(
-                self.gains.hover_thrust * thrust_norm_mps2 / self.gravity_ned[2],
-                self.gains.min_normalized_thrust,
-                self.gains.max_normalized_thrust,
+                self.hover_thrust * thrust_norm_mps2 / self.gravity_ned[2],
+                self.min_normalized_thrust,
+                self.max_normalized_thrust,
             )
         )
 
         payload = self.command_mapper.to_attitude_target(quaternion, thrust)
         payload["source"] = "geometric_path_follower"
         payload["path_follower"] = {
-            "projection_position_local_ned_m": [float(value) for value in closest],
-            "projection_along_track_m": float(projection["along_track_m"]),
+            "projection_closest_point_local_ned_m": [float(value) for value in closest],
+            "projection_along_track_m": float(projection.along_track_m),
             "preview_position_local_ned_m": [
-                float(value) for value in _vec3(preview["position_local_ned_m"], "preview.position_local_ned_m")
+                float(value) for value in preview["position_local_ned_m"]
             ],
             "preview_along_track_m": float(preview["along_track_m"]),
             "cross_track_error_m": float(np.linalg.norm(cross_track_error)),
             "cross_track_error_local_ned_m": [float(value) for value in cross_track_error],
-            "kp_cross": float(self.gains.kp_cross),
-            "kd_cross": float(self.gains.kd_cross),
+            "kp_cross": float(self.kp_cross),
+            "kd_cross": float(self.kd_cross),
             "along_track_speed_mps": float(along_track_speed_mps),
             "commanded_speed_mps": float(commanded_speed_mps),
             "speed_acceleration_mps2": float(speed_acceleration_mps2),
             "curvature": float(preview.get("curvature", curvature)),
             "max_curvature_ahead": float(curvature),
-            "curvature_feedforward_gain": float(self.gains.curvature_feedforward_gain),
+            "curvature_feedforward_gain": float(self.curvature_feedforward_gain),
             "curvature_feedforward_max_acceleration_mps2": float(
-                self.gains.curvature_feedforward_max_acceleration_mps2
+                self.curvature_feedforward_max_acceleration_mps2
             ),
             "curvature_feedforward_acceleration_local_ned_mps2": [
                 float(value) for value in curvature_feedforward
@@ -204,9 +202,12 @@ class GeometricPathFollower:
             "curvature_feedforward_acceleration_mps2": float(
                 np.linalg.norm(curvature_feedforward)
             ),
-            "curvature_speed_deadband": float(self.gains.curvature_speed_deadband),
-            "curvature_speed_ramp": float(self.gains.curvature_speed_ramp),
-            "acceleration_filter_alpha": float(self.gains.acceleration_filter_alpha),
+            "curvature_speed_deadband": float(self.curvature_speed_deadband),
+            "curvature_speed_ramp": float(self.curvature_speed_ramp),
+            "acceleration_filter_alpha": float(self.acceleration_filter_alpha),
+            "max_upward_acceleration_mps2": float(self.max_upward_acceleration_mps2),
+            "max_downward_acceleration_mps2": float(self.max_downward_acceleration_mps2),
+            "max_tilt_deg": float(math.degrees(self.max_tilt_rad)),
         }
         payload["desired_acceleration_local_ned_mps2"] = [
             float(value) for value in desired_acceleration
@@ -214,25 +215,25 @@ class GeometricPathFollower:
         payload["thrust_control"] = {
             "mode": "geometric_dynamic_inversion",
             "specific_thrust_mps2": float(thrust_norm_mps2),
-            "hover_thrust": float(self.gains.hover_thrust),
+            "hover_thrust": float(self.hover_thrust),
         }
 
         self.last_payload = payload
         return payload
 
     def _curvature_speed_mps(self, curvature: float) -> float:
-        if curvature <= max(1e-9, self.gains.curvature_speed_deadband):
-            return float(self.gains.v_max)
+        if curvature <= max(1e-9, self.curvature_speed_deadband):
+            return float(self.v_max)
 
-        curvature_limited = math.sqrt(self.gains.a_lat_max / curvature)
-        curvature_limited = float(np.clip(curvature_limited, self.gains.v_min, self.gains.v_max))
-        if curvature_limited >= self.gains.v_max:
-            return float(self.gains.v_max)
+        curvature_limited = math.sqrt(self.a_lat_max / curvature)
+        curvature_limited = float(np.clip(curvature_limited, self.v_min, self.v_max))
+        if curvature_limited >= self.v_max:
+            return float(self.v_max)
 
-        excess_curvature = curvature - self.gains.curvature_speed_deadband
-        blend = 1.0 - math.exp(-excess_curvature / self.gains.curvature_speed_ramp)
+        excess_curvature = curvature - self.curvature_speed_deadband
+        blend = 1.0 - math.exp(-excess_curvature / self.curvature_speed_ramp)
         blend = float(np.clip(blend, 0.0, 1.0))
-        return float(self.gains.v_max - blend * (self.gains.v_max - curvature_limited))
+        return float(self.v_max - blend * (self.v_max - curvature_limited))
 
     def _curvature_feedforward_acceleration(
         self,
@@ -242,7 +243,7 @@ class GeometricPathFollower:
         along_track_speed_mps: float,
         preview_distance_m: float,
     ) -> np.ndarray:
-        gain = float(self.gains.curvature_feedforward_gain)
+        gain = float(self.curvature_feedforward_gain)
         if gain <= 0.0:
             return np.zeros(3, dtype=float)
 
@@ -262,14 +263,14 @@ class GeometricPathFollower:
         preview_curvature = turn_angle_rad / preview_distance
         acceleration = gain * speed_mps * speed_mps * preview_curvature * turn_normal
 
-        limit = float(self.gains.curvature_feedforward_max_acceleration_mps2)
+        limit = float(self.curvature_feedforward_max_acceleration_mps2)
         acceleration_norm = float(np.linalg.norm(acceleration))
         if limit > 0.0 and acceleration_norm > limit:
             acceleration = acceleration * (limit / acceleration_norm)
         return acceleration
 
     def _limited_acceleration(self, acceleration: np.ndarray) -> np.ndarray:
-        limit = float(self.gains.max_commanded_acceleration_mps2)
+        limit = float(self.max_commanded_acceleration_mps2)
         if limit <= 0.0:
             return acceleration
         norm = float(np.linalg.norm(acceleration))
@@ -277,30 +278,70 @@ class GeometricPathFollower:
             return acceleration
         return acceleration * (limit / norm)
 
+    def _vertical_limited_acceleration(self, acceleration: np.ndarray) -> np.ndarray:
+        limited = acceleration.copy()
+        limited[2] = float(
+            np.clip(
+                limited[2],
+                -self.max_upward_acceleration_mps2,
+                self.max_downward_acceleration_mps2,
+            )
+        )
+        return limited
+
+    def _tilt_limited_acceleration(self, acceleration: np.ndarray) -> np.ndarray:
+        if self.max_tilt_rad <= 0.0:
+            limited = acceleration.copy()
+            limited[0:2] = 0.0
+            return limited
+
+        horizontal = acceleration[0:2]
+        horizontal_norm = float(np.linalg.norm(horizontal))
+        if horizontal_norm <= 1e-12:
+            return acceleration
+
+        upward_thrust_acceleration_mps2 = max(
+            1e-6,
+            float(self.gravity_ned[2] - acceleration[2]),
+        )
+        max_horizontal_mps2 = upward_thrust_acceleration_mps2 * math.tan(self.max_tilt_rad)
+        if horizontal_norm <= max_horizontal_mps2:
+            return acceleration
+
+        limited = acceleration.copy()
+        limited[0:2] = horizontal * (max_horizontal_mps2 / horizontal_norm)
+        return limited
+
     def _validate_gains(self) -> None:
-        if self.gains.v_min < 0.0:
+        if self.v_min < 0.0:
             raise ValueError("v_min cannot be negative")
-        if self.gains.v_max < self.gains.v_min:
+        if self.v_max < self.v_min:
             raise ValueError("v_max cannot be less than v_min")
-        if self.gains.a_lat_max <= 0.0:
+        if self.a_lat_max <= 0.0:
             raise ValueError("a_lat_max must be positive")
-        if self.gains.curvature_speed_deadband < 0.0:
+        if self.curvature_speed_deadband < 0.0:
             raise ValueError("curvature_speed_deadband cannot be negative")
-        if self.gains.curvature_speed_ramp <= 0.0:
+        if self.curvature_speed_ramp <= 0.0:
             raise ValueError("curvature_speed_ramp must be positive")
-        if self.gains.curvature_feedforward_gain < 0.0:
+        if self.curvature_feedforward_gain < 0.0:
             raise ValueError("curvature_feedforward_gain cannot be negative")
-        if self.gains.curvature_feedforward_max_acceleration_mps2 < 0.0:
+        if self.curvature_feedforward_max_acceleration_mps2 < 0.0:
             raise ValueError("curvature_feedforward_max_acceleration_mps2 cannot be negative")
-        if self.gains.hover_thrust <= 0.0:
+        if self.hover_thrust <= 0.0:
             raise ValueError("hover_thrust must be positive")
-        if not 0.0 <= self.gains.acceleration_filter_alpha <= 1.0:
+        if self.max_upward_acceleration_mps2 < 0.0:
+            raise ValueError("max_upward_acceleration_mps2 cannot be negative")
+        if self.max_downward_acceleration_mps2 < 0.0:
+            raise ValueError("max_downward_acceleration_mps2 cannot be negative")
+        if not 0.0 <= self.max_tilt_rad < math.pi / 2.0:
+            raise ValueError("max_tilt_deg must be in [0, 90)")
+        if not 0.0 <= self.acceleration_filter_alpha <= 1.0:
             raise ValueError("acceleration_filter_alpha must be in [0, 1]")
-        if self.gains.min_normalized_thrust > self.gains.max_normalized_thrust:
+        if self.min_normalized_thrust > self.max_normalized_thrust:
             raise ValueError("min_normalized_thrust cannot exceed max_normalized_thrust")
 
     def _filtered_acceleration(self, acceleration: np.ndarray) -> np.ndarray:
-        alpha = float(self.gains.acceleration_filter_alpha)
+        alpha = float(self.acceleration_filter_alpha)
         if alpha >= 1.0 or self._filtered_acceleration_ned is None:
             self._filtered_acceleration_ned = acceleration.astype(float)
         elif alpha > 0.0:
@@ -342,18 +383,11 @@ def _orthogonal_horizontal(vector: np.ndarray) -> np.ndarray:
 
 
 def _unit(value: Iterable[float], name: str) -> np.ndarray:
-    array = _vec3(value, name)
+    array = np.asarray(value, dtype=float)
     norm = float(np.linalg.norm(array))
     if norm <= 1e-12:
         raise ValueError(f"{name} cannot be zero")
     return array / norm
-
-
-def _vec3(value: Iterable[float], name: str) -> np.ndarray:
-    array = np.asarray(tuple(value), dtype=float)
-    if array.shape != (3,):
-        raise ValueError(f"{name} must contain exactly three values")
-    return array
 
 
 def _nonnegative_float(value: Any, name: str) -> float:
