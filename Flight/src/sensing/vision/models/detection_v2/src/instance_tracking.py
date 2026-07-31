@@ -4,7 +4,7 @@ from dataclasses import asdict
 from pathlib import Path
 import cv2
 import numpy as np
-from .schema import EllipseEstimate, EllipseTrackRecord, TrackedVoidDetection
+from schema import EllipseEstimate, EllipseTrackRecord, TrackedVoidDetection
 
 def read_frames(path):
     rows = json.loads(path.read_text())

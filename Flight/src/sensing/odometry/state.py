@@ -3,18 +3,38 @@
 import math
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 
 import numpy as np
 
 from core.coordinates import quat_wxyz, vec3
 from core.coordinates import euler_from_quaternion, normalize_quaternion, rotate_vector
 from core.schema import MavlinkHighresImu, MavlinkTelemetry, QuatWxyz, Vec3, VehicleState, VioCorrection
-from sensing.odometry.vio import VioCorrectionConfig, VioMeasurement, blend_vio_state, should_apply_vio_measurement
+from sensing.odometry.vio import (
+    VioCorrectionConfig,
+    VioMeasurement,
+    blend_vio_state,
+    should_apply_vio_measurement,
+    slerp_quaternion,
+)
 
 
 ZERO_VEC3 = (0.0, 0.0, 0.0)
 IDENTITY_QUATERNION = (1.0, 0.0, 0.0, 0.0)
 GRAVITY_LOCAL_NED_MPS2 = (0.0, 0.0, 9.80665)
+
+
+@dataclass(frozen=True)
+class KalmanFilterConfig:
+    """Noise settings for the optional position/velocity Kalman filter."""
+
+    enabled: bool = False
+    initial_position_variance_m2: float = 1.0
+    initial_velocity_variance_m2ps2: float = 1.0
+    acceleration_process_noise_mps2: float = 4.0
+    vio_position_measurement_variance_m2: float = 0.25
+    vio_velocity_measurement_variance_m2ps2: float = 1.0
+    min_measurement_confidence: float = 0.05
 
 
 class VehicleStateEstimator:
@@ -25,6 +45,7 @@ class VehicleStateEstimator:
         vehicle_state: VehicleState | None = None,
         *,
         vio_config: VioCorrectionConfig | None = None,
+        kalman_config: KalmanFilterConfig | None = None,
     ):
         self.sim_time_ns = 0
         self.initialized = False
@@ -41,6 +62,10 @@ class VehicleStateEstimator:
         self.gyro_bias_body_frd_rps: Vec3 = ZERO_VEC3
         self.last_imu_time_boot_us: int | None = None
         self.vio_config = vio_config or VioCorrectionConfig()
+        self.kalman_config = kalman_config or KalmanFilterConfig()
+        self.kalman_enabled = bool(self.kalman_config.enabled)
+        self._kalman_covariance = self._initial_kalman_covariance()
+        self.last_kalman_status: str | None = None
         self.last_vio_measurement: VioMeasurement | None = None
         self.last_vio_residual: dict[str, object] | None = None
         self.last_vio_status: str | None = None
@@ -83,6 +108,8 @@ class VehicleStateEstimator:
         self.last_vio_measurement = None
         self.last_vio_residual = None
         self.last_vio_status = None
+        self._kalman_covariance = self._initial_kalman_covariance()
+        self.last_kalman_status = None
         self.initialized = False
         if vehicle_state is not None:
             return self.update_state(vehicle_state)
@@ -95,6 +122,8 @@ class VehicleStateEstimator:
         self.attitude_quaternion = quat_wxyz(vehicle_state.attitude_quaternion)
         self.angular_velocity_body_frd_rps = vec3(vehicle_state.body_rates_frd_rps)
         self.acceleration_local_ned_mps2 = vec3(vehicle_state.acceleration_local_ned_mps2)
+        if self.kalman_enabled:
+            self.last_kalman_status = "synced"
         self._set_initialized()
         return self.state
 
@@ -131,11 +160,10 @@ class VehicleStateEstimator:
             sim_truth=telemetry.sim_truth,
             raw={
                 **telemetry.raw,
-                "vehicle_state_source": "vehicle_state_estimator_highres_imu_vio"
-                if self.last_vio_status == "accepted"
-                else "vehicle_state_estimator_highres_imu",
+                "vehicle_state_source": self._vehicle_state_source(),
                 "vio_status": self.last_vio_status,
                 "vio_residual": self.last_vio_residual,
+                "kalman_status": self.last_kalman_status,
             },
         )
 
@@ -282,8 +310,11 @@ class VehicleStateEstimator:
         velocity = np.asarray(previous_velocity, dtype=float)
         position = np.asarray(self.position_local_ned_m, dtype=float)
 
-        self.position_local_ned_m = vec3(position + velocity * dt_s + 0.5 * acceleration * dt_s * dt_s)
-        self.velocity_local_ned_mps = vec3(velocity + acceleration * dt_s)
+        if self.kalman_enabled:
+            self._predict_kalman(acceleration, dt_s)
+        else:
+            self.position_local_ned_m = vec3(position + velocity * dt_s + 0.5 * acceleration * dt_s * dt_s)
+            self.velocity_local_ned_mps = vec3(velocity + acceleration * dt_s)
         return self.state
 
     def update_from_vio(self, vio_measurement: VioMeasurement) -> VehicleState:
@@ -298,11 +329,129 @@ class VehicleStateEstimator:
         if not apply_measurement:
             return self.state
 
-        corrected = blend_vio_state(self.state, vio_measurement, config=self.vio_config)
+        kalman_updated = self.kalman_enabled
+        if self.kalman_enabled:
+            corrected = self._update_kalman_from_vio(vio_measurement)
+        else:
+            corrected = blend_vio_state(self.state, vio_measurement, config=self.vio_config)
         self.update_state(corrected)
+        if kalman_updated:
+            self.last_kalman_status = "vio_update"
         self.attitude_euler_frd_deg = self.attitude_euler_local_ned(unit="deg")
         self.attitude_euler_frd_rad = self.attitude_euler_local_ned(unit="rad")
         return self.state
+
+    def _initial_kalman_covariance(self) -> np.ndarray:
+        position_variance = max(1e-9, float(self.kalman_config.initial_position_variance_m2))
+        velocity_variance = max(1e-9, float(self.kalman_config.initial_velocity_variance_m2ps2))
+        return np.diag(
+            (
+                position_variance,
+                position_variance,
+                position_variance,
+                velocity_variance,
+                velocity_variance,
+                velocity_variance,
+            )
+        )
+
+    def _predict_kalman(self, acceleration_local_ned_mps2: np.ndarray, dt_s: float) -> None:
+        state = np.concatenate(
+            (
+                np.asarray(self.position_local_ned_m, dtype=float),
+                np.asarray(self.velocity_local_ned_mps, dtype=float),
+            )
+        )
+        transition = np.eye(6, dtype=float)
+        transition[0:3, 3:6] = np.eye(3, dtype=float) * dt_s
+        control = np.vstack(
+            (
+                np.eye(3, dtype=float) * (0.5 * dt_s * dt_s),
+                np.eye(3, dtype=float) * dt_s,
+            )
+        )
+
+        state = transition @ state + control @ acceleration_local_ned_mps2
+        acceleration_noise = max(1e-9, float(self.kalman_config.acceleration_process_noise_mps2))
+        process_noise = control @ (np.eye(3, dtype=float) * acceleration_noise * acceleration_noise) @ control.T
+        self._kalman_covariance = transition @ self._kalman_covariance @ transition.T + process_noise
+
+        self.position_local_ned_m = vec3(state[0:3])
+        self.velocity_local_ned_mps = vec3(state[3:6])
+        self.last_kalman_status = "imu_predict"
+
+    def _update_kalman_from_vio(self, vio_measurement: VioMeasurement) -> VehicleState:
+        state = np.concatenate(
+            (
+                np.asarray(self.position_local_ned_m, dtype=float),
+                np.asarray(self.velocity_local_ned_mps, dtype=float),
+            )
+        )
+        measurement_values = [*vio_measurement.position_local_ned_m]
+        measurement_rows = [
+            np.array((1.0, 0.0, 0.0, 0.0, 0.0, 0.0), dtype=float),
+            np.array((0.0, 1.0, 0.0, 0.0, 0.0, 0.0), dtype=float),
+            np.array((0.0, 0.0, 1.0, 0.0, 0.0, 0.0), dtype=float),
+        ]
+        measurement_variances = [float(self.kalman_config.vio_position_measurement_variance_m2)] * 3
+
+        if vio_measurement.velocity_local_ned_mps is not None:
+            measurement_values.extend(vio_measurement.velocity_local_ned_mps)
+            measurement_rows.extend(
+                [
+                    np.array((0.0, 0.0, 0.0, 1.0, 0.0, 0.0), dtype=float),
+                    np.array((0.0, 0.0, 0.0, 0.0, 1.0, 0.0), dtype=float),
+                    np.array((0.0, 0.0, 0.0, 0.0, 0.0, 1.0), dtype=float),
+                ]
+            )
+            measurement_variances.extend(
+                [float(self.kalman_config.vio_velocity_measurement_variance_m2ps2)] * 3
+            )
+
+        confidence = max(
+            float(self.kalman_config.min_measurement_confidence),
+            float(vio_measurement.confidence),
+        )
+        measurement = np.asarray(measurement_values, dtype=float)
+        observation = np.vstack(measurement_rows)
+        noise = np.diag(np.asarray(measurement_variances, dtype=float) / confidence)
+
+        innovation = measurement - observation @ state
+        innovation_covariance = observation @ self._kalman_covariance @ observation.T + noise
+        kalman_gain = self._kalman_covariance @ observation.T @ np.linalg.inv(innovation_covariance)
+        state = state + kalman_gain @ innovation
+        identity = np.eye(6, dtype=float)
+        self._kalman_covariance = (identity - kalman_gain @ observation) @ self._kalman_covariance
+
+        self.position_local_ned_m = vec3(state[0:3])
+        self.velocity_local_ned_mps = vec3(state[3:6])
+        self.last_kalman_status = "vio_update"
+
+        attitude_alpha = max(
+            0.0,
+            min(1.0, float(self.vio_config.attitude_alpha * vio_measurement.confidence)),
+        )
+        return VehicleState(
+            sim_time_ns=self.sim_time_ns,
+            position_local_ned_m=self.position_local_ned_m,
+            velocity_local_ned_mps=self.velocity_local_ned_mps,
+            attitude_quaternion=slerp_quaternion(
+                self.attitude_quaternion,
+                vio_measurement.attitude_quaternion,
+                attitude_alpha,
+            ),
+            body_rates_frd_rps=self.angular_velocity_body_frd_rps,
+            acceleration_local_ned_mps2=self.acceleration_local_ned_mps2,
+        )
+
+    def _vehicle_state_source(self) -> str:
+        if self.last_vio_status == "accepted" and self.last_kalman_status == "vio_update":
+            return "vehicle_state_estimator_highres_imu_vio_kalman"
+        if self.last_vio_status == "accepted":
+            return "vehicle_state_estimator_highres_imu_vio"
+        if self.kalman_enabled:
+            return "vehicle_state_estimator_highres_imu_kalman"
+        return "vehicle_state_estimator_highres_imu"
 
     def _adjusted_gyro(self, gyro_body_frd_rps: Vec3) -> Vec3:
         """

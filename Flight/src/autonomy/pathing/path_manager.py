@@ -21,6 +21,14 @@ class PlannedPath:
     spacing_m: float
     computation_ms: float
     source: str = "path_manager"
+    adaptive_spline_tightness: bool = False
+    distant_spline_corner_tightness: float | None = None
+    min_spline_corner_tightness: float | None = None
+    max_spline_corner_tightness: float | None = None
+    gentle_turn_angle_deg: float | None = None
+    sharp_turn_angle_deg: float | None = None
+    short_segment_reference_m: float | None = None
+    long_segment_reference_m: float | None = None
 
     def to_log_dict(self, *, origin_local_ned_m: Any | None = None) -> dict[str, Any]:
         payload = asdict(self)
@@ -37,6 +45,19 @@ class PlannedPath:
         return payload
 
 
+@dataclass(frozen=True)
+class PathProjection:
+    closest_point_local_ned_m: Vec3
+    tangent_local_ned: Vec3
+    along_track_m: float
+    cross_track_error_m: float
+    segment_index: int
+    segment_fraction: float
+
+    def to_log_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 class PathManager:
     def __init__(
         self,
@@ -51,6 +72,14 @@ class PathManager:
         passed_gate_distance_m: float = 2.0,
         gate_center_tolerance_m: float = 0.5,
         spline_corner_tightness: float = 0.5,
+        adaptive_spline_tightness: bool = True,
+        distant_spline_corner_tightness: float = 0.10,
+        min_spline_corner_tightness: float = 0.15,
+        max_spline_corner_tightness: float = 0.9,
+        gentle_turn_angle_deg: float = 20.0,
+        sharp_turn_angle_deg: float = 80.0,
+        short_segment_reference_m: float = 12.0,
+        long_segment_reference_m: float = 25.0,
         planning_mode: str = "gate_map",
     ):
         self.spline_generator = spline_generator
@@ -67,7 +96,22 @@ class PathManager:
         self.passed_gate_distance_m = max(0.0, float(passed_gate_distance_m))
         self.gate_center_tolerance_m = max(0.0, float(gate_center_tolerance_m))
         self.spline_corner_tightness = float(np.clip(float(spline_corner_tightness), 0.0, 1.0))
+        self.adaptive_spline_tightness = bool(adaptive_spline_tightness)
+        self.distant_spline_corner_tightness = float(np.clip(float(distant_spline_corner_tightness), 0.0, 1.0))
+        self.min_spline_corner_tightness = float(np.clip(float(min_spline_corner_tightness), 0.0, 1.0))
+        self.max_spline_corner_tightness = float(np.clip(float(max_spline_corner_tightness), 0.0, 1.0))
+        if self.distant_spline_corner_tightness > self.max_spline_corner_tightness:
+            raise ValueError("distant_spline_corner_tightness cannot exceed max_spline_corner_tightness")
+        if self.min_spline_corner_tightness > self.max_spline_corner_tightness:
+            raise ValueError("min_spline_corner_tightness cannot exceed max_spline_corner_tightness")
+        self.gentle_turn_angle_rad = math.radians(max(0.0, float(gentle_turn_angle_deg)))
+        self.sharp_turn_angle_rad = math.radians(max(0.0, float(sharp_turn_angle_deg)))
+        if self.gentle_turn_angle_rad > self.sharp_turn_angle_rad:
+            raise ValueError("gentle_turn_angle_deg cannot exceed sharp_turn_angle_deg")
+        self.short_segment_reference_m = max(1e-6, float(short_segment_reference_m))
+        self.long_segment_reference_m = max(self.short_segment_reference_m, float(long_segment_reference_m))
         self.planning_mode = _normalize_planning_mode(planning_mode)
+        self._path_tail_length_m = 10.0
         self._waypoints = np.empty((0, 3))
         self._segment_lengths = np.empty((0,))
         self._cumulative_lengths = np.array([0.0], dtype=float)
@@ -90,6 +134,7 @@ class PathManager:
         anchors = self._anchors_for_gates(planned_gates, start_position_local_ned_m=start_position)
         points = self._sample_spline(anchors)
         points = self._constrain_gate_centers(points, planned_gates)
+        points = self._extend_path(_waypoint_array(points)).tolist()
         gate_center_errors = self._gate_center_errors(points, planned_gates)
         if len(points) >= 2:
             self.set_waypoints(points)
@@ -103,6 +148,7 @@ class PathManager:
             spacing_m=float(self.spacing_m),
             computation_ms=(perf_counter() - started) * 1000.0,
             source="gate_map",
+            **self._planned_path_spline_metadata(),
         )
 
     def plan_from_gate_centers(
@@ -125,7 +171,7 @@ class PathManager:
         centers = [center for _, center in gate_centers]
 
         anchors = self._dedupe_points(np.asarray([position, *centers], dtype=float))
-        points = self._sample_spline(anchors)
+        points = self._extend_path(_waypoint_array(self._sample_spline(anchors))).tolist()
         if len(points) >= 2:
             self.set_waypoints(points)
         elif len(points) < 2 and len(self._waypoints) >= 2:
@@ -149,6 +195,7 @@ class PathManager:
             spacing_m=float(self.spacing_m),
             computation_ms=(perf_counter() - started) * 1000.0,
             source="center_targets",
+            **self._planned_path_spline_metadata(),
         )
 
     def plan(
@@ -253,6 +300,7 @@ class PathManager:
             spacing_m=float(self.spacing_m),
             computation_ms=(perf_counter() - started) * 1000.0,
             source="test_path",
+            **self._planned_path_spline_metadata(),
         )
         return self.test_path
 
@@ -297,6 +345,51 @@ class PathManager:
             spacing_m=float(self.spacing_m),
             computation_ms=(perf_counter() - started) * 1000.0,
             source="straight_line",
+            **self._planned_path_spline_metadata(),
+        )
+        return self.test_path
+
+    def build_circular_path(
+        self,
+        *,
+        radius_m: float = 8.0,
+        point_count: int = 65,
+        clockwise: bool = False,
+    ) -> PlannedPath:
+        """Build a horizontal circular local-NED path that starts and ends at the origin.
+
+        The circle is offset east by ``radius_m`` so the first waypoint is
+        ``(0, 0, 0)`` and the final waypoint returns to ``(0, 0, 0)``. The
+        initial tangent points north when ``clockwise`` is false and south when
+        ``clockwise`` is true.
+        """
+        started = perf_counter()
+        radius = float(radius_m)
+        count = int(point_count)
+        if radius <= 0.0:
+            raise ValueError("radius_m must be positive")
+        if count < 4:
+            raise ValueError("point_count must be at least 4")
+
+        angle = np.linspace(0.0, 2.0 * np.pi, count)
+        direction = -1.0 if clockwise else 1.0
+        north = radius * np.sin(direction * angle)
+        east = radius * (1.0 - np.cos(direction * angle))
+        down = np.zeros_like(angle)
+
+        waypoints = np.column_stack((north, east, down))
+        points = self.set_waypoints(waypoints).astype(float).tolist()
+        self.test_path = PlannedPath(
+            points_relative_ned_m=points,
+            anchors_relative_ned_m=points,
+            gate_ids=[],
+            gate_center_errors_m={},
+            gate_center_tolerance_m=float(self.gate_center_tolerance_m),
+            spline_corner_tightness=float(self.spline_corner_tightness),
+            spacing_m=float(self.spacing_m),
+            computation_ms=(perf_counter() - started) * 1000.0,
+            source="circular_path",
+            **self._planned_path_spline_metadata(),
         )
         return self.test_path
 
@@ -308,8 +401,32 @@ class PathManager:
     def get_waypoints(self) -> np.ndarray:
         return self._waypoints.copy()
 
-    def project(self, position_local_ned_m: Vec3) -> dict[str, Any]:
-        """Project a position onto the managed polyline path."""
+    def project(self, position_local_ned_m: Vec3) -> PathProjection:
+        """Project a query position onto the currently managed path.
+
+        ``position_local_ned_m`` is the local-NED point to compare against the
+        path. In normal flight-control usage this is the drone position from
+        ``VehicleState.position_local_ned_m`` at the time ``project()`` is
+        called, but the method accepts any local-NED query point.
+
+        The path is treated as a piecewise-linear polyline between the current
+        waypoint samples. Each segment is checked and the closest point on the
+        full path is returned. Segment fractions are clamped to the segment
+        endpoints, so query positions before the first waypoint or beyond the
+        final waypoint project to the nearest endpoint.
+
+        Returns:
+            PathProjection: Typed projection result containing:
+            - ``closest_point_local_ned_m``: closest point on the path.
+            - ``tangent_local_ned``: unit tangent of the selected path segment.
+            - ``along_track_m``: distance from path start to the projected point.
+            - ``cross_track_error_m``: Euclidean distance from the query position to the path.
+            - ``segment_index``: index of the selected segment start waypoint.
+            - ``segment_fraction``: normalized position on that segment in ``[0, 1]``.
+
+        Raises:
+            ValueError: If no valid path has been set.
+        """
         self._require_path()
         position = _vec3(position_local_ned_m, "position_local_ned_m")
 
@@ -337,14 +454,14 @@ class PathManager:
             + best_fraction * self._segment_lengths[best_segment_index]
         )
         tangent = self._segment_tangent(best_segment_index)
-        return {
-            "position_local_ned_m": tuple(float(value) for value in best_point),
-            "tangent_local_ned": tuple(float(value) for value in tangent),
-            "along_track_m": along_track_m,
-            "cross_track_error_m": float(np.sqrt(best_distance_sq)),
-            "segment_index": best_segment_index,
-            "segment_fraction": best_fraction,
-        }
+        return PathProjection(
+            closest_point_local_ned_m=tuple(float(value) for value in best_point),
+            tangent_local_ned=tuple(float(value) for value in tangent),
+            along_track_m=along_track_m,
+            cross_track_error_m=float(np.sqrt(best_distance_sq)),
+            segment_index=best_segment_index,
+            segment_fraction=best_fraction,
+        )
 
     def carrot_point(
         self,
@@ -352,9 +469,38 @@ class PathManager:
         lookahead_m: float,
         speed_lookahead_m: float | None = None,
     ) -> dict[str, Any]:
-        """Return a path point lookahead_m ahead of the current path projection."""
+        """Return a preview point ahead of the query position's path projection.
+
+        ``position_local_ned_m`` is the local-NED query point used to find the
+        current nearest point on the path. In normal flight-control usage this
+        is the drone position from ``VehicleState.position_local_ned_m`` at the
+        time ``carrot_point()`` is called.
+
+        The method first calls ``project()`` to find the query point's current
+        along-track distance. It then samples a target point ``lookahead_m``
+        meters farther along the path, clamped to the final waypoint if the
+        requested preview goes past the end of the path. ``speed_lookahead_m``
+        controls the farther preview window used for reporting
+        ``max_curvature_ahead``; when omitted, it defaults to ``lookahead_m``.
+
+        Returns a dictionary containing:
+        - ``position_local_ned_m``: preview/carrot point on the path.
+        - ``tangent_local_ned``: unit tangent at the preview point.
+        - ``along_track_m``: distance from path start to the preview point.
+        - ``cross_track_error_m``: distance from the query position to the path.
+        - ``curvature``: curvature estimate at the preview segment.
+        - ``max_curvature_ahead``: max curvature between the projection and speed preview point.
+        - ``speed_lookahead_m``: speed-preview distance used for curvature planning.
+        - ``speed_preview_along_track_m``: along-track end of the speed preview window.
+        - ``projection_closest_point_local_ned_m``: nearest point found by ``project()``.
+        - ``projection_along_track_m``: along-track distance of that nearest point.
+        - ``segment_index``: segment index used for the preview point.
+
+        Raises:
+            ValueError: If no valid path has been set.
+        """
         projection = self.project(position_local_ned_m)
-        projection_distance_m = float(projection["along_track_m"])
+        projection_distance_m = float(projection.along_track_m)
         target_distance_m = min(
             projection_distance_m + max(0.0, float(lookahead_m)),
             float(self._cumulative_lengths[-1]),
@@ -371,15 +517,15 @@ class PathManager:
             "position_local_ned_m": tuple(float(value) for value in point),
             "tangent_local_ned": tuple(float(value) for value in tangent),
             "along_track_m": target_distance_m,
-            "cross_track_error_m": projection["cross_track_error_m"],
+            "cross_track_error_m": projection.cross_track_error_m,
             "curvature": float(curvature),
             "max_curvature_ahead": float(max_curvature_ahead),
             "speed_lookahead_m": float(
                 lookahead_m if speed_lookahead_m is None else speed_lookahead_m
             ),
             "speed_preview_along_track_m": speed_preview_distance_m,
-            "projection_position_local_ned_m": projection["position_local_ned_m"],
-            "projection_along_track_m": projection["along_track_m"],
+            "projection_closest_point_local_ned_m": projection.closest_point_local_ned_m,
+            "projection_along_track_m": projection.along_track_m,
             "segment_index": segment_index,
         }
 
@@ -477,11 +623,13 @@ class PathManager:
             return self._sample_polyline(anchors)
 
         samples = [anchors[0]]
+        turn_tightness = self._anchor_turn_tightness(anchors)
         for index in range(len(anchors) - 1):
             p0 = anchors[max(index - 1, 0)]
             p1 = anchors[index]
             p2 = anchors[index + 1]
             p3 = anchors[min(index + 2, len(anchors) - 1)]
+            segment_tightness = self._segment_spline_tightness(turn_tightness, index)
             distance = float(np.linalg.norm(p2 - p1))
             steps = max(1, int(np.ceil(distance / self.spacing_m)))
             for step in range(1, steps + 1):
@@ -493,11 +641,84 @@ class PathManager:
                     + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t * t * t
                 )
                 line_point = p1 + (p2 - p1) * t
-                point = (1.0 - self.spline_corner_tightness) * point + self.spline_corner_tightness * line_point
+                point = (1.0 - segment_tightness) * point + segment_tightness * line_point
                 samples.append(point)
                 if len(samples) >= self.max_points:
                     return np.asarray(samples, dtype=float).tolist()
         return np.asarray(samples, dtype=float).tolist()
+
+    def _planned_path_spline_metadata(self) -> dict[str, Any]:
+        return {
+            "adaptive_spline_tightness": bool(self.adaptive_spline_tightness),
+            "distant_spline_corner_tightness": float(self.distant_spline_corner_tightness),
+            "min_spline_corner_tightness": float(self.min_spline_corner_tightness),
+            "max_spline_corner_tightness": float(self.max_spline_corner_tightness),
+            "gentle_turn_angle_deg": float(math.degrees(self.gentle_turn_angle_rad)),
+            "sharp_turn_angle_deg": float(math.degrees(self.sharp_turn_angle_rad)),
+            "short_segment_reference_m": float(self.short_segment_reference_m),
+            "long_segment_reference_m": float(self.long_segment_reference_m),
+        }
+
+    def _anchor_turn_tightness(self, anchors: np.ndarray) -> np.ndarray:
+        tightness = np.full(len(anchors), self.spline_corner_tightness, dtype=float)
+        if not self.adaptive_spline_tightness or len(anchors) < 3:
+            return tightness
+
+        angle_span = self.sharp_turn_angle_rad - self.gentle_turn_angle_rad
+        for index in range(1, len(anchors) - 1):
+            before = anchors[index] - anchors[index - 1]
+            after = anchors[index + 1] - anchors[index]
+            before_length = float(np.linalg.norm(before))
+            after_length = float(np.linalg.norm(after))
+            if before_length <= 1e-12 or after_length <= 1e-12:
+                continue
+
+            before_tangent = before / before_length
+            after_tangent = after / after_length
+            turn_angle = math.acos(float(np.clip(np.dot(before_tangent, after_tangent), -1.0, 1.0)))
+            if angle_span <= 1e-12:
+                angle_weight = 1.0 if turn_angle >= self.sharp_turn_angle_rad else 0.0
+            else:
+                angle_weight = float(np.clip(
+                    (turn_angle - self.gentle_turn_angle_rad) / angle_span,
+                    0.0,
+                    1.0,
+                ))
+            angle_weight = angle_weight * angle_weight * (3.0 - 2.0 * angle_weight)
+
+            local_spacing_m = min(before_length, after_length)
+            if self.long_segment_reference_m <= self.short_segment_reference_m:
+                distance_weight = 1.0 if local_spacing_m <= self.short_segment_reference_m else 0.0
+            else:
+                distance_weight = float(np.clip(
+                    (self.long_segment_reference_m - local_spacing_m)
+                    / (self.long_segment_reference_m - self.short_segment_reference_m),
+                    0.0,
+                    1.0,
+                ))
+            distance_weight = distance_weight * distance_weight * (3.0 - 2.0 * distance_weight)
+
+            close_turn_weight = distance_weight * (0.55 + 0.45 * angle_weight)
+            far_sharp_weight = 0.25 * angle_weight * (1.0 - distance_weight)
+            weight = float(np.clip(close_turn_weight + far_sharp_weight, 0.0, 1.0))
+            lower_tightness = (
+                self.distant_spline_corner_tightness
+                + distance_weight
+                * (self.min_spline_corner_tightness - self.distant_spline_corner_tightness)
+            )
+            tightness[index] = (
+                lower_tightness
+                + weight * (self.max_spline_corner_tightness - lower_tightness)
+            )
+
+        return tightness
+
+    def _segment_spline_tightness(self, anchor_tightness: np.ndarray, segment_index: int) -> float:
+        if not self.adaptive_spline_tightness:
+            return float(self.spline_corner_tightness)
+        start_tightness = anchor_tightness[segment_index]
+        end_tightness = anchor_tightness[segment_index + 1]
+        return float(max(start_tightness, end_tightness))
 
     def _constrain_gate_centers(self, points: list[list[float]], gates: list[GateRecord]) -> list[list[float]]:
         if not gates:
@@ -573,6 +794,25 @@ class PathManager:
                 if len(samples) >= self.max_points:
                     return np.asarray(samples, dtype=float).tolist()
         return np.asarray(samples, dtype=float).tolist()
+
+    def _extend_path(self, points: np.ndarray) -> np.ndarray:
+        if len(points) < 2 or self._path_tail_length_m <= 1e-9:
+            return points.astype(float)
+
+        tangent = points[-1] - points[-2]
+        tangent_norm = float(np.linalg.norm(tangent))
+        if tangent_norm <= 1e-12:
+            return points.astype(float)
+        tangent = tangent / tangent_norm
+
+        remaining_slots = self.max_points - len(points)
+        if remaining_slots <= 0:
+            return points.astype(float)
+
+        steps = min(remaining_slots, max(1, int(np.ceil(self._path_tail_length_m / self.spacing_m))))
+        distances = np.linspace(self._path_tail_length_m / steps, self._path_tail_length_m, steps)
+        tail = points[-1] + distances[:, np.newaxis] * tangent
+        return np.vstack((points, tail)).astype(float)
 
     @staticmethod
     def _dedupe_points(points: np.ndarray) -> np.ndarray:

@@ -15,6 +15,9 @@ from typing import Iterable
 import numpy as np
 
 
+GRAVITY_MPS2: float = 9.80665
+
+
 def vec3(value: Iterable[float]) -> tuple[float, float, float]:
     array = np.asarray(tuple(value), dtype=float)
     if array.shape != (3,):

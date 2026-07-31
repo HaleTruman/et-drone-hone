@@ -32,6 +32,9 @@ class CommandMapper:
         thrust: float,
         body_rates_rps: np.ndarray | None = None,
     ) -> dict[str, Any]:
+        """
+        Configures attitude target commands into the dictionary format that the MAVLink Client is expecting.
+        """
         payload = {
             "quaternion": np.asarray(quaternion, dtype=float).tolist(),
             "thrust": self.scale_thrust(thrust),

@@ -1,159 +1,40 @@
-from pathlib import Path
 import time
 import traceback
-from concurrent.futures import ThreadPoolExecutor
 import numpy as np 
 
-from core.control.hover.controller import HoverController
-from autonomy.pathing import PathManager
-from core.control.attitude import AttitudeController
-from core.control.carrot import CarrotController
-from core.logging import Logger, generate_mp4
-from core.logging.obs import OBSRecorder
+from core.initialization import initialize
+from core.logging import generate_mp4
 from core.schema import MavlinkHighresImu, StateRecord, VioCorrection
-from core.modes.system_mode import SystemModeManager
 from core.utils import time_since
-from mapping.gates import GateMap
-from sensing.telemetry import MavlinkClient
-from sensing.vision import VisionStreamReceiver
-from sensing.odometry import OpenCvMonocularVioProvider, VehicleStateEstimator, VioCorrectionConfig, VioFrontendConfig
-from sensing.vision.service import VisionPerceptionConfig, VisionPerceptionService
-
-# Simulator and network endpoints.
-MAVLINK_ENDPOINT = "udpin:127.0.0.1:14550"
-SIM_RUNTIME = "VQ_2"
-VISION_HOST = "0.0.0.0"
-VISION_PORT = 5600
-
-# Control loop timing.
-INNER_LOOP_HZ = 100.0
-OUTER_LOOP_HZ = 30.0
-RUN_S: float | None = None
-
-# Startup, reset, and arming timeouts.
-HEARTBEAT_TIMEOUT_S = 120.0
-STARTUP_DATA_TIMEOUT_S = 5.0
-IMU_INIT_TIMEOUT_S = 1.5
-GATE_MAP_INIT_TIMEOUT_S = 1.5
-RESET_READY_TIMEOUT_S = 20.0
-RESET_STABLE_S = 0.5
-RESET_STABLE_MAX_SPEED_MPS = 0.03
-POST_RESET_DELAY_S = 1.5
-ARM_TIMEOUT_S = 5.0
-TARGET_HOLD_S = 0.75
-
-# Vision filtering and path planning.
-PLANNING_MODE = "center_targets" # test_path, center_targets, gate_map
-PLANNING_GATE_COUNT = 2
-EXCLUSION_DISTANCE = 2.0
-GATE_MAX_PLANNING_DISTANCE_M = 40.0
-GATE_PASSED_DISTANCE_M = 2.0
-GATE_CENTER_TOLERANCE_M = 0.05
-SPLINE_CORNER_TIGHTNESS = 0.75
-
-# Control and output behavior.
-CONTROL_METHOD = "carrot_motor_test"
-CARROT_LOOKAHEAD_M = 1.4
-SPEED_LOOKAHEAD_M = 10
-FAILSAFE_DISTANCE = 10
-ALLOW_FLIGHT = True
-CREATE_VIDEO = False
-RECORD_SCREEN = False
-
-# Visual odometry configuration.
-ENABLE_VIO = False
-VIO_CAMERA_HORIZONTAL_FOV_DEG = 90.0
-VIO_CAMERA_TILT_DEG = 20.0
-VIO_BODY_TO_CAMERA_TRANSLATION_BODY_FRD_M = (0.0, 0.0, 0.0)
-
-# Logging
-RUN_DIR = Logger.timestamped_dir(Path(__file__).resolve().parents[1] / "logs" / "runs")
-LOG_PATH = RUN_DIR / "run.json"
-logger = Logger(
-    {
-        "scenario": "live_stream_minimal",
-        "sim_runtime": SIM_RUNTIME,
-        "mavlink_endpoint": MAVLINK_ENDPOINT,
-        "vision_host": VISION_HOST,
-        "vision_port": VISION_PORT,
-        "loop_hz": INNER_LOOP_HZ,
-        "inner_loop_hz": INNER_LOOP_HZ,
-        "outer_loop_hz": OUTER_LOOP_HZ,
-        "control_method": CONTROL_METHOD,
-        "planning_mode": PLANNING_MODE,
-    }
-)
-
-print(f"Starting run at {RUN_DIR}...")
 
 
 def main() -> int:
-    inner_period_s = 1.0 / INNER_LOOP_HZ
-    outer_period_s = 1.0 / OUTER_LOOP_HZ
+    (
+        settings,
+        logger,
+        vehicle_state_estimator,
+        vio_provider,
+        mavlink_client,
+        vision_rx,
+        vision_perception,
+        vision_executor,
+        obs_recorder,
+        system_mode_manager,
+        gate_map,
+        path_manager,
+        attitude_controller,
+        carrot_controller,
+        geometric_path_follower,
+        hover_controller,
+    ) = initialize()
 
-    # clients and managers
-    vehicle_state_estimator = VehicleStateEstimator(
-        vio_config=VioCorrectionConfig(
-            position_alpha=0.02,
-            velocity_alpha=0.05,
-            attitude_alpha=0.03,
-        )
-    )
-
-    vio_provider = OpenCvMonocularVioProvider(
-        frontend_config=VioFrontendConfig(horizontal_fov_deg=VIO_CAMERA_HORIZONTAL_FOV_DEG),
-        body_to_camera_translation_body_frd_m=VIO_BODY_TO_CAMERA_TRANSLATION_BODY_FRD_M,
-        camera_tilt_deg=VIO_CAMERA_TILT_DEG,
-    )
-
-    mavlink_client = MavlinkClient(endpoint=MAVLINK_ENDPOINT, sim_runtime=SIM_RUNTIME)
-    vision_rx = VisionStreamReceiver(host=VISION_HOST, port=VISION_PORT, output_dir=RUN_DIR / "vision_frames")
-    vision_perception = VisionPerceptionService(VisionPerceptionConfig(backend="deterministic_v3"))
-    vision_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vision")
-    obs_recorder = OBSRecorder(RUN_DIR)
-    system_mode_manager = SystemModeManager()
-    gate_map = GateMap()
-
-    path_manager = PathManager(
-        max_gates=PLANNING_GATE_COUNT,
-        exclusion_distance_m=EXCLUSION_DISTANCE,
-        max_gate_distance_m=GATE_MAX_PLANNING_DISTANCE_M,
-        passed_gate_distance_m=GATE_PASSED_DISTANCE_M,
-        gate_center_tolerance_m=GATE_CENTER_TOLERANCE_M,
-        spline_corner_tightness=SPLINE_CORNER_TIGHTNESS,
-        planning_mode=PLANNING_MODE,
-    )
+    path_manager.build_circular_path(radius_m=5, point_count=200, clockwise=False)
 
 
-    path_manager.build_straight_line(
-        length_m=100.0,
-        point_count=200,
-        up_down_angle_deg=2.5,
-        left_right_angle_deg=0.0
-    )
+    print(f"Starting run at {settings.run_dir}...")
 
-    attitude_controller = AttitudeController(
-        roll_gain=1.2,
-        pitch_gain=1.2,
-        yaw_gain=0.5,
-        damping=0.15,
-        max_body_rate_rps=3.0
-    )
-    
-    carrot_controller = CarrotController(
-        max_speed_mps=10,
-        lookahead_m=CARROT_LOOKAHEAD_M,
-        speed_lookahead_m=SPEED_LOOKAHEAD_M,
-        position_gain=5.5,
-        velocity_gain=0.75,
-        initial_thrust=0.265
-    )
-    
-    hover_controller = HoverController(
-        lateral_velocity_gain=2.5,
-        vertical_velocity_gain=0.18,
-        vertical_acceleration_gain=0.035,
-    )
+    inner_period_s = 1.0 / settings.inner_loop_hz
+    outer_period_s = 1.0 / settings.outer_loop_hz
 
     # holders
     imu_data_t = None
@@ -162,6 +43,7 @@ def main() -> int:
     observation = None
     planned_path = None
     carrot_target = None
+    geometric_target = None
     vision_pending = None
     pending_vio_correction: VioCorrection | None = None
 
@@ -176,7 +58,7 @@ def main() -> int:
 # =================================================================== STARTUP PROCESS ===================================================================
     try:
     
-        mavlink_client.connect(heartbeat_timeout_s=HEARTBEAT_TIMEOUT_S)
+        mavlink_client.connect(heartbeat_timeout_s=settings.heartbeat_timeout_s)
         mavlink_client.start_heartbeat()
         mavlink_client.subscribe_telemetry()
         logger.log_event("mavlink_connected", time_since_startup_s = time_since(started_s), bridge=mavlink_client.snapshot())
@@ -189,9 +71,9 @@ def main() -> int:
         time_sim_reset_s = time.perf_counter()
         logger.log_event("simulator_reset_sent", time_since_startup_s = time_since(started_s))
 
-        if POST_RESET_DELAY_S > 0.0:
-            time.sleep(POST_RESET_DELAY_S)
-            logger.log_event("simulator_settle_complete", time_since_startup_s = time_since(started_s), elapsed_s=time.perf_counter() - time_sim_reset_s, settle_delay_s=POST_RESET_DELAY_S)
+        if settings.post_reset_delay_s > 0.0:
+            time.sleep(settings.post_reset_delay_s)
+            logger.log_event("simulator_settle_complete", time_since_startup_s = time_since(started_s), elapsed_s=time.perf_counter() - time_sim_reset_s, settle_delay_s=settings.post_reset_delay_s)
 
         # clear pre-reset samples, then wait for fresh post-reset telemetry and vision
         mavlink_client.clear_cached_telemetry()
@@ -199,23 +81,23 @@ def main() -> int:
         vision_rx.begin_saving_frames()
         vio_provider.reset()
 
-        telemetry = mavlink_client.wait_until_receiving(timeout_s=STARTUP_DATA_TIMEOUT_S)
+        telemetry = mavlink_client.wait_until_receiving(timeout_s=settings.startup_data_timeout_s)
         logger.log_event("mavlink_receiving", sim_time_ns=telemetry.sim_time_ns)
 
-        frame = vision_rx.wait_until_receiving(timeout_s=STARTUP_DATA_TIMEOUT_S)
+        frame = vision_rx.wait_until_receiving(timeout_s=settings.startup_data_timeout_s)
         logger.log_event("vision_receiving", sim_time_ns=frame.sim_time_ns)
 
         # start screen recording
-        if RECORD_SCREEN:
+        if settings.record_screen:
             logger.log_event("obs_recording_started", time_since_startup_s = time_since(started_s), sim_time_ns=telemetry.sim_time_ns) if obs_recorder.start_recording() else logger.log_event("obs_recording_failed", sim_time_ns=telemetry.sim_time_ns)
 
 
         # IMU calibration
         imu_calibration_samples: list[MavlinkHighresImu] = []
         last_calibration_imu_time_boot_us: int | None = None
-        imu_calibration_deadline_s = time.perf_counter() + IMU_INIT_TIMEOUT_S
+        imu_calibration_deadline_s = time.perf_counter() + settings.imu_init_timeout_s
         
-        while time.perf_counter() < imu_calibration_deadline_s: # rate: INNER_LOOP_HZ
+        while time.perf_counter() < imu_calibration_deadline_s: # rate: settings.inner_loop_hz
             imu_data_t = mavlink_client.latest_imu
 
             # collect imu samples for estimating sensor drift/bias
@@ -271,15 +153,15 @@ def main() -> int:
 
         
         # Drone enter ARM mode
-        mavlink_client.arm_and_wait(timeout_s=ARM_TIMEOUT_S)
+        mavlink_client.arm_and_wait(timeout_s=settings.arm_timeout_s)
         system_mode_manager.update_mode("arm")
         logger.log_event("armed", time_since_startup_s = time_since(started_s), bridge=mavlink_client.snapshot(), system_mode=system_mode_manager.system_mode.value)
 
 
         # Vision calibration and initalization
-        gate_map_init_deadline_s = time.perf_counter() + GATE_MAP_INIT_TIMEOUT_S
+        gate_map_init_deadline_s = time.perf_counter() + settings.gate_map_init_timeout_s
                 
-        while time.perf_counter() < gate_map_init_deadline_s: # rate: OUTER_LOOP_HZ
+        while time.perf_counter() < gate_map_init_deadline_s: # rate: settings.outer_loop_hz
             latest_frame = vision_rx.get_next_frame()
 
             # init gate map and path plan
@@ -368,7 +250,7 @@ def main() -> int:
 
 # =================================================================== BEGIN MAIN LOOP ===================================================================
 
-        while RUN_S is None or time.perf_counter() - control_started_s < RUN_S:
+        while settings.run_s is None or time.perf_counter() - control_started_s < settings.run_s:
 
             # ======================== INNER LOOP START ========================
             inner_loop_started_s = time.perf_counter()
@@ -378,7 +260,7 @@ def main() -> int:
             telemetry = mavlink_client.get_telemetry()
             imu_data_t = mavlink_client.latest_imu
 
-            if ENABLE_VIO and imu_data_t is not None:
+            if settings.enable_vio and imu_data_t is not None:
                 vio_provider.add_imu_sample(imu_data_t)
 
             vio_measurement_for_update = pending_vio_correction
@@ -444,7 +326,7 @@ def main() -> int:
                     vision_rx.record_frame_cycle(latest_frame.frame_id, inner_cycle)
 
                 # do VIO
-                if ENABLE_VIO and latest_frame is not None:
+                if settings.enable_vio and latest_frame is not None:
                     vio_measurement = vio_provider.process_frame(latest_frame)
                     pending_vio_correction = (
                         None
@@ -479,18 +361,18 @@ def main() -> int:
                     )
 
                 # CHECK FAILSAFE
-                if ALLOW_FLIGHT and system_mode_manager.is_racing():
+                if settings.allow_flight and system_mode_manager.is_racing():
                     path_projection = path_manager.project(vehicle_state.position_local_ned_m)
-                    path_error_m = float(path_projection["cross_track_error_m"])
-                    if path_error_m > FAILSAFE_DISTANCE:
+                    path_error_m = float(path_projection.cross_track_error_m)
+                    if path_error_m > settings.failsafe_distance_m:
                         system_mode_manager.update_mode("finish")
                         carrot_target = None
                         logger.log_event(
                             "path_failsafe_finished",
                             reason="path_deviation_exceeded",
                             cross_track_error_m=path_error_m,
-                            failsafe_distance_m=FAILSAFE_DISTANCE,
-                            projection=path_projection,
+                            failsafe_distance_m=settings.failsafe_distance_m,
+                            projection=path_projection.to_log_dict(),
                             system_mode=system_mode_manager.system_mode.value,
                             inner_cycle=inner_cycle,
                             outer_cycle=outer_cycle,
@@ -498,16 +380,19 @@ def main() -> int:
                         )
 
                 # compute attitude target for path-following controller
-                if ALLOW_FLIGHT and system_mode_manager.is_racing():
-                    carrot = path_manager.carrot_point(
-                        vehicle_state.position_local_ned_m,
-                        carrot_controller.lookahead_m,
-                        carrot_controller.speed_lookahead_m,
-                    )
-                    carrot_target = carrot_controller.compute_control(
-                        vehicle_state=vehicle_state,
-                        carrot=carrot,
-                    )
+                if settings.allow_flight and system_mode_manager.is_racing():
+                    if settings.control_method == "geometric_path_follower":
+                        geometric_target = geometric_path_follower.compute_control(vehicle_state)
+                    else:
+                        carrot = path_manager.carrot_point(
+                            vehicle_state.position_local_ned_m,
+                            carrot_controller.lookahead_m,
+                            carrot_controller.speed_lookahead_m,
+                        )
+                        carrot_target = carrot_controller.compute_control(
+                            vehicle_state=vehicle_state,
+                            carrot=carrot,
+                        )
            
 
 
@@ -527,24 +412,29 @@ def main() -> int:
             else:
                 command_result = None
 
-                if ALLOW_FLIGHT and system_mode_manager.is_racing():
-                    # carrot target
-                    if carrot_target is None:
-                        carrot = path_manager.carrot_point(
-                            vehicle_state.position_local_ned_m,
-                            carrot_controller.lookahead_m,
-                            carrot_controller.speed_lookahead_m,
-                        )
-                        carrot_target = carrot_controller.compute_control(
-                            vehicle_state=vehicle_state,
-                            carrot=carrot,
-                        )
+                if settings.allow_flight and system_mode_manager.is_racing():
+                    if settings.control_method == "geometric_path_follower":
+                        if geometric_target is None:
+                            geometric_target = geometric_path_follower.compute_control(vehicle_state)
+                        path_following_target = geometric_target
+                    else:
+                        if carrot_target is None:
+                            carrot = path_manager.carrot_point(
+                                vehicle_state.position_local_ned_m,
+                                carrot_controller.lookahead_m,
+                                carrot_controller.speed_lookahead_m,
+                            )
+                            carrot_target = carrot_controller.compute_control(
+                                vehicle_state=vehicle_state,
+                                carrot=carrot,
+                            )
+                        path_following_target = carrot_target
 
-                    if carrot_target:
+                    if path_following_target:
                         control_target = attitude_controller.compute_control(
                             vehicle_state,
-                            desired_attitude_quaternion=carrot_target["quaternion"],
-                            thrust=carrot_target["thrust"]
+                            desired_attitude_quaternion=path_following_target["quaternion"],
+                            thrust=path_following_target["thrust"]
                         )
                     
                     mavlink_client.send_attitude_target(control_target)
@@ -552,12 +442,12 @@ def main() -> int:
                     command_result = {
                         "emitted": True,
                         "sim_time_ns": telemetry.sim_time_ns,
-                        "reason": "carrot_path_following",
+                        "reason": path_following_target.get("source", "path_following") if path_following_target else "path_following",
                         "attitude_target": control_target,
                         "inner_loop_cycle": inner_cycle,
                         "outer_loop_cycle": outer_cycle,
                     }
-                elif ALLOW_FLIGHT and system_mode_manager.is_finished():
+                elif settings.allow_flight and system_mode_manager.is_finished():
                     hover_target = hover_controller.compute_control(vehicle_state)
                     control_target = attitude_controller.compute_control(
                         vehicle_state,
@@ -579,7 +469,7 @@ def main() -> int:
                     command_result = {
                             "emitted": False,
                             "sim_time_ns": telemetry.sim_time_ns if telemetry else None,
-                            "reason": "flight_disabled" if not ALLOW_FLIGHT else "system_mode_not_racing",
+                            "reason": "flight_disabled" if not settings.allow_flight else "system_mode_not_racing",
                             "attitude_target": control_target,
                             "inner_loop_cycle": inner_cycle,
                             "outer_loop_cycle": outer_cycle,
@@ -600,7 +490,7 @@ def main() -> int:
             sleep_s = max(0.0, next_inner_cycle_s - time.perf_counter())
             loop_elapsed_ms = (time.perf_counter() - inner_loop_started_s) * 1000.0
 
-            if inner_cycle % int(INNER_LOOP_HZ*5) == 0:
+            if inner_cycle % int(settings.inner_loop_hz*5) == 0:
                 print(f"inner_cycle={inner_cycle} - outer_cycle={outer_cycle} - loop_ms={loop_elapsed_ms:.2f}\n", flush=True)
 
             state_record = (None if telemetry is None else StateRecord.from_telemetry(
@@ -609,6 +499,7 @@ def main() -> int:
                     vio_correction=vio_measurement_for_update,
                     vio_status=vehicle_state_estimator.last_vio_status,
                     vio_residual=vehicle_state_estimator.last_vio_residual,
+                    kalman_status=vehicle_state_estimator.last_kalman_status,
                 )
             )
 
@@ -631,14 +522,15 @@ def main() -> int:
                 command=command_result,
                 inner_loop={
                     "inner_cycle": inner_cycle,
-                    "hz": INNER_LOOP_HZ,
+                    "hz": settings.inner_loop_hz,
                 },
                 outer_loop={
                     "outer_cycle": outer_cycle,
-                    "hz": OUTER_LOOP_HZ,
+                    "hz": settings.outer_loop_hz,
                     "ran": outer_loop_ran,
                 },
                 carrot=carrot_controller.last_payload,
+                geometric_path_follower=geometric_path_follower.last_payload,
                 vision={
                     **vision_rx.snapshot(),
                     "perception": vision_perception.snapshot()
@@ -672,7 +564,7 @@ def main() -> int:
 
 # =================================================================== SHUTDOWN ===================================================================
     finally:
-        if RECORD_SCREEN:
+        if settings.record_screen:
             obs_recorder.stop_recording()
 
         vision_executor.shutdown(wait=False, cancel_futures=True)
@@ -698,11 +590,11 @@ def main() -> int:
             vision=vision_rx.snapshot(),
             perception=vision_perception.snapshot(),
         )
-        logger.save_run(LOG_PATH)
-        print(f"Log saved to {LOG_PATH}", flush=True)
+        logger.save_run(settings.log_path)
+        print(f"Log saved to {settings.log_path}", flush=True)
 
-        if CREATE_VIDEO:
-            generate_mp4(RUN_DIR)
+        if settings.create_video:
+            generate_mp4(settings.run_dir)
 
     return 0
 
