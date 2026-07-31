@@ -44,7 +44,7 @@ POST_RESET_DELAY_S = 0.6  # gives the simulator time to settle after a reset com
 ARM_TIMEOUT_S = 5.0  # is how long the system waits for the vehicle to arm successfully.
 
 # Vision filtering and path planning.
-PLANNING_MODE = "test_path"  # chooses the PathManager strategy: test_path, center_targets, or gate_map.
+PLANNING_MODE = "center_targets"  # chooses the PathManager strategy: test_path, center_targets, or gate_map.
 PLANNING_GATE_COUNT = 2  # limits how many upcoming gates are included in each path plan.
 EXCLUSION_DISTANCE = 2.0  # ignores gates that are too close to the current vehicle position.
 GATE_MAX_PLANNING_DISTANCE_M = 40.0  # ignores gates farther than this from the current vehicle position.
@@ -76,7 +76,7 @@ GEOMETRIC_CROSS_TRACK_DAMPING = 4.0  # scales velocity damping perpendicular to 
 GEOMETRIC_ACCELERATION_FILTER_ALPHA = 1.0  # smooths outer-loop acceleration commands; 1.0 disables smoothing.
 
 # Speed planner.
-GEOMETRIC_MAX_SPEED_MPS = 3  # is the maximum along-track speed requested by the geometric follower.
+GEOMETRIC_MAX_SPEED_MPS = 15  # is the maximum along-track speed requested by the geometric follower.
 GEOMETRIC_MAX_LATERAL_ACCELERATION_MPS2 = 50.0  # limits speed in curves based on available lateral acceleration.
 GEOMETRIC_CURVATURE_SPEED_DEADBAND = 3.5  # ignores small curvature when computing curve-limited speed.
 GEOMETRIC_CURVATURE_SPEED_RAMP = 0.5  # controls how quickly commanded speed drops as curvature increases.
