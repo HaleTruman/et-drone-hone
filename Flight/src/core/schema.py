@@ -294,11 +294,16 @@ class StateRecord:
         vio_correction: VioCorrection | None = None,
         vio_status: str | None = None,
         vio_residual: dict[str, object] | None = None,
+        kalman_status: str | None = None,
     ) -> "StateRecord":
         sim_time_ns = vehicle_state.sim_time_ns if vehicle_state is not None else telemetry.sim_time_ns
         vehicle_state_source = (
-            "vehicle_state_estimator_highres_imu_vio"
+            "vehicle_state_estimator_highres_imu_vio_kalman"
+            if vio_correction is not None and vio_status == "accepted" and kalman_status == "vio_update"
+            else "vehicle_state_estimator_highres_imu_vio"
             if vio_correction is not None and vio_status == "accepted"
+            else "vehicle_state_estimator_highres_imu_kalman"
+            if kalman_status is not None
             else "vehicle_state_estimator_highres_imu"
         )
         vio_correction_payload = None if vio_correction is None else vio_correction.to_log_dict()
@@ -307,6 +312,7 @@ class StateRecord:
             "vio_status": vio_status,
             "vio_residual": vio_residual,
             "vio_correction": vio_correction_payload,
+            "kalman_status": kalman_status,
         }
         return cls(
             sim_time_ns=int(sim_time_ns),
