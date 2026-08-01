@@ -81,6 +81,7 @@ class PathManager:
         short_segment_reference_m: float = 12.0,
         long_segment_reference_m: float = 25.0,
         planning_mode: str = "gate_map",
+        path_tail_length_m: float = 10.0,
     ):
         self.spline_generator = spline_generator
         self.spacing_m = max(0.1, float(spacing_m))
@@ -111,7 +112,8 @@ class PathManager:
         self.short_segment_reference_m = max(1e-6, float(short_segment_reference_m))
         self.long_segment_reference_m = max(self.short_segment_reference_m, float(long_segment_reference_m))
         self.planning_mode = _normalize_planning_mode(planning_mode)
-        self._path_tail_length_m = 10.0
+        self._path_tail_length_m = max(0.0, float(path_tail_length_m))
+        self._last_terminal_gate_tangent: np.ndarray | None = None
         self._waypoints = np.empty((0, 3))
         self._segment_lengths = np.empty((0,))
         self._cumulative_lengths = np.array([0.0], dtype=float)
@@ -134,7 +136,10 @@ class PathManager:
         anchors = self._anchors_for_gates(planned_gates, start_position_local_ned_m=start_position)
         points = self._sample_spline(anchors)
         points = self._constrain_gate_centers(points, planned_gates)
-        points = self._extend_path(_waypoint_array(points)).tolist()
+        points = self._extend_path(
+            _waypoint_array(points),
+            tail_tangent=self._terminal_gate_tangent(anchors),
+        ).tolist()
         gate_center_errors = self._gate_center_errors(points, planned_gates)
         if len(points) >= 2:
             self.set_waypoints(points)
@@ -171,7 +176,10 @@ class PathManager:
         centers = [center for _, center in gate_centers]
 
         anchors = self._dedupe_points(np.asarray([position, *centers], dtype=float))
-        points = self._extend_path(_waypoint_array(self._sample_spline(anchors))).tolist()
+        points = self._extend_path(
+            _waypoint_array(self._sample_spline(anchors)),
+            tail_tangent=self._terminal_gate_tangent(anchors),
+        ).tolist()
         if len(points) >= 2:
             self.set_waypoints(points)
         elif len(points) < 2 and len(self._waypoints) >= 2:
@@ -795,11 +803,22 @@ class PathManager:
                     return np.asarray(samples, dtype=float).tolist()
         return np.asarray(samples, dtype=float).tolist()
 
-    def _extend_path(self, points: np.ndarray) -> np.ndarray:
+    def _terminal_gate_tangent(self, anchors: np.ndarray) -> np.ndarray | None:
+        if len(anchors) >= 3:
+            tangent = anchors[-1] - anchors[-2]
+            tangent_norm = float(np.linalg.norm(tangent))
+            if tangent_norm > 1e-12:
+                self._last_terminal_gate_tangent = tangent / tangent_norm
+                return self._last_terminal_gate_tangent.copy()
+        if self._last_terminal_gate_tangent is not None:
+            return self._last_terminal_gate_tangent.copy()
+        return None
+
+    def _extend_path(self, points: np.ndarray, *, tail_tangent: np.ndarray | None = None) -> np.ndarray:
         if len(points) < 2 or self._path_tail_length_m <= 1e-9:
             return points.astype(float)
 
-        tangent = points[-1] - points[-2]
+        tangent = tail_tangent if tail_tangent is not None else points[-1] - points[-2]
         tangent_norm = float(np.linalg.norm(tangent))
         if tangent_norm <= 1e-12:
             return points.astype(float)
