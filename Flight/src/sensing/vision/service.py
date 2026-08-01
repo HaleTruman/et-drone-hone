@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -88,16 +88,8 @@ class VisionPerceptionService:
             return self.deterministic_v2.process_frame(frame_id=frame_id, sim_time_ns=sim_time_ns, jpeg_bytes=jpeg_bytes)
         if self.config.backend == "deterministic_v3":
             frame = VisionFrame(frame_id=int(frame_id), sim_time_ns=int(sim_time_ns), jpeg_bytes=jpeg_bytes)
-            return self.deterministic_v3.process_frame(frame, self._vehicle_state_for_frame(frame, vehicle_state))
+            return self.deterministic_v3.process_frame(frame, vehicle_state)
         return self._process_cnn_frame(frame_id=frame_id, sim_time_ns=sim_time_ns, jpeg_bytes=jpeg_bytes)
-
-    @staticmethod
-    def _vehicle_state_for_frame(frame: VisionFrame, vehicle_state: VehicleState | None) -> VehicleState | None:
-        if vehicle_state is None:
-            return None
-        if vehicle_state.sim_time_ns == frame.sim_time_ns:
-            return vehicle_state
-        return replace(vehicle_state, sim_time_ns=int(frame.sim_time_ns))
 
     def _process_cnn_frame(self, *, frame_id: int, sim_time_ns: int, jpeg_bytes: bytes) -> VisionObservation:
         tensor = jpeg_bytes_to_tensor(jpeg_bytes)
@@ -150,7 +142,7 @@ class VisionPerceptionService:
         vehicle_state: VehicleState | None = None,
     ) -> VisionObservation:
         if self.config.backend == "deterministic_v3":
-            return self.deterministic_v3.process_frame(frame, self._vehicle_state_for_frame(frame, vehicle_state))
+            return self.deterministic_v3.process_frame(frame, vehicle_state)
         return self.process_frame(
             frame_id=frame.frame_id,
             sim_time_ns=frame.sim_time_ns,

@@ -61,6 +61,7 @@ class VehicleStateEstimator:
         self.acceleration_local_ned_mps2: Vec3 = ZERO_VEC3
         self.gyro_bias_body_frd_rps: Vec3 = ZERO_VEC3
         self.last_imu_time_boot_us: int | None = None
+        self.last_imu_elapsed_time_ns: int | None = None
         self.vio_config = vio_config or VioCorrectionConfig()
         self.kalman_config = kalman_config or KalmanFilterConfig()
         self.kalman_enabled = bool(self.kalman_config.enabled)
@@ -81,6 +82,7 @@ class VehicleStateEstimator:
             attitude_quaternion=self.attitude_quaternion,
             body_rates_frd_rps=self.angular_velocity_body_frd_rps,
             acceleration_local_ned_mps2=self.acceleration_local_ned_mps2,
+            elapsed_time_ns=self.last_imu_elapsed_time_ns,
         )
 
     def attitude_euler_local_ned(self, unit: str = "rad") -> Vec3:
@@ -105,6 +107,7 @@ class VehicleStateEstimator:
         self.acceleration_local_ned_mps2 = ZERO_VEC3
         self.gyro_bias_body_frd_rps = ZERO_VEC3
         self.last_imu_time_boot_us = None
+        self.last_imu_elapsed_time_ns = None
         self.last_vio_measurement = None
         self.last_vio_residual = None
         self.last_vio_status = None
@@ -122,6 +125,7 @@ class VehicleStateEstimator:
         self.attitude_quaternion = quat_wxyz(vehicle_state.attitude_quaternion)
         self.angular_velocity_body_frd_rps = vec3(vehicle_state.body_rates_frd_rps)
         self.acceleration_local_ned_mps2 = vec3(vehicle_state.acceleration_local_ned_mps2)
+        self.last_imu_elapsed_time_ns = vehicle_state.elapsed_time_ns
         if self.kalman_enabled:
             self.last_kalman_status = "synced"
         self._set_initialized()
@@ -165,6 +169,7 @@ class VehicleStateEstimator:
                 "vio_residual": self.last_vio_residual,
                 "kalman_status": self.last_kalman_status,
             },
+            elapsed_time_ns=telemetry.elapsed_time_ns,
         )
 
     def wait_for_update(
@@ -219,6 +224,7 @@ class VehicleStateEstimator:
 
         self.sim_time_ns = int(imu_data_t.time_boot_us) * 1_000
         self.last_imu_time_boot_us = int(imu_data_t.time_boot_us)
+        self.last_imu_elapsed_time_ns = imu_data_t.elapsed_time_ns
         self.acceleration_body_frd_mps2 = vec3(imu_data_t.acceleration_body_frd_mps2)
         self.angular_velocity_body_frd_rps = self._adjusted_gyro(imu_data_t.gyro_body_frd_rps)
         self.attitude_quaternion = _attitude_from_accelerometer(self.acceleration_body_frd_mps2)
@@ -249,6 +255,7 @@ class VehicleStateEstimator:
 
         self.sim_time_ns = int(latest_sample.time_boot_us) * 1_000
         self.last_imu_time_boot_us = int(latest_sample.time_boot_us)
+        self.last_imu_elapsed_time_ns = latest_sample.elapsed_time_ns
         self.acceleration_rest_body_frd_mps2 = vec3(mean_acceleration)
         self.acceleration_body_frd_mps2 = vec3(mean_acceleration)
         self.gyro_bias_body_frd_rps = vec3(mean_gyro)
@@ -277,6 +284,7 @@ class VehicleStateEstimator:
 
         self.sim_time_ns = int(imu_data_t.time_boot_us) * 1_000
         self.last_imu_time_boot_us = int(imu_data_t.time_boot_us)
+        self.last_imu_elapsed_time_ns = imu_data_t.elapsed_time_ns
 
         dt_s = (self.last_imu_time_boot_us - previous_time_boot_us) / 1_000_000
         if dt_s <= 0.0:
@@ -442,6 +450,7 @@ class VehicleStateEstimator:
             ),
             body_rates_frd_rps=self.angular_velocity_body_frd_rps,
             acceleration_local_ned_mps2=self.acceleration_local_ned_mps2,
+            elapsed_time_ns=self.last_imu_elapsed_time_ns,
         )
 
     def _vehicle_state_source(self) -> str:

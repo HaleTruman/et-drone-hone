@@ -7,6 +7,7 @@ import socket
 import threading
 import time
 from collections import deque
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -92,8 +93,10 @@ class VisionStreamReceiver:
         if len(jpeg_bytes) != jpeg_size:
             self.invalid_packet_count += 1
             return None
-        saved_path = self._save_frame(frame_id, sim_time_ns, jpeg_bytes)
-        frame = VisionFrame(frame_id, sim_time_ns, jpeg_bytes, saved_path=saved_path)
+        frame = self._add_elapsed_time(VisionFrame(frame_id, sim_time_ns, jpeg_bytes))
+        saved_path = self._save_frame(frame_id, sim_time_ns, jpeg_bytes, frame.elapsed_time_ns)
+        if saved_path is not None:
+            frame = replace(frame, saved_path=saved_path)
         self.queue_frame(frame)
         return frame
 
@@ -189,7 +192,7 @@ class VisionStreamReceiver:
                 return
             self.process_packet(packet)
 
-    def _save_frame(self, frame_id: int, sim_time_ns: int, jpeg_bytes: bytes) -> str | None:
+    def _save_frame(self, frame_id: int, sim_time_ns: int, jpeg_bytes: bytes, elapsed_time_ns: int | None = None) -> str | None:
         if self.output_dir is None or not self._saving_frames.is_set():
             return None
         if frame_id in self._saved_frame_paths:
@@ -202,6 +205,7 @@ class VisionStreamReceiver:
         metadata = {
             "frame_id": frame_id,
             "sim_time_ns": sim_time_ns,
+            "elapsed_time_ns": elapsed_time_ns,
             "jpeg_size": len(jpeg_bytes),
             "path": manifest_record_path,
         }
@@ -229,3 +233,9 @@ class VisionStreamReceiver:
             oldest_frame_id = next(iter(self._partial_frames))
             del self._partial_frames[oldest_frame_id]
             self.dropped_partial_frame_count += 1
+
+    def _add_elapsed_time(self, frame: VisionFrame) -> VisionFrame:
+        from core.initialization.initialization import DEFINED_START_TIME_NS
+        from core.utils import time_since_ns
+
+        return replace(frame, elapsed_time_ns=time_since_ns(DEFINED_START_TIME_NS))

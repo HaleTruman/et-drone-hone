@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+import time
 
 from autonomy.pathing import PathManager
 from core.control.attitude import AttitudeController
@@ -24,6 +25,9 @@ from sensing.telemetry import MavlinkClient
 from sensing.vision import VisionStreamReceiver
 from sensing.vision.service import VisionPerceptionConfig, VisionPerceptionService
 
+# DEFINE START TIME
+DEFINED_START_TIME_NS: float = time.perf_counter_ns()
+
 # Simulator and network endpoints.
 MAVLINK_ENDPOINT = "udpin:127.0.0.1:14550"  # selects the MAVLink UDP endpoint used to talk to the simulator or vehicle bridge.
 SIM_RUNTIME = "VQ_2"  # identifies the simulator/runtime profile passed into the MAVLink client.
@@ -40,17 +44,23 @@ HEARTBEAT_TIMEOUT_S = 120.0  # is how long startup waits for the MAVLink heartbe
 STARTUP_DATA_TIMEOUT_S = 5.0  # is how long startup waits for fresh telemetry and vision data.
 IMU_INIT_TIMEOUT_S = 1.5  # is the stationary sample window used for initial IMU bias estimation.
 GATE_MAP_INIT_TIMEOUT_S = 1.5  # is the startup window used to collect initial vision observations and build a path.
-POST_RESET_DELAY_S = 0.6  # gives the simulator time to settle after a reset command.
+POST_RESET_DELAY_S = 0.7  # gives the simulator time to settle after a reset command.
 ARM_TIMEOUT_S = 5.0  # is how long the system waits for the vehicle to arm successfully.
 
-# Vision filtering and path planning.
+# Gate mapping
+GATE_MERGE_DISTANCE_M = 4.0  # merges repeated gate observations within this local-NED distance.
+REQUIRED_MINIMUM_OBSERVATION_COUNT = 7  # requires this many merged observations before a gate is published.
+GATE_LOCKOUT_COUNT = 100  # locks a gate pose after this many merged observations.
+GATE_MAX_OBSERVATION_DISTANCE_M = 40.0  # ignores gate observations farther than this from the vehicle.
+
+# Path planning.
 PLANNING_MODE = "center_targets"  # chooses the PathManager strategy: test_path, center_targets, or gate_map.
 PLANNING_GATE_COUNT = 2  # limits how many upcoming gates are included in each path plan.
 EXCLUSION_DISTANCE = 2.0  # ignores gates that are too close to the current vehicle position.
 GATE_MAX_PLANNING_DISTANCE_M = 40.0  # ignores gates farther than this from the current vehicle position.
-GATE_PASSED_DISTANCE_M = 2.0  # treats gates closer than this as already passed for planning purposes.
-GATE_CENTER_TOLERANCE_M = 0.15  # is the allowed path distance from each selected gate center.
-SPLINE_CORNER_TIGHTNESS = 0.75  # controls how tightly generated splines follow corner anchor points.
+GATE_PASSED_DISTANCE_M = 0.75  # treats gates closer than this as already passed for planning purposes.
+GATE_CENTER_TOLERANCE_M = 0.05  # is the allowed path distance from each selected gate center.
+SPLINE_CORNER_TIGHTNESS = 0.90  # controls how tightly generated splines follow corner anchor points.
 ADAPTIVE_SPLINE_TIGHTNESS = True  # enables automatic corner tightness changes based on segment geometry.
 DISTANT_SPLINE_CORNER_TIGHTNESS = 0.10  # is the looser spline tightness used for distant or gentle turns.
 MIN_SPLINE_CORNER_TIGHTNESS = 0.55  # is the lower bound for adaptive spline tightness near turns.
@@ -59,27 +69,36 @@ GENTLE_TURN_ANGLE_DEG = 20.0  # defines the turn angle below which corners are t
 SHARP_TURN_ANGLE_DEG = 70.0  # defines the turn angle at which corners receive maximum adaptive tightness.
 SHORT_SEGMENT_REFERENCE_M = 12.0  # marks the segment length where nearby turns become more tightly constrained.
 LONG_SEGMENT_REFERENCE_M = 25.0  # marks the segment length where distance-based spline tightening fades out.
+PATH_SPACING_M = 0.25  # is the waypoint spacing used when sampling generated paths.
+PATH_TAIL_LENGTH_M = 10.0  # extends planned paths beyond the last gate along the terminal gate-to-gate tangent.
 
 # Control mode and safety envelope.
 CONTROL_METHOD = "geometric_path_follower"  # selects which path-following controller produces the attitude target.
 FAILSAFE_DISTANCE = 10  # is the maximum allowed cross-track path error before ending racing flight.
 ALLOW_FLIGHT = True  # enables sending flight commands when the system mode allows it.
 
+# Attitude controller gains
+ATTITUDE_ROLL_GAIN = 1.8  # scales roll attitude error into commanded body rate.
+ATTITUDE_PITCH_GAIN = 1.8  # scales pitch attitude error into commanded body rate.
+ATTITUDE_YAW_GAIN = 0.8  # scales yaw attitude error into commanded body rate.
+ATTITUDE_DAMPING = 0.20  # subtracts current body-rate feedback from attitude commands.
+ATTITUDE_MAX_BODY_RATE_RPS = 50.0  # caps commanded body rates from the attitude controller.
+
 # Path preview distances.
 CARROT_LOOKAHEAD_M = 1.4  # is the lookahead distance used by the simpler carrot controller.
-SPEED_LOOKAHEAD_M = 15  # is how far ahead curvature is checked for speed planning.
-GEOMETRIC_LOOKAHEAD_M = 2.0  # is the lookahead distance used for geometric follower heading preview.
+SPEED_LOOKAHEAD_M = 10  # is how far ahead curvature is checked for speed planning.
+GEOMETRIC_LOOKAHEAD_M = 1.3  # is the lookahead distance used for geometric follower heading preview.
 
 # Geometric path-following feedback.
-GEOMETRIC_CROSS_TRACK_GAIN = 8.0  # scales position correction back toward the path.
+GEOMETRIC_CROSS_TRACK_GAIN = 7.5  # scales position correction back toward the path.
 GEOMETRIC_CROSS_TRACK_DAMPING = 4.0  # scales velocity damping perpendicular to the path.
 GEOMETRIC_ACCELERATION_FILTER_ALPHA = 1.0  # smooths outer-loop acceleration commands; 1.0 disables smoothing.
 
 # Speed planner.
-GEOMETRIC_MAX_SPEED_MPS = 15  # is the maximum along-track speed requested by the geometric follower.
+GEOMETRIC_MAX_SPEED_MPS = 23  # is the maximum along-track speed requested by the geometric follower.
 GEOMETRIC_MAX_LATERAL_ACCELERATION_MPS2 = 50.0  # limits speed in curves based on available lateral acceleration.
 GEOMETRIC_CURVATURE_SPEED_DEADBAND = 3.5  # ignores small curvature when computing curve-limited speed.
-GEOMETRIC_CURVATURE_SPEED_RAMP = 0.5  # controls how quickly commanded speed drops as curvature increases.
+GEOMETRIC_CURVATURE_SPEED_RAMP = 0.3  # controls how quickly commanded speed drops as curvature increases.
 
 # Curvature feed-forward.
 GEOMETRIC_CURVATURE_FEEDFORWARD_GAIN = 3.0  # scales proactive acceleration into upcoming turns.
@@ -89,8 +108,8 @@ GEOMETRIC_CURVATURE_FEEDFORWARD_MAX_ACCELERATION_MPS2 = 25.0  # caps proactive t
 GEOMETRIC_HOVER_THRUST = 0.265  # is the normalized thrust command expected to hold hover.
 GEOMETRIC_MAX_COMMANDED_ACCELERATION_MPS2 = 50  # caps the total desired acceleration magnitude.
 GEOMETRIC_MAX_UPWARD_ACCELERATION_MPS2 = 15.0  # caps upward commanded acceleration in local-NED terms.
-GEOMETRIC_MAX_DOWNWARD_ACCELERATION_MPS2 = 10.0  # caps downward commanded acceleration in local-NED terms.
-GEOMETRIC_MAX_TILT_DEG = 60.0  # caps the tilt implied by the desired acceleration command.
+GEOMETRIC_MAX_DOWNWARD_ACCELERATION_MPS2 = 8.0  # caps downward commanded acceleration in local-NED terms.
+GEOMETRIC_MAX_TILT_DEG = 60  # caps the tilt implied by the desired acceleration command.
 
 # Output and recording.
 CREATE_VIDEO = False  # enables post-run MP4 generation from logged visual outputs.
@@ -118,17 +137,11 @@ KALMAN_MIN_MEASUREMENT_CONFIDENCE = 0.05  # prevents low-confidence VIO updates 
 VISION_PERCEPTION_BACKEND = "deterministic_v3"  # selects the gate perception implementation used for vision frames.
 VISION_EXECUTOR_MAX_WORKERS = 1  # controls the number of background workers for vision processing.
 VISION_EXECUTOR_THREAD_PREFIX = "vision"  # names background vision worker threads for debugging.
-PATH_SPACING_M = 0.25  # is the waypoint spacing used when sampling generated paths.
 PATH_MAX_POINTS = 1000  # caps the number of sampled waypoints kept in a generated path.
 TEST_PATH_LENGTH_M = 100.0  # is the length of the startup straight-line test path.
 TEST_PATH_POINT_COUNT = 200  # is the number of samples used for the startup straight-line test path.
 TEST_PATH_UP_DOWN_ANGLE_DEG = 2.5  # tilts the startup straight-line test path vertically.
 TEST_PATH_LEFT_RIGHT_ANGLE_DEG = 0.0  # tilts the startup straight-line test path horizontally.
-ATTITUDE_ROLL_GAIN = 1.5  # scales roll attitude error into commanded body rate.
-ATTITUDE_PITCH_GAIN = 1.5  # scales pitch attitude error into commanded body rate.
-ATTITUDE_YAW_GAIN = 0.6  # scales yaw attitude error into commanded body rate.
-ATTITUDE_DAMPING = 0.15  # subtracts current body-rate feedback from attitude commands.
-ATTITUDE_MAX_BODY_RATE_RPS = 10.0  # caps commanded body rates from the attitude controller.
 CARROT_MAX_SPEED_MPS = 10  # is the maximum speed used by the simpler carrot controller.
 CARROT_POSITION_GAIN = 5.5  # scales position error in the simpler carrot controller.
 CARROT_VELOCITY_GAIN = 0.75  # scales velocity damping in the simpler carrot controller.
@@ -139,6 +152,29 @@ HOVER_VERTICAL_ACCELERATION_GAIN = 0.035  # scales vertical acceleration feedbac
 
 # Logging.
 RUNS_ROOT = Path(__file__).resolve().parents[3] / "logs" / "runs"  # is the root directory where timestamped run logs are created.
+
+
+def _initialization_constants() -> dict[str, object]:
+    return {
+        name: _constant_log_value(value)
+        for name, value in globals().items()
+        if name.isupper()
+    }
+
+
+def _constant_log_value(value: object) -> object:
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, tuple):
+        return [_constant_log_value(item) for item in value]
+    if isinstance(value, list):
+        return [_constant_log_value(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            str(key): _constant_log_value(item)
+            for key, item in value.items()
+        }
+    return value
 
 
 @dataclass(frozen=True)
@@ -215,8 +251,10 @@ def initialize() -> tuple[
             "outer_loop_hz": OUTER_LOOP_HZ,
             "control_method": CONTROL_METHOD,
             "planning_mode": PLANNING_MODE,
+            "initialization_constants": _initialization_constants(),
         }
     )
+    logger.log_event("initialization_constants", constants=_initialization_constants())
 
     vehicle_state_estimator = VehicleStateEstimator(
         vio_config=VioCorrectionConfig(
@@ -256,7 +294,13 @@ def initialize() -> tuple[
     )
     obs_recorder = OBSRecorder(run_dir)
     system_mode_manager = SystemModeManager()
-    gate_map = GateMap()
+    gate_map = GateMap(
+        merge_distance_m=GATE_MERGE_DISTANCE_M,
+        required_minimum_observation_count=REQUIRED_MINIMUM_OBSERVATION_COUNT,
+        lock_observation_count=GATE_LOCKOUT_COUNT,
+        gate_passed_distance_m=GATE_PASSED_DISTANCE_M,
+        max_observation_distance_m=GATE_MAX_OBSERVATION_DISTANCE_M,
+    )
 
     path_manager = PathManager(
         max_gates=PLANNING_GATE_COUNT,
@@ -275,6 +319,7 @@ def initialize() -> tuple[
         long_segment_reference_m=LONG_SEGMENT_REFERENCE_M,
         planning_mode=PLANNING_MODE,
         spacing_m=PATH_SPACING_M,
+        path_tail_length_m=PATH_TAIL_LENGTH_M,
         max_points=PATH_MAX_POINTS,
     )
 
