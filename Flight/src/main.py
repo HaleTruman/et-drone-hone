@@ -48,6 +48,7 @@ def main() -> int:
     outer_cycle = 0
 
     started_s = time.perf_counter()
+    takeoff_started_s: float | None = None
     next_inner_cycle_s = started_s
     next_outer_cycle_s = started_s
 
@@ -249,6 +250,7 @@ def main() -> int:
 
         ## MAIN LOOP
         control_started_s = time.perf_counter()
+        takeoff_started_s = control_started_s
         next_inner_cycle_s = control_started_s
         next_outer_cycle_s = control_started_s
 
@@ -267,6 +269,8 @@ def main() -> int:
 
         logger.log_event(
             "flight_began",
+            time_since_startup_s=time_since(started_s),
+            time_since_takeoff_s=time_since(takeoff_started_s),
             flight_began_s=control_started_s,
             system_mode=system_mode_manager.system_mode.value,
         )
@@ -453,7 +457,7 @@ def main() -> int:
                 # compute attitude target for path-following controller
                 if settings.allow_flight and system_mode_manager.is_racing():
                     if settings.control_method == "geometric_path_follower":
-                        geometric_target = geometric_path_follower.compute_control(vehicle_state)
+                        geometric_target = None
                     else:
                         carrot = path_manager.carrot_point(
                             vehicle_state.position_local_ned_m,
@@ -485,8 +489,7 @@ def main() -> int:
 
                 if settings.allow_flight and system_mode_manager.is_racing():
                     if settings.control_method == "geometric_path_follower":
-                        if geometric_target is None:
-                            geometric_target = geometric_path_follower.compute_control(vehicle_state)
+                        geometric_target = geometric_path_follower.compute_control(vehicle_state)
                         path_following_target = geometric_target
                     else:
                         if carrot_target is None:
@@ -578,6 +581,7 @@ def main() -> int:
                 inner_cycle=inner_cycle,
                 outer_cycle=outer_cycle,
                 time_since_startup_s = time_since(started_s),
+                time_since_takeoff_s=time_since(takeoff_started_s),
                 sim_time_ns=state_record.sim_time_ns if state_record else None,
                 wall_elapsed_ms=(inner_loop_started_s - started_s) * 1000.0,
                 loop_elapsed_ms=loop_elapsed_ms,
@@ -620,16 +624,32 @@ def main() -> int:
 # =================================================================== END MAIN LOOP ===================================================================
 
         system_mode_manager.update_mode("finish")
-        logger.log_event("flight_finished", system_mode=system_mode_manager.system_mode.value)
+        logger.log_event(
+            "flight_finished",
+            time_since_startup_s=time_since(started_s),
+            time_since_takeoff_s=time_since(takeoff_started_s),
+            system_mode=system_mode_manager.system_mode.value,
+        )
 
     except KeyboardInterrupt:
         system_mode_manager.handle_fault("keyboard_interrupt")
-        logger.log_event("interrupted", system_mode=system_mode_manager.system_mode.value)
+        logger.log_event(
+            "interrupted",
+            time_since_startup_s=time_since(started_s),
+            time_since_takeoff_s=time_since(takeoff_started_s),
+            system_mode=system_mode_manager.system_mode.value,
+        )
 
     except Exception as error:
         if system_mode_manager.system_mode.value != "FAULT":
             system_mode_manager.handle_fault(str(error))
-        logger.log_exception("flight_exception", error, system_mode=system_mode_manager.system_mode.value)
+        logger.log_exception(
+            "flight_exception",
+            error,
+            time_since_startup_s=time_since(started_s),
+            time_since_takeoff_s=time_since(takeoff_started_s),
+            system_mode=system_mode_manager.system_mode.value,
+        )
         print("Error occured: ", error)
         traceback.format_exc()
 
@@ -656,6 +676,8 @@ def main() -> int:
         mavlink_client.shutdown()
         logger.log_event(
             "shutdown",
+            time_since_startup_s=time_since(started_s),
+            time_since_takeoff_s=time_since(takeoff_started_s),
             system_mode=system_mode_manager.system_mode.value,
             bridge=mavlink_client.snapshot(),
             vision=vision_rx.snapshot(),
