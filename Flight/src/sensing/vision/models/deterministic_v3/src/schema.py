@@ -37,13 +37,9 @@ class CornerGeometry:
 
 
 @dataclass(frozen=True, slots=True)
-class CircleGeometry:
-    """A rendered circle and the role-bearing corners on its circumference."""
-    role: str
-    center_px: tuple[int, int]
-    radius_px: int
-    tangent_corner_roles: tuple[str, ...]
-    tangent_points_px: tuple[tuple[int, int], ...]
+class ParentContourCorner:
+    point_px: tuple[int, int]
+    angle_degrees: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,9 +47,7 @@ class VoidDetectionFeatures:
     """Complete geometry rendered by the production detector for one ellipse."""
     outer_corners: tuple[CornerGeometry, ...]
     inner_corners: tuple[CornerGeometry, ...]
-    outer_corner_circles: tuple[CircleGeometry, ...]
-    inner_corner_circles: tuple[CircleGeometry, ...]
-    connection_circles: tuple[CircleGeometry, ...]
+    parent_obtuse_corners: tuple[ParentContourCorner, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,9 +58,7 @@ class VoidDetectionGeometry:
     color_bgr: tuple[int, int, int]
     outer_corners: tuple[CornerGeometry, ...]
     inner_corners: tuple[CornerGeometry, ...]
-    outer_corner_circles: tuple[CircleGeometry, ...]
-    inner_corner_circles: tuple[CircleGeometry, ...]
-    connection_circles: tuple[CircleGeometry, ...]
+    parent_obtuse_corners: tuple[ParentContourCorner, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,7 +154,6 @@ class GeometryLinkEvidence:
     outer_shape_rmse_normalized: float
     inner_corner_rmse_px: float | None
     inner_shape_rmse_normalized: float | None
-    circle_radius_relative_delta: float | None
     occlusion_proxy: bool
     position_evidence: str
     orientation_evidence: str
