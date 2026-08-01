@@ -16,10 +16,13 @@ class AttitudeController:
         pitch_gain: float = 1.8,
         yaw_gain: float = 0.9,
         damping: float = 0.15,       # new: rate damping gain (tune this!)
+        rate_filter_alpha: float = 0.35,
         max_body_rate_rps: float | Iterable[float] | None = None,
     ) -> None:
         self.gains = np.array((float(roll_gain), float(pitch_gain), float(yaw_gain)), dtype=float)
         self.damping = float(damping)                     # scalar for simplicity (can be per-axis)
+        self.rate_filter_alpha = float(np.clip(float(rate_filter_alpha), 0.0, 1.0))
+        self._filtered_rates_frd_rps: np.ndarray | None = None
         self.max_body_rate_rps = self._rate_limits(max_body_rate_rps)
         self.last_payload: dict[str, Any] | None = None
 
@@ -48,9 +51,10 @@ class AttitudeController:
 
         # Current body rates (assume available in VehicleState)
         current_rates = np.asarray(vehicle_state.body_rates_frd_rps, dtype=float)
+        filtered_rates = self._filtered_body_rates(current_rates)
 
         # PD control: Proportional + Damping
-        body_rates = self.gains * attitude_error - self.damping * current_rates
+        body_rates = self.gains * attitude_error - self.damping * filtered_rates
 
         # Rate limiting
         if self.max_body_rate_rps is not None:
@@ -65,9 +69,20 @@ class AttitudeController:
 
         payload["body_angle_error"] = tuple(attitude_error.tolist())
         payload["error_quaternion"] = tuple(q_err.tolist())
+        payload["filtered_body_rates_frd_rps"] = tuple(filtered_rates.tolist())
 
         self.last_payload = payload
         return payload
+
+    def _filtered_body_rates(self, current_rates: np.ndarray) -> np.ndarray:
+        alpha = self.rate_filter_alpha
+        if self._filtered_rates_frd_rps is None or alpha >= 1.0:
+            self._filtered_rates_frd_rps = current_rates.astype(float)
+        elif alpha > 0.0:
+            self._filtered_rates_frd_rps = (
+                (1.0 - alpha) * self._filtered_rates_frd_rps + alpha * current_rates
+            )
+        return self._filtered_rates_frd_rps.copy()
 
     @staticmethod
     def _rate_limits(max_body_rate_rps: float | Iterable[float] | None) -> np.ndarray | None:

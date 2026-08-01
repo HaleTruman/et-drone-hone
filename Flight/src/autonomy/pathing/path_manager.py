@@ -632,28 +632,58 @@ class PathManager:
 
         samples = [anchors[0]]
         turn_tightness = self._anchor_turn_tightness(anchors)
+        tangents = self._anchor_tangents(anchors, turn_tightness)
         for index in range(len(anchors) - 1):
-            p0 = anchors[max(index - 1, 0)]
             p1 = anchors[index]
             p2 = anchors[index + 1]
-            p3 = anchors[min(index + 2, len(anchors) - 1)]
-            segment_tightness = self._segment_spline_tightness(turn_tightness, index)
+            m1 = tangents[index]
+            m2 = tangents[index + 1]
             distance = float(np.linalg.norm(p2 - p1))
             steps = max(1, int(np.ceil(distance / self.spacing_m)))
             for step in range(1, steps + 1):
                 t = step / steps
-                point = 0.5 * (
-                    (2.0 * p1)
-                    + (-p0 + p2) * t
-                    + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t * t
-                    + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t * t * t
+                t2 = t * t
+                t3 = t2 * t
+                point = (
+                    (2.0 * t3 - 3.0 * t2 + 1.0) * p1
+                    + (t3 - 2.0 * t2 + t) * m1
+                    + (-2.0 * t3 + 3.0 * t2) * p2
+                    + (t3 - t2) * m2
                 )
-                line_point = p1 + (p2 - p1) * t
-                point = (1.0 - segment_tightness) * point + segment_tightness * line_point
                 samples.append(point)
                 if len(samples) >= self.max_points:
                     return np.asarray(samples, dtype=float).tolist()
         return np.asarray(samples, dtype=float).tolist()
+
+    def _anchor_tangents(self, anchors: np.ndarray, anchor_tightness: np.ndarray) -> np.ndarray:
+        tangents = np.zeros_like(anchors, dtype=float)
+        for index in range(len(anchors)):
+            if index == 0:
+                raw_tangent = anchors[1] - anchors[0]
+            elif index == len(anchors) - 1:
+                raw_tangent = anchors[-1] - anchors[-2]
+            else:
+                before = anchors[index] - anchors[index - 1]
+                after = anchors[index + 1] - anchors[index]
+                before_length = float(np.linalg.norm(before))
+                after_length = float(np.linalg.norm(after))
+                if before_length <= 1e-12 or after_length <= 1e-12:
+                    continue
+                raw_tangent = before / before_length + after / after_length
+                raw_norm = float(np.linalg.norm(raw_tangent))
+                if raw_norm <= 1e-12:
+                    continue
+                local_distance = min(before_length, after_length)
+                raw_tangent = raw_tangent / raw_norm * local_distance
+
+            tangent_norm = float(np.linalg.norm(raw_tangent))
+            if tangent_norm <= 1e-12:
+                continue
+
+            tightness = float(np.clip(anchor_tightness[index], 0.0, 1.0))
+            tangent_scale = 0.75 - 0.55 * tightness
+            tangents[index] = raw_tangent * tangent_scale
+        return tangents
 
     def _planned_path_spline_metadata(self) -> dict[str, Any]:
         return {

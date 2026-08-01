@@ -55,19 +55,19 @@ GATE_MAX_OBSERVATION_DISTANCE_M = 40.0  # ignores gate observations farther than
 
 # Path planning.
 PLANNING_MODE = "center_targets"  # chooses the PathManager strategy: test_path, center_targets, or gate_map.
-PLANNING_GATE_COUNT = 2  # limits how many upcoming gates are included in each path plan.
+PLANNING_GATE_COUNT = 5  # limits how many upcoming gates are included in each path plan.
 EXCLUSION_DISTANCE = 2.0  # ignores gates that are too close to the current vehicle position.
 GATE_MAX_PLANNING_DISTANCE_M = 40.0  # ignores gates farther than this from the current vehicle position.
-GATE_PASSED_DISTANCE_M = 0.75  # treats gates closer than this as already passed for planning purposes.
+GATE_PASSED_DISTANCE_M = 1.5  # treats gates closer than this as already passed for planning purposes.
 GATE_CENTER_TOLERANCE_M = 0.05  # is the allowed path distance from each selected gate center.
-SPLINE_CORNER_TIGHTNESS = 0.90  # controls how tightly generated splines follow corner anchor points.
+SPLINE_CORNER_TIGHTNESS = 0.25  # controls how tightly generated splines follow corner anchor points.
 ADAPTIVE_SPLINE_TIGHTNESS = True  # enables automatic corner tightness changes based on segment geometry.
 DISTANT_SPLINE_CORNER_TIGHTNESS = 0.10  # is the looser spline tightness used for distant or gentle turns.
-MIN_SPLINE_CORNER_TIGHTNESS = 0.55  # is the lower bound for adaptive spline tightness near turns.
+MIN_SPLINE_CORNER_TIGHTNESS = 0.20  # is the lower bound for adaptive spline tightness near turns.
 MAX_SPLINE_CORNER_TIGHTNESS = 0.95  # is the upper bound for adaptive spline tightness near sharp turns.
 GENTLE_TURN_ANGLE_DEG = 20.0  # defines the turn angle below which corners are treated as gentle.
-SHARP_TURN_ANGLE_DEG = 70.0  # defines the turn angle at which corners receive maximum adaptive tightness.
-SHORT_SEGMENT_REFERENCE_M = 12.0  # marks the segment length where nearby turns become more tightly constrained.
+SHARP_TURN_ANGLE_DEG = 60.0  # defines the turn angle at which corners receive maximum adaptive tightness.
+SHORT_SEGMENT_REFERENCE_M = 5.0  # marks the segment length where nearby turns become more tightly constrained.
 LONG_SEGMENT_REFERENCE_M = 25.0  # marks the segment length where distance-based spline tightening fades out.
 PATH_SPACING_M = 0.25  # is the waypoint spacing used when sampling generated paths.
 PATH_TAIL_LENGTH_M = 10.0  # extends planned paths beyond the last gate along the terminal gate-to-gate tangent.
@@ -82,23 +82,24 @@ ATTITUDE_ROLL_GAIN = 1.8  # scales roll attitude error into commanded body rate.
 ATTITUDE_PITCH_GAIN = 1.8  # scales pitch attitude error into commanded body rate.
 ATTITUDE_YAW_GAIN = 0.8  # scales yaw attitude error into commanded body rate.
 ATTITUDE_DAMPING = 0.20  # subtracts current body-rate feedback from attitude commands.
+ATTITUDE_RATE_FILTER_ALPHA = 0.40  # smooths measured body rates before attitude damping; higher follows gyro faster.
 ATTITUDE_MAX_BODY_RATE_RPS = 50.0  # caps commanded body rates from the attitude controller.
 
 # Path preview distances.
 CARROT_LOOKAHEAD_M = 1.4  # is the lookahead distance used by the simpler carrot controller.
 SPEED_LOOKAHEAD_M = 10  # is how far ahead curvature is checked for speed planning.
-GEOMETRIC_LOOKAHEAD_M = 1.3  # is the lookahead distance used for geometric follower heading preview.
+GEOMETRIC_LOOKAHEAD_M = 1.4 # is the lookahead distance used for geometric follower heading preview.
 
 # Geometric path-following feedback.
 GEOMETRIC_CROSS_TRACK_GAIN = 7.5  # scales position correction back toward the path.
-GEOMETRIC_CROSS_TRACK_DAMPING = 4.0  # scales velocity damping perpendicular to the path.
-GEOMETRIC_ACCELERATION_FILTER_ALPHA = 1.0  # smooths outer-loop acceleration commands; 1.0 disables smoothing.
+GEOMETRIC_CROSS_TRACK_DAMPING = 4.4  # scales velocity damping perpendicular to the path.
+GEOMETRIC_ACCELERATION_FILTER_ALPHA = 0.9  # smooths outer-loop acceleration commands; 1.0 disables smoothing.
 
 # Speed planner.
-GEOMETRIC_MAX_SPEED_MPS = 23  # is the maximum along-track speed requested by the geometric follower.
+GEOMETRIC_MAX_SPEED_MPS = 25  # is the maximum along-track speed requested by the geometric follower.
 GEOMETRIC_MAX_LATERAL_ACCELERATION_MPS2 = 50.0  # limits speed in curves based on available lateral acceleration.
-GEOMETRIC_CURVATURE_SPEED_DEADBAND = 3.5  # ignores small curvature when computing curve-limited speed.
-GEOMETRIC_CURVATURE_SPEED_RAMP = 0.3  # controls how quickly commanded speed drops as curvature increases.
+GEOMETRIC_CURVATURE_SPEED_DEADBAND = 3.5  # ignores small curvature when computing curve-limited speed. Will go maximum speed if curvature is below this value
+GEOMETRIC_CURVATURE_SPEED_RAMP = 0.3  # controls how quickly commanded speed drops as curvature increases. Larger means speed decreases slower
 
 # Curvature feed-forward.
 GEOMETRIC_CURVATURE_FEEDFORWARD_GAIN = 3.0  # scales proactive acceleration into upcoming turns.
@@ -108,7 +109,7 @@ GEOMETRIC_CURVATURE_FEEDFORWARD_MAX_ACCELERATION_MPS2 = 25.0  # caps proactive t
 GEOMETRIC_HOVER_THRUST = 0.265  # is the normalized thrust command expected to hold hover.
 GEOMETRIC_MAX_COMMANDED_ACCELERATION_MPS2 = 50  # caps the total desired acceleration magnitude.
 GEOMETRIC_MAX_UPWARD_ACCELERATION_MPS2 = 15.0  # caps upward commanded acceleration in local-NED terms.
-GEOMETRIC_MAX_DOWNWARD_ACCELERATION_MPS2 = 8.0  # caps downward commanded acceleration in local-NED terms.
+GEOMETRIC_MAX_DOWNWARD_ACCELERATION_MPS2 = 9.0  # caps downward commanded acceleration in local-NED terms.
 GEOMETRIC_MAX_TILT_DEG = 60  # caps the tilt implied by the desired acceleration command.
 
 # Output and recording.
@@ -335,6 +336,7 @@ def initialize() -> tuple[
         pitch_gain=ATTITUDE_PITCH_GAIN,
         yaw_gain=ATTITUDE_YAW_GAIN,
         damping=ATTITUDE_DAMPING,
+        rate_filter_alpha=ATTITUDE_RATE_FILTER_ALPHA,
         max_body_rate_rps=ATTITUDE_MAX_BODY_RATE_RPS,
     )
 
