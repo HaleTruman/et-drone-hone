@@ -49,9 +49,9 @@ ARM_TIMEOUT_S = 5.0  # is how long the system waits for the vehicle to arm succe
 
 # Gate mapping
 GATE_MERGE_DISTANCE_M = 4.0  # merges repeated gate observations within this local-NED distance.
-REQUIRED_MINIMUM_OBSERVATION_COUNT = 6  # requires this many merged observations before a gate is published.
+REQUIRED_MINIMUM_OBSERVATION_COUNT = 7  # requires this many merged observations before a gate is published.
 GATE_LOCKOUT_COUNT = 100  # locks a gate pose after this many merged observations.
-GATE_MAX_OBSERVATION_DISTANCE_M = 30.0  # ignores gate observations farther than this from the vehicle.
+GATE_MAX_OBSERVATION_DISTANCE_M = 40.0  # ignores gate observations farther than this from the vehicle.
 
 # Path planning.
 PLANNING_MODE = "center_targets"  # chooses the PathManager strategy: test_path, center_targets, or gate_map.
@@ -60,7 +60,7 @@ EXCLUSION_DISTANCE = 2.0  # ignores gates that are too close to the current vehi
 GATE_MAX_PLANNING_DISTANCE_M = 40.0  # ignores gates farther than this from the current vehicle position.
 GATE_PASSED_DISTANCE_M = 0.75  # treats gates closer than this as already passed for planning purposes.
 GATE_CENTER_TOLERANCE_M = 0.05  # is the allowed path distance from each selected gate center.
-SPLINE_CORNER_TIGHTNESS = 0.85  # controls how tightly generated splines follow corner anchor points.
+SPLINE_CORNER_TIGHTNESS = 0.90  # controls how tightly generated splines follow corner anchor points.
 ADAPTIVE_SPLINE_TIGHTNESS = True  # enables automatic corner tightness changes based on segment geometry.
 DISTANT_SPLINE_CORNER_TIGHTNESS = 0.10  # is the looser spline tightness used for distant or gentle turns.
 MIN_SPLINE_CORNER_TIGHTNESS = 0.55  # is the lower bound for adaptive spline tightness near turns.
@@ -87,15 +87,15 @@ ATTITUDE_MAX_BODY_RATE_RPS = 50.0  # caps commanded body rates from the attitude
 # Path preview distances.
 CARROT_LOOKAHEAD_M = 1.4  # is the lookahead distance used by the simpler carrot controller.
 SPEED_LOOKAHEAD_M = 10  # is how far ahead curvature is checked for speed planning.
-GEOMETRIC_LOOKAHEAD_M = 1.4  # is the lookahead distance used for geometric follower heading preview.
+GEOMETRIC_LOOKAHEAD_M = 1.3  # is the lookahead distance used for geometric follower heading preview.
 
 # Geometric path-following feedback.
-GEOMETRIC_CROSS_TRACK_GAIN = 10.5  # scales position correction back toward the path.
+GEOMETRIC_CROSS_TRACK_GAIN = 7.5  # scales position correction back toward the path.
 GEOMETRIC_CROSS_TRACK_DAMPING = 4.0  # scales velocity damping perpendicular to the path.
 GEOMETRIC_ACCELERATION_FILTER_ALPHA = 1.0  # smooths outer-loop acceleration commands; 1.0 disables smoothing.
 
 # Speed planner.
-GEOMETRIC_MAX_SPEED_MPS = 20  # is the maximum along-track speed requested by the geometric follower.
+GEOMETRIC_MAX_SPEED_MPS = 23  # is the maximum along-track speed requested by the geometric follower.
 GEOMETRIC_MAX_LATERAL_ACCELERATION_MPS2 = 50.0  # limits speed in curves based on available lateral acceleration.
 GEOMETRIC_CURVATURE_SPEED_DEADBAND = 3.5  # ignores small curvature when computing curve-limited speed.
 GEOMETRIC_CURVATURE_SPEED_RAMP = 0.3  # controls how quickly commanded speed drops as curvature increases.
