@@ -1183,11 +1183,16 @@ function addGateMap(gates, dronePosition, points) {
     if (!position) return;
     points.push(position);
     const quaternion = quat4(gate.quaternion);
-    const rotation = quaternion ? rotationMatrixFromQuaternion(quaternion) : null;
-    const normal = rotation ? normalizeVec3(column3(rotation, 0)) : [1, 0, 0];
-    const horizontal = rotation ? normalizeVec3(column3(rotation, 1)) : null;
-    const vertical = rotation ? normalizeVec3(scaleVec3(column3(rotation, 2), -1)) : null;
-    addGateFrame(position, normal, '#ffffff', gate.id || `map-${index + 1}`, gate.outer_width_m || 2.7, gate.inner_width_m || 1.5, horizontal, vertical);
+    const label = gate.id || `map-${index + 1}`;
+    if (!quaternion) {
+      addGateCenter(position, '#ffffff', label);
+      return;
+    }
+    const rotation = rotationMatrixFromQuaternion(quaternion);
+    const normal = normalizeVec3(column3(rotation, 0));
+    const horizontal = normalizeVec3(column3(rotation, 1));
+    const vertical = normalizeVec3(scaleVec3(column3(rotation, 2), -1));
+    addGateFrame(position, normal, '#ffffff', label, gate.outer_width_m || 2.7, gate.inner_width_m || 1.5, horizontal, vertical);
   });
 }
 
