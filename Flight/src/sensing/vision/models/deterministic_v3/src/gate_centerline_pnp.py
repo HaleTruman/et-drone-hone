@@ -8,8 +8,9 @@ import numpy as np
 from .schema import (
     QUADRILATERAL_CORNER_ORDER,
     CameraCalibration,
-    CameraPoseEstimate,
     PlanarGateModel,
+    PnPCandidateEstimate,
+    PnPRelativePoseEstimate,
     QuadrilateralEstimate,
 )
 
@@ -44,13 +45,10 @@ def _rejected(
     quad: QuadrilateralEstimate,
     reason: str,
     *,
-    candidate_count: int = 0,
-    rmse: float | None = None,
-    secondary_rmse: float | None = None,
-) -> CameraPoseEstimate:
-    gap = (None if rmse is None or secondary_rmse is None
-           else secondary_rmse - rmse)
-    return CameraPoseEstimate(
+    candidates: tuple[PnPCandidateEstimate, ...] = (),
+) -> PnPRelativePoseEstimate:
+    position_confidence, orientation_confidence, gap = _confidence(candidates)
+    return PnPRelativePoseEstimate(
         frame_id=quad.frame_id,
         sim_time_ns=quad.sim_time_ns,
         component_id=quad.component_id,
@@ -58,21 +56,42 @@ def _rejected(
         solver=SOLVER_NAME,
         camera_calibration_id=CAMERA_CALIBRATION.calibration_id,
         gate_model_id=GATE_MODEL.model_id,
-        rotation_vector_model_to_camera=None,
-        position_camera_m=None,
-        candidate_count=candidate_count,
-        reprojection_rmse_px=rmse,
-        secondary_reprojection_rmse_px=secondary_rmse,
+        candidates=candidates,
+        selected_candidate_rank=0 if candidates else None,
+        candidate_count=len(candidates),
         ambiguity_gap_px=gap,
-        position_confidence=0.0,
-        orientation_confidence=0.0,
+        position_confidence=position_confidence,
+        orientation_confidence=orientation_confidence,
         accepted=False,
         rejection_reason=reason,
+        gate_index=quad.gate_index,
     )
 
 
-def solve_gate_pose(quad: QuadrilateralEstimate) -> CameraPoseEstimate:
-    """Solve a 2.10 m square; rotation maps gate-model into camera optical."""
+def _confidence(
+    candidates: tuple[PnPCandidateEstimate, ...],
+) -> tuple[float, float, float | None]:
+    if not candidates:
+        return 0.0, 0.0, None
+    rmse = candidates[0].reprojection_rmse_px
+    secondary = (
+        candidates[1].reprojection_rmse_px if len(candidates) > 1 else None
+    )
+    gap = None if secondary is None else secondary - rmse
+    fit_confidence = 1.0 / (1.0 + (rmse / 3.0) ** 2)
+    ambiguity_confidence = (
+        1.0 if gap is None else gap / (gap + 1.0)
+    )
+    return (
+        float(np.clip(fit_confidence, 0.0, 1.0)),
+        float(np.clip(
+            fit_confidence * ambiguity_confidence, 0.0, 1.0)),
+        gap,
+    )
+
+
+def solve_gate_pose(quad: QuadrilateralEstimate) -> PnPRelativePoseEstimate:
+    """Return every valid 2.10 m square IPPE hypothesis in RMSE order."""
     if not quad.accepted or quad.corners_uv is None:
         return _rejected(quad, "quadrilateral_not_accepted")
     if quad.image_shape != CAMERA_CALIBRATION.image_shape:
@@ -89,32 +108,46 @@ def solve_gate_pose(quad: QuadrilateralEstimate) -> CameraPoseEstimate:
             flags=cv2.SOLVEPNP_IPPE_SQUARE)
     except cv2.error:
         return _rejected(quad, "pnp_solver_failed")
-    candidates = []
+    candidate_values = []
     for rvec, tvec in zip(solved[1], solved[2]) if solved[0] else ():
         rotation = rvec.reshape(3)
         position = tvec.reshape(3)
         if (not np.all(np.isfinite(rotation)) or
                 not np.all(np.isfinite(position)) or position[2] <= 0):
             continue
-        projected, _ = cv2.projectPoints(
-            OBJECT_POINTS_M, rvec, tvec, K, DISTORTION)
+        rotation_matrix, _ = cv2.Rodrigues(rvec)
+        camera_points = (
+            OBJECT_POINTS_M @ rotation_matrix.T + position.reshape(1, 3)
+        )
+        if np.any(camera_points[:, 2] <= 0):
+            continue
+        try:
+            projected, _ = cv2.projectPoints(
+                OBJECT_POINTS_M, rvec, tvec, K, DISTORTION)
+        except cv2.error:
+            continue
         rmse = float(np.sqrt(np.mean(np.sum(
             (projected.reshape(4, 2) - image_points) ** 2, axis=1))))
-        candidates.append((rmse, rotation, position))
-    candidates.sort(key=lambda item: item[0])
+        if np.isfinite(rmse):
+            candidate_values.append((rmse, rotation, position))
+    candidate_values.sort(key=lambda item: item[0])
+    candidates = tuple(
+        PnPCandidateEstimate(
+            candidate_rank=rank,
+            rotation_vector_model_to_camera=tuple(map(float, rotation)),
+            position_camera_m=tuple(map(float, position)),
+            reprojection_rmse_px=rmse,
+        )
+        for rank, (rmse, rotation, position) in enumerate(candidate_values)
+    )
     if not candidates:
         return _rejected(quad, "pnp_no_positive_depth_solution")
 
-    rmse, rotation, position = candidates[0]
-    secondary = candidates[1][0] if len(candidates) > 1 else None
+    rmse = candidates[0].reprojection_rmse_px
     if rmse > MAX_REPROJECTION_RMSE_PX:
-        return _rejected(
-            quad, "pnp_reprojection_error", candidate_count=len(candidates),
-            rmse=rmse, secondary_rmse=secondary)
-    fit_confidence = 1.0 / (1.0 + (rmse / 3.0) ** 2)
-    ambiguity_confidence = (1.0 if secondary is None else
-                            (secondary - rmse) / (secondary - rmse + 1.0))
-    return CameraPoseEstimate(
+        return _rejected(quad, "pnp_reprojection_error", candidates=candidates)
+    position_confidence, orientation_confidence, gap = _confidence(candidates)
+    return PnPRelativePoseEstimate(
         frame_id=quad.frame_id,
         sim_time_ns=quad.sim_time_ns,
         component_id=quad.component_id,
@@ -122,15 +155,13 @@ def solve_gate_pose(quad: QuadrilateralEstimate) -> CameraPoseEstimate:
         solver=SOLVER_NAME,
         camera_calibration_id=CAMERA_CALIBRATION.calibration_id,
         gate_model_id=GATE_MODEL.model_id,
-        rotation_vector_model_to_camera=tuple(map(float, rotation)),
-        position_camera_m=tuple(map(float, position)),
+        candidates=candidates,
+        selected_candidate_rank=0,
         candidate_count=len(candidates),
-        reprojection_rmse_px=rmse,
-        secondary_reprojection_rmse_px=secondary,
-        ambiguity_gap_px=(None if secondary is None else secondary - rmse),
-        position_confidence=float(np.clip(fit_confidence, 0.0, 1.0)),
-        orientation_confidence=float(np.clip(
-            fit_confidence * ambiguity_confidence, 0.0, 1.0)),
+        ambiguity_gap_px=gap,
+        position_confidence=position_confidence,
+        orientation_confidence=orientation_confidence,
         accepted=True,
         rejection_reason=None,
+        gate_index=quad.gate_index,
     )

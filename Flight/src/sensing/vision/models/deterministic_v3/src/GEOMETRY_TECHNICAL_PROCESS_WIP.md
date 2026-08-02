@@ -479,13 +479,20 @@ Rodrigues rotation maps gate-model coordinates into camera-optical coordinates.
 Position confidence reflects reprojection fit, while orientation confidence
 also incorporates the error separation between the two planar pose candidates.
 
-`StandardGatePipeline` is the first executable production slice through this
-frontier. It preserves `(frame_id, sim_time_ns, component_id)` in every topology,
-quadrilateral, and pose result and exposes the exact calibration, gate model,
-selected density profile, fitted points, solver evidence, and rejection reason
-through `GeometryFrameResult`. C-shape and multi-gate decisions remain labelled
-but are explicitly outside its `processed_routes` until their fitters implement
-the same quadrilateral contract.
+`StandardGatePipeline` retains its compatibility name while implementing both
+standard and C-shape routes through this frontier. It preserves
+`(frame_id, sim_time_ns, component_id)` in every topology, quadrilateral, and
+pose result and exposes the exact calibration, gate model, selected density
+profile, fitted points, solver evidence, and rejection reason through
+`GeometryFrameResult`. `GateGeometryPipeline` is its route-neutral alias.
+Multi-gate decisions remain outside `processed_routes` until that fitter
+implements the same quadrilateral contract.
+
+The C-shape route emits its detailed `CShapeResult`, normalizes
+`completed_quadrilateral_uv` through the same corner ordering, convexity, area,
+and image-bound checks as a standard gate, and publishes a routed
+`QuadrilateralEstimate`. The shared `gate_centerline_pnp.solve_gate_pose()` then
+publishes its `CameraPoseEstimate`; no C-shape-specific PnP solver is used.
 
 The first run across all three historic sources processed `1,715` frames and
 `1,429` standard decisions. It produced `1,427` accepted quadrilaterals and
@@ -502,6 +509,19 @@ The C-shape procedure consumes a stable zero-aperture component that topology
 has already classified using independent C-shape evidence.
 
 ### 6.1 Density and visible-side discovery
+
+`configurations.py` preserves the approved fitter's existing maximum-dimension
+radius bands by selecting equivalent named density-bank profiles:
+
+| Maximum component dimension | Density profile | Density / ridge radius |
+|---:|---|---:|
+| `35 px` | `scale_01` | `2 / 2 px` |
+| `59 px` | `scale_03` | `4 / 3 px` |
+| `89 px` | `scale_06` | `7 / 6 px` |
+| Unbounded | `scale_10` | `20 / 16 px` |
+
+This mapping reproduces the prior C-shape field selection; it does not itself
+approve the geometric accuracy of every band.
 
 1. Select a C-shape-appropriate variant from the shared density bank.
 2. Extract P90 evidence points from the selected final field.
@@ -558,9 +578,30 @@ extension_i = max(0, 0.75 * longest_green - observed_arm_length_i)
 9. Join the extended endpoints to construct the missing side.
 10. Return the completed normalized quadrilateral with convexity and area.
 
-The completed quadrilateral then enters common validation and PnP. Whether a
-non-convex recorded candidate is immediately rejected is not explicitly stated
-by the Markdown notes and requires confirmation.
+`CShapeResult.refined_mask` rasterizes the three refined visible segments and
+the inferred endpoint-to-endpoint missing side with a fixed `2 px` binary-mask
+stroke. The fourth segment is the line historically rendered as magenta; its
+endpoints remain explicit in `completed_quadrilateral_uv`. The fitted geometry
+continues to use the distance-transform width independently of this display and
+mask-output stroke.
+
+The completed quadrilateral then enters common validation and PnP. A non-convex,
+self-intersecting, too-small, non-finite, or out-of-frame completion produces a
+rejected `QuadrilateralEstimate` and therefore a rejected pose; it is never
+published as an accepted gate.
+
+### 6.5 Official quadrilateral and PnP checkpoint — 2026-08-01
+
+The first full replay through the common contract produced:
+
+| Run | C-shape routes | Accepted quadrilaterals | Accepted camera poses |
+|---|---:|---:|---:|
+| `run-20260731T093159Z` | `57` | `12` | `11` |
+| `run-20260801T031401Z` | `105` | `45` | `40` |
+
+Every routed instance publishes one quadrilateral and one pose record, including
+explicit rejection records when fitting, common validation, or PnP fails. Both
+runs passed exact schema round-trip validation across all `776` frames.
 
 ## 7. Multi-gate process and settings
 
@@ -648,8 +689,9 @@ Trace data should include at minimum:
 - Validation and PnP status.
 - Machine-readable rejection reason when rejected.
 
-The implemented schema types at this frontier are `QuadrilateralEstimate`,
-`CameraPoseEstimate`, and `GeometryFrameResult`. Their image corner order is
+The implemented schema types at this frontier include `CShapeResult`,
+`QuadrilateralEstimate`, `CameraPoseEstimate`, and `GeometryFrameResult`. Their
+image corner order is
 `upper_left`, `upper_right`, `lower_right`, `lower_left`. Because the physical
 gate model is square, that deterministic image-space naming does not by itself
 resolve the gate's fourfold rotational symmetry; downstream orientation use
@@ -668,28 +710,27 @@ calibration evidence before being treated as approved production behavior:
    deciles define the provisional ten-layer recommendation bank. The standard
    route now executes those recommendations, but visual mask quality and pose
    stability have not yet approved every resulting fit.
-2. **Topology-specific density selection:** standard-gate selection now uses
-   the aggregate area recommendation. Exact C-shape and multi-gate profile
-   selection rules remain unresolved.
+2. **Topology-specific density selection:** standard-gate selection uses the
+   aggregate area recommendation. C-shape selection now reproduces the prior
+   dimension/radius bands through named profiles, but their geometric
+   calibration remains unapproved; multi-gate selection remains unresolved.
 3. **Connectivity:** connected-component connectivity is not stated in the
    Markdown evidence.
 4. **Aperture significance:** `12 px` contour area is documented, but no
    relative-to-component-area threshold or scale-dependent rule is specified.
 5. **C-shape dispatch:** the independent evidence and thresholds needed to
    classify a zero-hole component as a C-shape are not finalized.
-6. **C-shape validity:** it is unclear whether a non-convex completed candidate
-   is rejected immediately or only recorded for later common validation.
-7. **P80 evidence:** the shared schema requires it, but no current specialized
+6. **P80 evidence:** the shared schema requires it, but no current specialized
    consumer or acceptance rule is documented.
-8. **Multi-gate optional close:** the exact role of the `3 x 3` constrained close
+7. **Multi-gate optional close:** the exact role of the `3 x 3` constrained close
    is unresolved.
-9. **Multi-gate search bounds:** scale, rotation, and translation search ranges
+8. **Multi-gate search bounds:** scale, rotation, and translation search ranges
    are unspecified.
-10. **Multi-gate scoring:** P90 coverage thresholds, allowed regression slack,
+9. **Multi-gate scoring:** P90 coverage thresholds, allowed regression slack,
     contour-alignment weight, and contour support thresholds are unspecified.
-11. **Standard-gate calibration:** detailed P90 fitting and acceptance settings
+10. **Standard-gate calibration:** detailed P90 fitting and acceptance settings
     are not supplied by the reviewed Markdown notes.
-12. **Clipped components:** `schema_draft.md` mentions a possible partial
+11. **Clipped components:** `schema_draft.md` mentions a possible partial
     observation process, while authoritative `../AGENTS.md` requires clipped
     components to be rejected. This draft follows the authoritative rejection
     rule unless the user explicitly changes that contract.

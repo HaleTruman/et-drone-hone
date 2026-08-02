@@ -110,17 +110,41 @@ when the destination tab supports the same run. Tabs without that run restore
 their own last valid run and exact frame filename rather than reusing an index
 against unrelated source data.
 
-## CameraPoseEstimate projection tab
+## StandardGateResult review tab
+
+Open <http://127.0.0.1:8765/standard_gate.html> to review every serialized
+`StandardGateResult` for the selected run, including accepted and rejected
+component attempts. For faster run-wide inspection, each card renders exactly
+two visual panels: the component-isolated `FrameObservation.closed_mask` and
+the serialized `StandardGateResult.fitted_corners_uv` over its exact
+`ComponentObservation.bbox_xywh` source crop. The source JPEG is requested only
+when four fitted corners exist; the UI never recomputes geometry.
+
+The tab uses explicit Previous/Next controls to render 200 records at a time.
+It does not use infinite-scroll or per-card lazy loading; only the active batch
+exists in the DOM and its visual evidence is loaded immediately.
+
+The compact card retains `fit_confidence`, `high_confidence_threshold`,
+`accepted`, and `rejection_reason`. Selected-profile `DensityEvidence` remains
+losslessly serialized in review JSON and available in the primary
+`DensityEvidence` tab, but the StandardGateResult tab does not request or render
+those density layers.
+
+## PnP evidence and final pose projection tab
 
 Open <http://127.0.0.1:8765/pnp_scene.html> to review the run-level production
 `GeometryFrameResult` JSON against its exact logged source frame. The backend
 matches `frame_id` and `sim_time_ns`; the frontend consumes
-`camera_calibration`, `gate_model`, and `camera_pose_estimates` without deriving
-a pose from another field. It builds the view projection from the serialized
-`camera_matrix`, builds the plane from `object_points_m`, and applies
+`camera_calibration`, `gate_model`, `pnp_relative_pose_estimates`, and
+`camera_pose_estimates` without deriving a pose from another field. It builds
+the view projection from the serialized `camera_matrix`, builds the plane from
+`object_points_m`, and applies each serialized
 `rotation_vector_model_to_camera` and `position_camera_m` in the OpenCV optical
-camera frame. Only `CameraPoseEstimate.accepted=true` records are rendered;
-rejected records and their exact `rejection_reason` remain in the readout.
+camera frame. Cyan shows the selected raw `PnPCandidateEstimate`; amber
+optionally shows the secondary candidate; magenta shows the authoritative
+post-regression `CameraPoseEstimate`. Yellow and green history layers retain
+only selected raw candidates and final poses respectively. Rejected records
+and their exact `rejection_reason` remain in the readout.
 
 Three.js is pinned to `0.165.0` only on this page. The current runtime
 calibration has zero `distortion_coefficients`. A future non-zero calibration

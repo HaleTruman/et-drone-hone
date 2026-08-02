@@ -1,4 +1,8 @@
-"""Calibrated P90 quadrilateral fitting for one standard gate component."""
+"""Compatibility standard-gate fitter retained during the ownership shift.
+
+New standard-gate work belongs in ``standard_gate_processing/``; see the
+transition notice in the directory ``AGENTS.md`` before changing this stub.
+"""
 
 from __future__ import annotations
 
@@ -15,6 +19,8 @@ from .schema import (
     QuadrilateralEstimate,
     TopologyDecision,
 )
+from .quadrilateral import (
+    normalize_quadrilateral, ordered_quadrilateral_corners)
 
 
 FITTER_NAME = "standard_p90_lines_v1"
@@ -43,33 +49,6 @@ def _intersection(first, second) -> np.ndarray | None:
     return point_a + distance * direction_a
 
 
-def _ordered_corners(points: np.ndarray) -> np.ndarray:
-    points = np.asarray(points, np.float64).reshape(4, 2)
-    center = points.mean(axis=0)
-    angles = np.arctan2(points[:, 1] - center[1],
-                        points[:, 0] - center[0])
-    ordered = points[np.argsort(angles)]
-    ordered = np.roll(ordered, -int(np.argmin(ordered.sum(axis=1))), axis=0)
-    contour = ordered.astype(np.float32).reshape(-1, 1, 2)
-    if cv2.contourArea(contour, oriented=True) < 0:
-        ordered = ordered[[0, 3, 2, 1]]
-    return ordered
-
-
-def _valid_corners(corners: np.ndarray | None,
-                   image_shape: tuple[int, int]) -> bool:
-    if corners is None or corners.shape != (4, 2) or \
-            not np.all(np.isfinite(corners)):
-        return False
-    contour = corners.astype(np.float32).reshape(-1, 1, 2)
-    if not cv2.isContourConvex(contour) or cv2.contourArea(contour) < 4.0:
-        return False
-    height, width = image_shape
-    return bool(
-        np.all((0 <= corners[:, 0]) & (corners[:, 0] < width)) and
-        np.all((0 <= corners[:, 1]) & (corners[:, 1] < height)))
-
-
 def _fit_p90_corners(evidence: np.ndarray) -> np.ndarray | None:
     hull = cv2.convexHull(evidence.astype(np.float32).reshape(-1, 1, 2))
     if len(hull) < 4 or cv2.contourArea(hull) < 4.0:
@@ -78,7 +57,7 @@ def _fit_p90_corners(evidence: np.ndarray) -> np.ndarray | None:
         hull, 4, epsilon_percentage=-1, ensure_convex=True).reshape(-1, 2)
     if len(initial) != 4:
         return None
-    initial = _ordered_corners(initial)
+    initial = ordered_quadrilateral_corners(initial)
     distances = np.column_stack([
         _segment_distance(evidence, initial[index], initial[(index + 1) % 4])
         for index in range(4)
@@ -96,7 +75,7 @@ def _fit_p90_corners(evidence: np.ndarray) -> np.ndarray | None:
     fitted = tuple(_intersection(lines[index], lines[(index + 1) % 4])
                    for index in range(4))
     return (initial if any(point is None for point in fitted)
-            else _ordered_corners(np.asarray(fitted)))
+            else ordered_quadrilateral_corners(np.asarray(fitted)))
 
 
 def fit_standard_gate(
@@ -122,13 +101,9 @@ def fit_standard_gate(
     evidence = evidence_yx[:, ::-1].astype(np.float64)
     corners = None if len(evidence) < 4 else _fit_p90_corners(evidence)
     if corners is not None:
-        corners = _ordered_corners(
-            corners + np.asarray(component.image_origin_uv, np.float64))
-    accepted = _valid_corners(corners, frame.image_shape)
-    corner_values = (None if not accepted else tuple(
-        (float(point[0]), float(point[1])) for point in corners))
-    area = (None if not accepted else float(cv2.contourArea(
-        corners.astype(np.float32).reshape(-1, 1, 2))))
+        corners = corners + np.asarray(component.image_origin_uv, np.float64)
+    corner_values, area = normalize_quadrilateral(corners, frame.image_shape)
+    accepted = corner_values is not None
     return QuadrilateralEstimate(
         frame_id=frame.frame_id,
         sim_time_ns=frame.sim_time_ns,

@@ -55,11 +55,16 @@ The first review tab should present:
 1. Full-frame shared stages: source, LUT/base mask, size filtering, close,
    components, topology routes, density evidence, normalized geometry, and
    accepted/rejected output.
-2. C-shape stages for components routed to C-shape processing.
-3. Multi-gate stages for components routed to exactly-two-aperture processing.
+2. Standard-gate stages for every serialized `StandardGateResult`, including
+   rejected attempts, a component-isolated closed mask, final fitted corners,
+   confidence threshold, and rejection reason. Keep this run-wide view compact;
+   selected-profile density evidence belongs in the primary density tab.
+3. C-shape stages for components routed to C-shape processing.
+4. Multi-gate stages for components routed to exactly-two-aperture processing.
 
-Standard single-aperture results may be shown with the shared/standard output;
-the two specialized sections are C-shape and multi-gate.
+Each specialized processor should own an isolated review entry point when its
+schema contract and offline replay evidence are stable. Reuse the same adapter
+and rendering pattern; do not combine processor-specific inference in the UI.
 
 A second tab should be reserved for calibration:
 
@@ -213,22 +218,27 @@ The schema-driven evaluation viewer uses this baseline layout:
 - `source.html` and `source_app.js`: source-only frame review.
 - `topology.html` and `topology_app.js`: run-level exact
   `TopologyDecision.topology_label` component review.
-- `pnp_scene.html`, `pnp_scene_app.js`, and `pnp_scene_adapter.js`: fixed
-  optical-camera `CameraPoseEstimate` projection from the exact run-level
-  `GeometryFrameResult` JSON fields.
+- `standard_gate.html` and `standard_gate_app.js`: run-level exhaustive
+  `StandardGateResult` review with only the component-isolated closed mask and
+  serialized quadrilateral overlay as visual panels.
+- `pnp_scene.html` and its segmented PnP modules: synchronized fixed OpenCV
+  projection and free-orbit LOCAL_NED world replay from exact logged state,
+  unchanged `GeometryFrameResult`, and explicit UI-only `ui_projection` fields.
 
 Any entry-point change must update both navigation links, static-server
 default-entry behavior, cache-buster references, `MASK_REVIEW.md`, and
 `tests/test_ui_architecture.py` atomically. Acceptance requires that `/` and
 `/index.html` open the primary review, `/source.html` opens the source-only
-view, `/topology.html` opens topology-label review, and active UI or
-documentation references use these baseline names. `/pnp_scene.html` opens
-the camera-aligned `CameraPoseEstimate` projection.
+view, `/topology.html` opens topology-label review, `/standard_gate.html` opens
+standard-gate result review, and active UI or documentation references use
+these baseline names. `/pnp_scene.html` opens the dual-perspective
+`PnPRelativePoseEstimate` candidate and authoritative `CameraPoseEstimate`
+inspection scene.
 Production `src`, review JSON, and replay contracts remain unchanged.
 
 ## Current UI features and script status
 
-This inventory is authoritative for the current UI as of 2026-08-01. A script
+This inventory is authoritative for the current UI as of 2026-08-02. A script
 is **active** only when it is part of the browser dependency graph, serves the
 current viewer, or is the documented producer/validator/diagnostic for the
 current `ui/review_runs/` JSON contract. Merely residing in `ui/backend/` does
@@ -243,9 +253,23 @@ The active UI currently provides:
 - `topology.html`: run-level `TopologyDecision.topology_label` filtering with
   complete `bbox_xywh` source crops aspect-fitted into 250x250 views without
   stretching or clipping; unused canvas area remains empty.
-- `pnp_scene.html`: fixed OpenCV optical-camera projection over the selected
-  source frame using serialized `CameraCalibration`, `PlanarGateModel`, and
-  accepted `CameraPoseEstimate` values plus metric camera-space guides.
+- `standard_gate.html`: run-level exhaustive accepted and rejected
+  `StandardGateResult` review. Each component shows only its component-isolated
+  `FrameObservation.closed_mask` and exact `fitted_corners_uv` overlay as visual
+  panels, plus compact confidence/rejection fields. Its source crop is fetched
+  only when fitted corners are present. Density evidence remains in review JSON
+  and the primary density tab rather than being requested here. Explicit
+  Previous/Next controls bound the DOM to 200 immediately loaded records; this
+  tab does not use infinite-scroll or per-card lazy loading.
+- `pnp_scene.html`: synchronized fixed OpenCV optical-camera projection and
+  free-orbit LOCAL_NED replay over the selected frame and logged camera path.
+  It renders the selected `GeometryFrameResult.pnp_relative_pose_estimates`
+  candidate in cyan, its optional secondary candidate in amber, and the final
+  `GeometryFrameResult.camera_pose_estimates` pose in magenta. Independent
+  unlinked prior-frame retention uses yellow for selected raw PnP and green for
+  final poses; secondary candidates deliberately have no history layer. World
+  placement requires an exact frame/cycle association within the configured
+  review bound and logged camera-mount values matching the production transform.
 - Four-column evidence layout with three non-evidence placeholders completing
   the preprocessing batch.
 - JSON-rooted profile provenance borders, exact schema labels, and a 3x hover
@@ -266,17 +290,31 @@ or multi-gate result panels, or an optimized large-document JSON renderer.
 
 Frontend implementation:
 
-- `frontend/app.js`: primary preprocessing and `DensityEvidence` viewer.
+- `frontend/app.js`: primary preprocessing, `DensityEvidence`, and exact
+  `CShapeResult.refined_mask` viewer.
 - `frontend/source_app.js`: source-only viewer.
 - `frontend/topology_app.js`: exact topology-label filtering, category color,
   and `bbox_xywh` source-crop rendering; it does not use the JSON inspector.
-- `frontend/pnp_scene_app.js`: isolated Three.js camera scene, source-frame
-  background, exact runtime camera projection, metric guides, and gate planes
-  built from serialized model points and accepted poses.
-- `frontend/pnp_scene_adapter.js`: validates the authoritative
-  `GeometryFrameResult` fields, preserves all `CameraPoseEstimate` records, and
-  fails closed when an accepted pose or camera distortion cannot be rendered
-  exactly.
+- `frontend/standard_gate_app.js`: exhaustive, 200-record paged component review rooted in
+  serialized `StandardGateResult` and `ComponentObservation`; it requests the
+  isolated closed mask, draws supplied fitted corners over the matching source
+  crop, and performs no fitting or evidence inference.
+- `frontend/pnp_scene_app.js`: isolated Three.js camera scene, exact runtime
+  camera projection, and independently colored selected/secondary raw-PnP and
+  final post-regression gate planes; it coordinates but does not implement the
+  LOCAL_NED transform.
+- `frontend/pnp_scene_adapter.js`: validates authoritative
+  `PnPRelativePoseEstimate.candidates` and final `CameraPoseEstimate` records,
+  and fails closed when an accepted estimate or camera distortion cannot be
+  rendered exactly.
+- `frontend/pnp_world_adapter.js`: validates the exact run-level world-review
+  contract, unchanged runtime-pose provenance, frame identity, and UI-derived
+  LOCAL_NED fields.
+- `frontend/pnp_world_scene.js`: owns the free-orbit LOCAL_NED scene, elapsed and
+  full camera paths, the static LOCAL_NED reference grid, current vehicle/camera
+  markers, depth segments, and current or optional unlinked prior gate outlines.
+- `frontend/pnp_world_config.js`: owns only maintainable world-scene rendering
+  constants; it contains no flight transform or evidence settings.
 - `frontend/schema_json_cache.js`: bounded parsed/preformatted review cache and
   run/frame priming.
 - `frontend/schema_json_inspector.js`: per-layer JSON modal and schema-field
@@ -288,11 +326,19 @@ Frontend implementation:
 
 Backend implementation and current offline contract tools:
 
-- `backend/serve_review_ui.py`: authoritative static server, run/frame catalog,
-  source delivery, per-frame schema-layer rendering, and exact frame-addressed
-  delivery from run-level `GeometryFrameResult` JSON.
+- `backend/serve_review_ui.py`: authoritative static server, run/frame and
+  processor-result catalogs, source delivery, per-frame and component-isolated
+  schema-layer rendering, and exact frame-addressed delivery from run-level
+  `GeometryFrameResult` JSON.
+- `backend/pnp_world_replay.py`: UI-only exact frame/cycle join and production
+  `void_ned` transform adapter; all derived values remain under
+  `ui_projection` and never feed runtime inference.
+- `backend/pnp_world_replay_configuration.py`: the isolated, auditable world
+  replay synchronization and provisional-orientation settings deck.
 - `backend/replay_historic_run.py`: authoritative current producer for
-  `ui/review_runs/<run-id>/`.
+  `ui/review_runs/<run-id>/`, including every accepted or rejected
+  `StandardGateResult`, raw specialized quadrilaterals/PnP, and post-PnP
+  regression where an exact logged vehicle pose is available.
 - `backend/schema_json.py`: lossless current schema serialization and recovery.
 - `backend/validate_schema_review_dump.py`: exact recomputation and round-trip
   validator for current review JSON.
@@ -302,8 +348,10 @@ Backend implementation and current offline contract tools:
   this is verification code, not a launched UI process.
 
 Active non-script dependencies are `frontend/index.html`,
-`frontend/source.html`, `frontend/topology.html`, `frontend/pnp_scene.html`,
-`frontend/styles.css`, `frontend/pnp_scene.css`, pinned Three.js `0.165.0`,
+`frontend/source.html`, `frontend/topology.html`,
+`frontend/standard_gate.html`, `frontend/pnp_scene.html`,
+`frontend/styles.css`, `frontend/standard_gate.css`,
+`frontend/pnp_scene.css`, pinned Three.js `0.165.0`,
 `backend/shared_pipeline_runtime_limits.json`, and `backend/REVIEW_RUNS.md`.
 
 ### Legacy archive and inactive scripts

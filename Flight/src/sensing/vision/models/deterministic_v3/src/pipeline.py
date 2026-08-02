@@ -3,27 +3,36 @@
 This module owns orchestration only.  Data contracts belong in ``schema.py``;
 image and component construction belong in ``preprocessing.py``; density
 calculation and caching belong in ``density_bank.py``; and topology-dependent
-fitting belongs in ``standard_gate.py``, ``c_shape/``, or ``multi_gate/``.
+fitting belongs in ``standard_gate_processing/``, ``c_shape/``, or
+``multi_gate/``.
 
-`StandardGatePipeline` is the implemented JPEG-to-camera-PnP production slice.
-The dependency-injected scaffold remains below it for adding the C-shape and
-multi-gate fitters without importing legacy detectors or review code.
+`StandardGatePipeline` retains its compatibility name while implementing the
+standard, C-shape, and multi-gate JPEG-to-PnP routes plus authoritative
+post-PnP camera-pose regression. The dependency-injected scaffold remains
+below it for future NED publication without importing review code.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping, Protocol
 
+from .c_shape.process import process_c_shape, quadrilateral_from_c_shape
+from .configurations import DEFAULT_GATE_REGRESSION_CONFIGURATION
 from .density_bank import DensityBank
+from .gate_regression import GatePoseRegressor
 from .gate_centerline_pnp import (
     CAMERA_CALIBRATION, GATE_MODEL, solve_gate_pose)
+from .multi_gate.identification import identify_multi_gate_candidates
+from .multi_gate.process import (
+    process_multi_gate, quadrilaterals_from_multi_gate)
 from .preprocessing import (
     DEFAULT_CONFIG, PreprocessingConfig, decode_jpeg, load_lut,
     preprocess_frame)
 from .schema import (C_SHAPE_ROUTE, MULTI_GATE_ROUTE, STANDARD_ROUTE,
                      GeometryFrameResult, TopologyDecision)
-from .standard_gate import fit_standard_gate
+from .standard_gate_processing.process import (
+    process_standard_components, quadrilateral_from_standard)
 from .topology import assess_frame
 
 if TYPE_CHECKING:
@@ -36,11 +45,13 @@ PIPELINE_STAGES = (
     "decode_jpeg",
     "preprocess_frame",
     "analyze_topology",
+    "identify_multi_gate_candidates",
     "select_density_profile",
     "fit_specialized_geometry",
     "normalize_quadrilateral",
     "validate_quadrilateral",
     "solve_camera_pnp",
+    "regress_camera_pose",
     "publish_observation",
 )
 
@@ -49,7 +60,8 @@ TARGET_IMPLEMENTATION_MODULES = {
     "preprocessing": ".preprocessing",
     "topology": ".topology",
     "density_bank": ".density_bank",
-    STANDARD_ROUTE: ".standard_gate",
+    "gate_regression": ".gate_regression",
+    STANDARD_ROUTE: ".standard_gate_processing.process",
     C_SHAPE_ROUTE: ".c_shape.process",
     MULTI_GATE_ROUTE: ".multi_gate.process",
 }
@@ -57,17 +69,24 @@ TARGET_IMPLEMENTATION_MODULES = {
 
 @dataclass(slots=True)
 class StandardGatePipeline:
-    """Implemented production slice from JPEG through standard-gate PnP."""
+    """Implemented production slice for all current gate-geometry routes."""
 
     lut: Any
     config: PreprocessingConfig = DEFAULT_CONFIG
+    regressor: GatePoseRegressor = field(
+        default_factory=GatePoseRegressor, repr=False)
 
     @classmethod
     def from_default_lut(cls) -> "StandardGatePipeline":
         return cls(load_lut())
 
     def process_frame(
-        self, *, frame_id: int, sim_time_ns: int, jpeg_bytes: bytes
+        self,
+        *,
+        frame_id: int,
+        sim_time_ns: int,
+        jpeg_bytes: bytes,
+        vehicle_state: VehicleState | None = None,
     ) -> GeometryFrameResult:
         image = decode_jpeg(jpeg_bytes)
         frame = preprocess_frame(
@@ -79,29 +98,66 @@ class StandardGatePipeline:
         )
         bank = DensityBank(frame)
         decisions = assess_frame(frame)
+        standard_results = process_standard_components(frame, bank)
+        multi_gate_identification = identify_multi_gate_candidates(
+            frame, decisions, bank)
+        multi_gate_assessments = {
+            item.component_id: item
+            for item in multi_gate_identification.component_assessments
+        }
         quadrilaterals = []
-        poses = []
-        for component, decision in zip(frame.components, decisions):
-            if not decision.accepted or decision.route != STANDARD_ROUTE:
+        pnp_poses = []
+        multi_gate_results = []
+        for component, decision, standard in zip(
+                frame.components, decisions, standard_results):
+            if standard.accepted:
+                routed_quadrilaterals = (
+                    quadrilateral_from_standard(standard),)
+            elif decision.accepted and decision.route == C_SHAPE_ROUTE:
+                c_shape = process_c_shape(
+                    frame, component, decision, bank)
+                routed_quadrilaterals = (
+                    quadrilateral_from_c_shape(c_shape),)
+            elif decision.accepted and decision.route == MULTI_GATE_ROUTE:
+                multi_gate = process_multi_gate(
+                    frame,
+                    component,
+                    decision,
+                    bank,
+                    identification=multi_gate_assessments[
+                        component.component_id],
+                )
+                multi_gate_results.append(multi_gate)
+                routed_quadrilaterals = quadrilaterals_from_multi_gate(
+                    multi_gate)
+            else:
                 continue
-            profile = bank.recommended_standard_profile(component)
-            density = bank.get(component, profile.profile_id)
-            quadrilateral = fit_standard_gate(
-                frame, component, decision, density)
-            quadrilaterals.append(quadrilateral)
-            poses.append(solve_gate_pose(quadrilateral))
-        return GeometryFrameResult(
+            for quadrilateral in routed_quadrilaterals:
+                quadrilaterals.append(quadrilateral)
+                pnp_poses.append(solve_gate_pose(quadrilateral))
+        result = GeometryFrameResult(
             frame_id=frame.frame_id,
             sim_time_ns=frame.sim_time_ns,
             preprocessing_version=frame.preprocessing_version,
             density_configuration=bank.configuration(),
+            gate_regression_configuration=(
+                DEFAULT_GATE_REGRESSION_CONFIGURATION),
             camera_calibration=CAMERA_CALIBRATION,
             gate_model=GATE_MODEL,
-            processed_routes=(STANDARD_ROUTE,),
+            processed_routes=(
+                STANDARD_ROUTE, C_SHAPE_ROUTE, MULTI_GATE_ROUTE),
             topology_decisions=decisions,
             quadrilateral_estimates=tuple(quadrilaterals),
-            camera_pose_estimates=tuple(poses),
+            pnp_relative_pose_estimates=tuple(pnp_poses),
+            camera_pose_estimates=(),
+            multi_gate_identification=multi_gate_identification,
+            multi_gate_results=tuple(multi_gate_results),
+            standard_gate_results=standard_results,
         )
+        return self.regressor.refine(result, vehicle_state)
+
+
+GateGeometryPipeline = StandardGatePipeline
 
 
 class FitOutcome(Protocol):

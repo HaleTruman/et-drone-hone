@@ -99,6 +99,7 @@ function reviewLayers(run) {
       'schema_records[CShapeResult]',
       'topology_label=c_shape',
       'visible_lines',
+      'completed_quadrilateral_uv',
       'refined_mask_origin_uv',
     ].join(' · '),
     evidenceRoot: 'CShapeResult',
@@ -109,7 +110,7 @@ function reviewLayers(run) {
       evidencePath: 'CShapeResult.refined_mask',
     },
   }];
-  return [...preprocessingLayers, ...densityLayers, ...cShapeLayers];
+  return [...preprocessingLayers, ...cShapeLayers, ...densityLayers];
 }
 
 const state = { runs: [], run: null, frameIndex: 0, layers: [] };

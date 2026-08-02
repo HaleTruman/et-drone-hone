@@ -13,9 +13,14 @@ from .serve_review_ui import (
     _is_supported_layer_id,
     discover_geometry_review_records,
     frame_catalog,
+    geometry_frame_history,
     geometry_frame_result,
+    pnp_world_replay,
     render_review_layer,
+    render_standard_gate_component_layer,
     run_catalog,
+    standard_gate_result_catalog,
+    standard_gate_review_layer,
     topology_component_catalog,
 )
 
@@ -37,6 +42,27 @@ def runtime_record(name, fields):
         "name": name,
         "fields": fields,
     }}
+
+
+def grayscale_png_pixels(encoded):
+    width, height = struct.unpack(">II", encoded[16:24])
+    offset = 8
+    compressed = bytearray()
+    while offset < len(encoded):
+        length = struct.unpack(">I", encoded[offset:offset + 4])[0]
+        kind = encoded[offset + 4:offset + 8]
+        payload = encoded[offset + 8:offset + 8 + length]
+        if kind == b"IDAT":
+            compressed.extend(payload)
+        offset += 12 + length
+    rows = zlib.decompress(compressed)
+    self_filtered = []
+    for row in range(height):
+        start = row * (width + 1)
+        if rows[start] != 0:
+            raise AssertionError("fixture PNG used a non-zero row filter")
+        self_filtered.extend(rows[start + 1:start + width + 1])
+    return width, height, bytes(self_filtered)
 
 
 class ReviewUiCatalogTests(unittest.TestCase):
@@ -202,13 +228,22 @@ class ReviewUiCatalogTests(unittest.TestCase):
                         "side_length_m": 2.1,
                         "object_points_m": [[-1.05, 1.05, 0.0]] * 4,
                     },
+                    "pnp_relative_pose_estimates": [{
+                        "component_id": 4,
+                        "accepted": True,
+                        "candidates": [
+                            {"candidate_rank": 0}, {"candidate_rank": 1}],
+                    }],
                     "camera_pose_estimates": [{
                         "component_id": 4,
                         "accepted": True,
                     }],
                 },
             }
-            document = {"summary": {"frames": 1}, "frames": [item]}
+            document = {
+                "summary": {"format_version": 2, "frames": 1},
+                "frames": [item],
+            }
             (output / "standard-gate-pnp-runtime.json").write_text(
                 json.dumps(document), encoding="utf-8")
 
@@ -218,6 +253,13 @@ class ReviewUiCatalogTests(unittest.TestCase):
 
             self.assertEqual(len(records), 1)
             self.assertEqual(catalog["runs"][0]["geometry_frame_result_count"], 1)
+            self.assertEqual(
+                catalog["runs"][0]["pnp_relative_pose_estimate_count"], 1)
+            self.assertEqual(
+                catalog["runs"][0][
+                    "accepted_pnp_relative_pose_estimate_count"], 1)
+            self.assertEqual(
+                catalog["runs"][0]["secondary_pnp_candidate_count"], 1)
             self.assertEqual(catalog["runs"][0]["camera_pose_estimate_count"], 1)
             self.assertEqual(
                 catalog["runs"][0]["accepted_camera_pose_estimate_count"], 1)
@@ -227,7 +269,233 @@ class ReviewUiCatalogTests(unittest.TestCase):
             self.assertEqual(
                 geometry_frame_result(run_id, filename, logs, reviews), item)
             self.assertEqual(
+                geometry_frame_history(run_id, logs, reviews)["frames"],
+                [item])
+            world = pnp_world_replay(run_id, logs, reviews)
+            self.assertEqual(
+                world["version"], "deterministic-v3.pnp-world-replay.v2")
+            self.assertEqual(world["frames"][0]["runtime_result"],
+                             item["runtime_result"])
+            self.assertEqual(
                 frame_result["unmatched_geometry_frame_result_count"], 0)
+
+    def test_run_level_geometry_discovery_fails_closed_before_format_two(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            reviews = Path(temporary) / "run-example"
+            reviews.mkdir(parents=True)
+            (reviews / "geometry.json").write_text(json.dumps({
+                "summary": {"format_version": 1},
+                "frames": [{
+                    "run_id": "run-example",
+                    "runtime_result": {
+                        "frame_id": 1,
+                        "sim_time_ns": 2,
+                        "camera_calibration": {},
+                        "gate_model": {},
+                        "pnp_relative_pose_estimates": [],
+                        "camera_pose_estimates": [],
+                    },
+                }],
+            }), encoding="utf-8")
+
+            self.assertEqual(
+                discover_geometry_review_records(reviews.parent), [])
+
+    def test_standard_gate_catalog_joins_exact_component_and_selected_density(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            logs = root / "Flight" / "logs"
+            reviews = root / "ui" / "review_runs"
+            run_id = "run-20260801T031401Z"
+            frame_id = 106570
+            sim_time_ns = 1785554042291850700
+            stem = f"frame-{frame_id:08d}-{sim_time_ns}"
+            frame_dir = logs / run_id / "vision_frames"
+            frame_dir.mkdir(parents=True)
+            (frame_dir / f"{stem}.jpg").write_bytes(b"jpeg")
+            review_frames = reviews / run_id / "frames"
+            review_frames.mkdir(parents=True)
+
+            profile = {
+                "profile_id": "scale_03",
+                "calibration_version": "test",
+                "maximum_component_area_px": 1000,
+                "density_radius_px": 3,
+                "ridge_radius_px": 2,
+                "relative_cap": 1.0,
+                "inverse_gamma": 2.0,
+                "ridge_gamma": 3.0,
+            }
+            components = [
+                runtime_record("ComponentObservation", {
+                    "component_id": 4,
+                    "bbox_xywh": {"__tuple__": [1, 0, 2, 2]},
+                    "image_origin_uv": {"__tuple__": [1, 0]},
+                    "analysis_shape": {"__tuple__": [2, 2]},
+                    "touches_frame": False,
+                }),
+                runtime_record("ComponentObservation", {
+                    "component_id": 5,
+                    "bbox_xywh": {"__tuple__": [0, 2, 1, 1]},
+                    "image_origin_uv": {"__tuple__": [0, 2]},
+                    "analysis_shape": {"__tuple__": [1, 1]},
+                    "touches_frame": True,
+                }),
+            ]
+            frame_payload = {
+                "review_format_version": 6,
+                "source": {
+                    "run_id": run_id,
+                    "frame_id": frame_id,
+                    "sim_time_ns": sim_time_ns,
+                    "relative_path": f"vision_frames/{stem}.jpg",
+                },
+                "schema_records": [
+                    runtime_record("FrameObservation", {
+                        "frame_id": frame_id,
+                        "sim_time_ns": sim_time_ns,
+                        "image_shape": {"__tuple__": [3, 4]},
+                        "closed_mask": encoded_array(
+                            b"\x00\x01\x01\x00"
+                            b"\x00\x01\x01\x00"
+                            b"\x01\x00\x00\x00", "|u1", (3, 4)),
+                        "component_labels": encoded_array(struct.pack(
+                            "<12i",
+                            0, 4, 4, 0,
+                            0, 4, 5, 0,
+                            5, 0, 0, 0,
+                        ), "<i4", (3, 4)),
+                        "components": {"__tuple__": components},
+                    }),
+                    runtime_record("DensityEvidence", {
+                        "component_id": 4,
+                        "profile": runtime_record("DensityProfile", profile),
+                        "final_field": encoded_array(
+                            struct.pack("<dddd", 0.0, 0.25, 0.5, 1.0),
+                            "<f8", (2, 2)),
+                        "p70_threshold": 0.2,
+                        "p70_mask": encoded_array(
+                            b"\x00\x01\x01\x01", "|u1", (2, 2)),
+                        "p80_threshold": 0.4,
+                        "p80_mask": encoded_array(
+                            b"\x00\x00\x01\x01", "|u1", (2, 2)),
+                        "p90_threshold": 0.7,
+                        "p90_mask": encoded_array(
+                            b"\x00\x00\x00\x01", "|u1", (2, 2)),
+                    }),
+                ],
+            }
+            review_path = review_frames / f"{stem}.json"
+            review_path.write_text(json.dumps(frame_payload), encoding="utf-8")
+
+            accepted = {
+                "frame_id": frame_id,
+                "sim_time_ns": sim_time_ns,
+                "component_id": 4,
+                "route": "standard_gate",
+                "fitter": "standard_component_confident_quad_v1",
+                "selected_density_profile": profile,
+                "fitted_corners_uv": [[1.0, 0.0], [2.0, 0.0],
+                                        [2.0, 1.0], [1.0, 1.0]],
+                "fit_confidence": 0.91,
+                "high_confidence_threshold": 0.8,
+                "high_confidence": True,
+                "accepted": True,
+                "rejection_reason": None,
+            }
+            clipped = {
+                **accepted,
+                "component_id": 5,
+                "selected_density_profile": {**profile,
+                                             "profile_id": "scale_01"},
+                "fitted_corners_uv": None,
+                "fit_confidence": 0.0,
+                "high_confidence": False,
+                "accepted": False,
+                "rejection_reason": "standard_frame_edge_clipped",
+            }
+            runtime_result = {
+                "frame_id": frame_id,
+                "sim_time_ns": sim_time_ns,
+                "camera_calibration": {},
+                "gate_model": {},
+                "pnp_relative_pose_estimates": [],
+                "camera_pose_estimates": [],
+                "standard_gate_results": [accepted, clipped],
+            }
+            (reviews / run_id / "gate-geometry-pnp-runtime.json").write_text(
+                json.dumps({
+                    "summary": {"format_version": 2},
+                    "frames": [{
+                        "run_id": run_id,
+                        "runtime_result": runtime_result,
+                    }],
+                }), encoding="utf-8")
+
+            catalog = standard_gate_result_catalog(run_id, logs, reviews)
+
+            self.assertEqual(catalog["standard_gate_result_count"], 2)
+            self.assertEqual(
+                catalog["accepted_standard_gate_result_count"], 1)
+            self.assertEqual(
+                catalog["high_confidence_standard_gate_result_count"], 1)
+            self.assertEqual(catalog["missing_density_evidence_count"], 1)
+            first, second = catalog["results"]
+            self.assertEqual(
+                first["ComponentObservation"]["bbox_xywh"], [1, 0, 2, 2])
+            self.assertEqual(
+                first["StandardGateResult"]["fit_confidence"], 0.91)
+            self.assertEqual(
+                first["DensityEvidence"]["p70_threshold"], 0.2)
+            self.assertIn(
+                "DensityEvidence[scale_03].p80_mask", first["layers"])
+            self.assertEqual(second["DensityEvidence"], None)
+            self.assertEqual(
+                tuple(second["layers"]), ("FrameObservation.closed_mask",))
+
+            closed_png = render_standard_gate_component_layer(
+                review_path, 4, "scale_03", "FrameObservation.closed_mask")
+            p90_png = standard_gate_review_layer(
+                run_id, frame_id, sim_time_ns, 4,
+                "DensityEvidence[scale_03].p90_mask", logs, reviews)
+            self.assertEqual(struct.unpack(">II", closed_png[16:24]), (2, 2))
+            self.assertEqual(struct.unpack(">II", p90_png[16:24]), (2, 2))
+            self.assertEqual(
+                grayscale_png_pixels(closed_png),
+                (2, 2, b"\xff\xff\xff\x00"),
+            )
+
+    def test_standard_gate_catalog_rejects_mismatched_result_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            logs = root / "logs"
+            reviews = root / "reviews"
+            run_id = "run-example"
+            frame_dir = logs / run_id / "vision_frames"
+            frame_dir.mkdir(parents=True)
+            (frame_dir / "frame-00000001-2.jpg").write_bytes(b"jpeg")
+            output = reviews / run_id
+            output.mkdir(parents=True)
+            (output / "geometry.json").write_text(json.dumps({"frames": [{
+                "run_id": run_id,
+                "runtime_result": {
+                    "frame_id": 1,
+                    "sim_time_ns": 2,
+                    "camera_calibration": {},
+                    "gate_model": {},
+                    "pnp_relative_pose_estimates": [],
+                    "camera_pose_estimates": [],
+                    "standard_gate_results": [{
+                        "frame_id": 9,
+                        "sim_time_ns": 2,
+                        "component_id": 1,
+                        "selected_density_profile": {"profile_id": "scale_01"},
+                    }],
+                },
+            }], "summary": {"format_version": 2}}), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "identity"):
+                standard_gate_result_catalog(run_id, logs, reviews)
 
     def test_confined_paths_reject_parent_traversal(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -54,6 +54,8 @@ def json_value(value: Any) -> Any:
         return [json_value(item) for item in value]
     if isinstance(value, dict):
         return {str(key): json_value(item) for key, item in value.items()}
+    if isinstance(value, float) and not math.isfinite(value):
+        return runtime_value(value)
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     raise TypeError(f"unsupported review JSON value: {type(value).__name__}")

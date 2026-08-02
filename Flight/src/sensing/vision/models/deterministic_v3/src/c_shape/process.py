@@ -8,14 +8,18 @@ import numpy as np
 from ..configurations import DEFAULT_C_SHAPE_CONFIGURATION
 from ..density_bank import DensityBank
 from ..preprocessing import component_mask
+from ..quadrilateral import normalize_quadrilateral
 from ..schema import (
-    C_SHAPE_ROUTE, C_SHAPE_TOPOLOGY, CShapeConfiguration, CShapeRefinedLine,
-    CShapeResult, ComponentObservation, FrameObservation, TopologyDecision)
+    C_SHAPE_ROUTE, C_SHAPE_TOPOLOGY, QUADRILATERAL_CORNER_ORDER,
+    CShapeConfiguration, CShapeRefinedLine, CShapeResult,
+    ComponentObservation, FrameObservation, QuadrilateralEstimate,
+    TopologyDecision)
 from ..c_shape_three_line_pose import CShapeDensityInput
 from .c_shape_tailored_shortfall_baseline import fit_c_shape_geometry_baseline
 
 
 FITTER_NAME = "c_shape_tailored_shortfall_v1"
+REFINED_MASK_LINE_WIDTH_PX = 2
 
 
 def _readonly(array: np.ndarray) -> np.ndarray:
@@ -54,7 +58,7 @@ def _mask_from_refined_lines(image_shape, extent, candidate):
     closed = np.asarray(extent.closed_intersections_uv, np.float64)
     endpoints = np.asarray(candidate.extended_endpoints_uv, np.float64)
     points = np.vstack((closed, endpoints))
-    line_width = max(1, int(round(extent.full_width_px)))
+    line_width = REFINED_MASK_LINE_WIDTH_PX
     margin = (line_width + 1) // 2 + 1
     height, width = image_shape
     x0 = max(0, int(np.floor(points[:, 0].min())) - margin)
@@ -69,6 +73,7 @@ def _mask_from_refined_lines(image_shape, extent, candidate):
         (closed[0], closed[1]),
         (closed[0], endpoints[0]),
         (closed[1], endpoints[1]),
+        (endpoints[0], endpoints[1]),
     )
     for start, end in segments:
         start_xy = tuple(np.rint(start - origin).astype(int))
@@ -91,6 +96,7 @@ def _rejected_result(
         configuration_version=configuration.configuration_version,
         selected_density_profile=density.profile,
         p90_threshold=float(density.p90_threshold),
+        p90_evidence_points=int(np.count_nonzero(density.p90_mask)),
         visible_lines=(),
         missing_side_index=None,
         closed_intersections_uv=None,
@@ -181,6 +187,7 @@ def process_c_shape(
         configuration_version=configuration.configuration_version,
         selected_density_profile=density.profile,
         p90_threshold=float(extent.threshold),
+        p90_evidence_points=int(np.count_nonzero(density.p90_mask)),
         visible_lines=lines,
         missing_side_index=int(extent.missing_side_index),
         closed_intersections_uv=_points(extent.closed_intersections_uv),
@@ -195,4 +202,34 @@ def process_c_shape(
         refined_mask=refined_mask,
         accepted=True,
         rejection_reason=None,
+    )
+
+
+def quadrilateral_from_c_shape(result: CShapeResult) -> QuadrilateralEstimate:
+    """Normalize one C-shape completion to the shared quadrilateral contract."""
+    corners, area = (normalize_quadrilateral(
+        result.completed_quadrilateral_uv, result.image_shape)
+        if result.accepted else (None, None))
+    accepted = result.accepted and corners is not None
+    if not result.accepted:
+        rejection_reason = result.rejection_reason
+    elif not accepted:
+        rejection_reason = "c_shape_quadrilateral_validation_failed"
+    else:
+        rejection_reason = None
+    return QuadrilateralEstimate(
+        frame_id=result.frame_id,
+        sim_time_ns=result.sim_time_ns,
+        component_id=result.component_id,
+        image_shape=result.image_shape,
+        route=C_SHAPE_ROUTE,
+        fitter=result.fitter,
+        selected_density_profile=result.selected_density_profile,
+        corner_order=QUADRILATERAL_CORNER_ORDER,
+        corners_uv=corners,
+        p90_threshold=result.p90_threshold,
+        p90_evidence_points=result.p90_evidence_points,
+        area_px2=area,
+        accepted=accepted,
+        rejection_reason=rejection_reason,
     )

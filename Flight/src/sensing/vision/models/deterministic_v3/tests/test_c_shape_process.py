@@ -5,7 +5,8 @@ import numpy as np
 import pytest
 
 from sensing.vision.models.deterministic_v3.src.c_shape.process import (
-    process_c_shape, select_c_shape_density_profile_id)
+    process_c_shape, quadrilateral_from_c_shape,
+    select_c_shape_density_profile_id)
 from sensing.vision.models.deterministic_v3.src.c_shape.c_shape_tailored_shortfall_baseline import (
     fit_c_shape_geometry_baseline)
 from sensing.vision.models.deterministic_v3.src.c_shape_three_line_pose import (
@@ -46,7 +47,7 @@ def test_c_shape_dimension_rules_reuse_exact_density_bank_profiles():
         "scale_06", "scale_06", "scale_10")
 
 
-def test_c_shape_route_publishes_three_lines_and_open_refined_mask():
+def test_c_shape_route_publishes_three_lines_and_completed_refined_mask():
     frame = _c_shape_frame()
     component = frame.components[0]
     decision = assess_frame(frame)[0]
@@ -64,6 +65,7 @@ def test_c_shape_route_publishes_three_lines_and_open_refined_mask():
     assert result.missing_side_index is not None
     assert result.refined_mask.dtype == np.uint8
     assert result.refined_mask.flags.writeable is False
+    assert result.refined_mask_line_width_px == 2
     assert np.any(result.refined_mask)
 
     missing_start = np.asarray(
@@ -73,7 +75,7 @@ def test_c_shape_route_publishes_three_lines_and_open_refined_mask():
     midpoint = np.rint(0.5 * (missing_start + missing_end)).astype(int)
     origin = np.asarray(result.refined_mask_origin_uv)
     local_x, local_y = midpoint - origin
-    assert result.refined_mask[local_y, local_x] == 0
+    assert result.refined_mask[local_y, local_x] == 1
 
     evidence = bank.get(component, result.selected_density_profile.profile_id)
     baseline = fit_c_shape_geometry_baseline(CShapeDensityInput(
@@ -85,6 +87,17 @@ def test_c_shape_route_publishes_three_lines_and_open_refined_mask():
 
     restored = runtime_object(runtime_value(result))
     assert_runtime_equal(result, restored)
+
+    quadrilateral = quadrilateral_from_c_shape(result)
+    assert quadrilateral.accepted is True
+    assert quadrilateral.route == "c_shape"
+    assert quadrilateral.fitter == result.fitter
+    assert quadrilateral.selected_density_profile == \
+        result.selected_density_profile
+    assert quadrilateral.p90_evidence_points == result.p90_evidence_points
+    assert quadrilateral.corner_order == (
+        "upper_left", "upper_right", "lower_right", "lower_left")
+    assert quadrilateral.corners_uv is not None
 
 
 def test_c_shape_route_rejects_a_non_c_shape_label():

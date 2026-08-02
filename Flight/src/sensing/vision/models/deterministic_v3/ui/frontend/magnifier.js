@@ -16,7 +16,7 @@ toggle.addEventListener('change', () => {
 });
 
 grid.addEventListener('mousemove', (event) => {
-  if (!toggle.checked || !(event.target instanceof HTMLImageElement)) return;
+  if (!toggle.checked || !isMagnifiable(event.target)) return;
   const image = event.target;
   const bounds = image.parentElement.getBoundingClientRect();
   const x = 100 * (event.clientX - bounds.left) / bounds.width;
@@ -26,8 +26,13 @@ grid.addEventListener('mousemove', (event) => {
 });
 
 grid.addEventListener('mouseout', (event) => {
-  if (event.target instanceof HTMLImageElement) reset(event.target);
+  if (isMagnifiable(event.target)) reset(event.target);
 });
+
+function isMagnifiable(element) {
+  return element instanceof HTMLImageElement
+    || element instanceof HTMLCanvasElement;
+}
 
 function reset(image) {
   image.style.transform = '';
@@ -35,5 +40,5 @@ function reset(image) {
 }
 
 function resetAll() {
-  grid.querySelectorAll('img').forEach(reset);
+  grid.querySelectorAll('img, canvas').forEach(reset);
 }

@@ -17,6 +17,8 @@ import struct
 from urllib.parse import quote, unquote, urlsplit
 import zlib
 
+from .pnp_world_replay import build_pnp_world_replay
+
 
 UI_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_ROOT = UI_ROOT.parent
@@ -37,6 +39,9 @@ FRAME_MASK_FIELDS = (
 TOUCHES_FRAME_LAYER_ID = "ComponentObservation.touches_frame"
 C_SHAPE_MASK_LAYER_ID = "CShapeResult.refined_mask"
 DENSITY_ARRAY_FIELDS = ("final_field", "p70_mask", "p80_mask", "p90_mask")
+STANDARD_GATE_COMPONENT_LAYER_FIELDS = (
+    "FrameObservation.closed_mask",
+)
 
 
 def _density_layer_id(profile_id, field_name):
@@ -71,6 +76,9 @@ class GeometryReviewRecord:
     frame_id: int
     sim_time_ns: int
     frame_index: int
+    pnp_relative_pose_estimate_count: int
+    accepted_pnp_relative_pose_estimate_count: int
+    secondary_pnp_candidate_count: int
     camera_pose_estimate_count: int
     accepted_camera_pose_estimate_count: int
 
@@ -142,7 +150,10 @@ def discover_geometry_review_records(review_root=REVIEW_ROOT):
             except (OSError, UnicodeDecodeError, json.JSONDecodeError):
                 continue
             frames = payload.get("frames") if isinstance(payload, dict) else None
-            if not isinstance(frames, list):
+            summary = payload.get("summary") if isinstance(payload, dict) else None
+            if (not isinstance(summary, dict) or
+                    summary.get("format_version") != 2 or
+                    not isinstance(frames, list)):
                 continue
             for index, item in enumerate(frames):
                 runtime_result = (
@@ -151,7 +162,10 @@ def discover_geometry_review_records(review_root=REVIEW_ROOT):
                         not isinstance(runtime_result, dict) or
                         not all(field in runtime_result for field in (
                             "frame_id", "sim_time_ns", "camera_calibration",
-                            "gate_model", "camera_pose_estimates")) or
+                            "gate_model", "pnp_relative_pose_estimates",
+                            "camera_pose_estimates")) or
+                        not isinstance(
+                            runtime_result["pnp_relative_pose_estimates"], list) or
                         not isinstance(
                             runtime_result["camera_pose_estimates"], list)):
                     continue
@@ -160,17 +174,26 @@ def discover_geometry_review_records(review_root=REVIEW_ROOT):
                     sim_time_ns = int(runtime_result["sim_time_ns"])
                 except (TypeError, ValueError):
                     continue
-                poses = runtime_result["camera_pose_estimates"]
+                pnp_estimates = runtime_result["pnp_relative_pose_estimates"]
+                final_poses = runtime_result["camera_pose_estimates"]
                 records.append(GeometryReviewRecord(
                     path=path,
                     run_id=run_path.name,
                     frame_id=frame_id,
                     sim_time_ns=sim_time_ns,
                     frame_index=index,
-                    camera_pose_estimate_count=len(poses),
+                    pnp_relative_pose_estimate_count=len(pnp_estimates),
+                    accepted_pnp_relative_pose_estimate_count=sum(
+                        pose.get("accepted") is True
+                        for pose in pnp_estimates if isinstance(pose, dict)),
+                    secondary_pnp_candidate_count=sum(
+                        max(0, len(pose.get("candidates", ())) - 1)
+                        for pose in pnp_estimates if isinstance(pose, dict) and
+                        isinstance(pose.get("candidates"), list)),
+                    camera_pose_estimate_count=len(final_poses),
                     accepted_camera_pose_estimate_count=sum(
                         pose.get("accepted") is True
-                        for pose in poses if isinstance(pose, dict)),
+                        for pose in final_poses if isinstance(pose, dict)),
                 ))
     return records
 
@@ -315,6 +338,15 @@ def run_catalog(logs_root=LOGS_ROOT, review_root=REVIEW_ROOT):
             "geometry_review_json_count": len({
                 record.path for record in run_geometry}),
             "geometry_frame_result_count": len(run_geometry),
+            "pnp_relative_pose_estimate_count": sum(
+                record.pnp_relative_pose_estimate_count
+                for record in run_geometry),
+            "accepted_pnp_relative_pose_estimate_count": sum(
+                record.accepted_pnp_relative_pose_estimate_count
+                for record in run_geometry),
+            "secondary_pnp_candidate_count": sum(
+                record.secondary_pnp_candidate_count
+                for record in run_geometry),
             "camera_pose_estimate_count": sum(
                 record.camera_pose_estimate_count
                 for record in run_geometry),
@@ -326,7 +358,7 @@ def run_catalog(logs_root=LOGS_ROOT, review_root=REVIEW_ROOT):
                 run_reviews[0].path if run_reviews else None, review_root),
         })
     return {
-        "version": "deterministic-v3.review-catalog.v1",
+        "version": "deterministic-v3.review-catalog.v2",
         "runs": result,
         "unassociated_review_json": len(reviews_by_run.get(None, ())),
     }
@@ -376,7 +408,7 @@ def frame_catalog(run_id, logs_root=LOGS_ROOT, review_root=REVIEW_ROOT):
             },
         })
     return {
-        "version": "deterministic-v3.frame-catalog.v1",
+        "version": "deterministic-v3.frame-catalog.v2",
         "id": run_id,
         "frames": frames,
         "review_json_count": len(reviews),
@@ -411,6 +443,52 @@ def geometry_frame_result(
     if len(matches) != 1:
         raise ValueError("source frame has multiple GeometryFrameResult records")
     return _geometry_review_item(matches[0])
+
+
+def geometry_frame_history(
+    run_id, logs_root=LOGS_ROOT, review_root=REVIEW_ROOT
+):
+    """Group exact prior-frame GeometryFrameResult JSON for UI history."""
+    if run_id not in discover_logged_runs(logs_root):
+        raise FileNotFoundError(run_id)
+    records = [
+        record for record in discover_geometry_review_records(review_root)
+        if record.run_id == run_id
+    ]
+    identities = {}
+    for record in records:
+        identity = (record.frame_id, record.sim_time_ns)
+        if identity in identities:
+            raise ValueError("duplicate GeometryFrameResult frame identity")
+        identities[identity] = record
+    ordered = sorted(
+        identities.values(), key=lambda record: (
+            record.sim_time_ns, record.frame_id))
+    return {
+        "version": "deterministic-v3.geometry-frame-history.v2",
+        "id": run_id,
+        "frames": [_geometry_review_item(record) for record in ordered],
+    }
+
+
+def pnp_world_replay(
+    run_id, logs_root=LOGS_ROOT, review_root=REVIEW_ROOT
+):
+    """Join exact run-level PnP JSON to logged vehicle states in LOCAL_NED."""
+    run_path = discover_logged_runs(logs_root).get(run_id)
+    if run_path is None:
+        raise FileNotFoundError(run_id)
+    records = [
+        record for record in discover_geometry_review_records(review_root)
+        if record.run_id == run_id
+    ]
+    if not records:
+        raise FileNotFoundError(f"GeometryFrameResult unavailable: {run_id}")
+    return build_pnp_world_replay(
+        run_id=run_id,
+        run_dir=run_path,
+        geometry_items=[_geometry_review_item(record) for record in records],
+    )
 
 
 def topology_component_catalog(
@@ -497,6 +575,233 @@ def topology_component_catalog(
         "components": entries,
         "unmatched_review_json": len(
             [record for record in reviews if record.path not in matched_reviews]),
+    }
+
+
+def _standard_gate_frame_evidence(payload):
+    """Extract exact shared records needed to review standard-gate results."""
+    frame, density_records, _ = _schema_evidence(payload)
+    return frame, density_records
+
+
+def _review_evidence_by_identity(records, expected_run_id=None):
+    evidence = {}
+    for record in records:
+        payload = json.loads(record.path.read_text(encoding="utf-8"))
+        source = payload.get("source", {})
+        try:
+            source_run_id = str(source["run_id"])
+            identity = (int(source["frame_id"]), int(source["sim_time_ns"]))
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError("review JSON is missing exact frame identity") \
+                from error
+        if expected_run_id is not None and source_run_id != expected_run_id:
+            raise ValueError("review JSON source.run_id does not match run")
+        if identity in evidence:
+            raise ValueError("duplicate review JSON frame identity")
+        evidence[identity] = (record, payload)
+    return evidence
+
+
+def _logged_frame_by_identity(run_path):
+    result = {}
+    for path in _logged_frames(run_path):
+        match = FRAME_IDENTITY_PATTERN.fullmatch(path.stem)
+        if match is None:
+            continue
+        identity = tuple(map(int, match.groups()))
+        if identity in result:
+            raise ValueError("duplicate logged source frame identity")
+        result[identity] = path
+    return result
+
+
+def _component_fields_by_id(frame):
+    components = {}
+    for value in _tuple_items(frame.get("components", ())):
+        fields = (_dataclass_fields(value, "ComponentObservation")
+                  if "__dataclass__" in value else value)
+        component_id = int(fields["component_id"])
+        if component_id in components:
+            raise ValueError("duplicate ComponentObservation.component_id")
+        components[component_id] = fields
+    return components
+
+
+def _density_profile_fields(record):
+    profile = record["profile"]
+    return (_dataclass_fields(profile, "DensityProfile")
+            if "__dataclass__" in profile else profile)
+
+
+def _selected_density_record(density_records, component_id, profile_id):
+    matches = [
+        record for record in density_records
+        if int(record["component_id"]) == component_id
+        and _density_profile_fields(record).get("profile_id") == profile_id
+    ]
+    if len(matches) > 1:
+        raise ValueError("duplicate selected DensityEvidence")
+    return matches[0] if matches else None
+
+
+def _density_catalog_fields(record):
+    if record is None:
+        return None
+    return {
+        "component_id": record["component_id"],
+        "profile": _density_profile_fields(record),
+        "p70_threshold": record["p70_threshold"],
+        "p80_threshold": record["p80_threshold"],
+        "p90_threshold": record["p90_threshold"],
+    }
+
+
+def _standard_gate_layer_url(
+    run_id, frame_id, sim_time_ns, component_id, layer_id
+):
+    return "/standard-gate-layers/{}/{}/{}/{}/{}.png".format(
+        quote(run_id), frame_id, sim_time_ns, component_id, quote(layer_id))
+
+
+def standard_gate_result_catalog(
+    run_id, logs_root=LOGS_ROOT, review_root=REVIEW_ROOT
+):
+    """Join serialized standard results to exact shared component evidence."""
+    run_path = discover_logged_runs(logs_root).get(run_id)
+    if run_path is None:
+        raise FileNotFoundError(run_id)
+    review_records = [
+        record for record in discover_review_records(review_root)
+        if record.run_id == run_id
+    ]
+    review_by_identity = _review_evidence_by_identity(
+        review_records, expected_run_id=run_id)
+    logged_by_identity = _logged_frame_by_identity(run_path)
+    geometry_records = sorted((
+        record for record in discover_geometry_review_records(review_root)
+        if record.run_id == run_id
+    ), key=lambda record: (record.sim_time_ns, record.frame_id))
+
+    results = []
+    missing_frame = 0
+    missing_component = 0
+    missing_density = 0
+    for geometry_record in geometry_records:
+        item = _geometry_review_item(geometry_record)
+        runtime = item["runtime_result"]
+        identity = (geometry_record.frame_id, geometry_record.sim_time_ns)
+        standard_results = runtime.get("standard_gate_results", ())
+        if not isinstance(standard_results, list):
+            raise ValueError(
+                "GeometryFrameResult.standard_gate_results must be a list")
+        review_item = review_by_identity.get(identity)
+        frame = None
+        density_records = ()
+        components = {}
+        source = {
+            "frame_id": identity[0],
+            "sim_time_ns": identity[1],
+            "relative_path": None,
+        }
+        if review_item is not None:
+            _, review_payload = review_item
+            frame, density_records = _standard_gate_frame_evidence(
+                review_payload)
+            if (int(frame["frame_id"]), int(frame["sim_time_ns"])) != identity:
+                raise ValueError(
+                    "FrameObservation identity does not match GeometryFrameResult")
+            components = _component_fields_by_id(frame)
+            review_source = review_payload.get("source", {})
+            source = {
+                "frame_id": review_source.get("frame_id"),
+                "sim_time_ns": review_source.get("sim_time_ns"),
+                "relative_path": review_source.get("relative_path"),
+            }
+
+        frame_path = logged_by_identity.get(identity)
+        frame_view = {
+            "filename": None if frame_path is None else frame_path.name,
+            "image_url": (None if frame_path is None else
+                          f"/frames/{quote(run_id)}/{quote(frame_path.name)}"),
+        }
+        for standard in standard_results:
+            if not isinstance(standard, dict):
+                raise ValueError("StandardGateResult must be an object")
+            try:
+                standard_identity = (
+                    int(standard["frame_id"]), int(standard["sim_time_ns"]))
+                component_id = int(standard["component_id"])
+                selected_profile_id = str(
+                    standard["selected_density_profile"]["profile_id"])
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError("invalid serialized StandardGateResult") \
+                    from error
+            if standard_identity != identity:
+                raise ValueError(
+                    "StandardGateResult identity does not match GeometryFrameResult")
+            component = components.get(component_id)
+            density = _selected_density_record(
+                density_records, component_id, selected_profile_id)
+            if (density is not None and
+                    _density_profile_fields(density) !=
+                    standard["selected_density_profile"]):
+                raise ValueError(
+                    "selected DensityProfile differs from StandardGateResult")
+            if frame is None:
+                missing_frame += 1
+            elif component is None:
+                missing_component += 1
+            if density is None:
+                missing_density += 1
+
+            layers = {}
+            if component is not None:
+                layer_id = "FrameObservation.closed_mask"
+                layers[layer_id] = _standard_gate_layer_url(
+                    run_id, *identity, component_id, layer_id)
+            if density is not None:
+                for field_name in DENSITY_ARRAY_FIELDS:
+                    layer_id = _density_layer_id(
+                        selected_profile_id, field_name)
+                    layers[layer_id] = _standard_gate_layer_url(
+                        run_id, *identity, component_id, layer_id)
+            component_catalog = None if component is None else {
+                "component_id": component.get("component_id"),
+                "bbox_xywh": list(_tuple_items(component.get(
+                    "bbox_xywh", ()))),
+                "image_origin_uv": list(_tuple_items(component.get(
+                    "image_origin_uv", ()))),
+                "analysis_shape": list(_tuple_items(component.get(
+                    "analysis_shape", ()))),
+                "touches_frame": component.get("touches_frame"),
+            }
+            results.append({
+                "frame_id": identity[0],
+                "sim_time_ns": identity[1],
+                "component_id": component_id,
+                "source": source,
+                "frame": frame_view,
+                "ComponentObservation": component_catalog,
+                "StandardGateResult": standard,
+                "DensityEvidence": _density_catalog_fields(density),
+                "layers": layers,
+            })
+
+    return {
+        "version": "deterministic-v3.standard-gate-result-catalog.v1",
+        "id": run_id,
+        "standard_gate_result_count": len(results),
+        "accepted_standard_gate_result_count": sum(
+            item["StandardGateResult"].get("accepted") is True
+            for item in results),
+        "high_confidence_standard_gate_result_count": sum(
+            item["StandardGateResult"].get("high_confidence") is True
+            for item in results),
+        "missing_frame_observation_count": missing_frame,
+        "missing_component_observation_count": missing_component,
+        "missing_density_evidence_count": missing_density,
+        "results": results,
     }
 
 
@@ -687,6 +992,134 @@ def render_review_layer(review_path, layer_id):
     return _grayscale_png(width, height, pixels)
 
 
+def _component_bbox(component):
+    bbox = tuple(map(int, _tuple_items(component.get("bbox_xywh", ()))))
+    if len(bbox) != 4 or bbox[2] < 1 or bbox[3] < 1:
+        raise ValueError("invalid ComponentObservation.bbox_xywh")
+    return bbox
+
+
+def _closed_mask_component_pixels(frame, component):
+    shape, raw = _decode_array(frame["closed_mask"], "|u1")
+    labels_shape, labels = _decode_array(frame["component_labels"], "<i4")
+    if labels_shape != shape:
+        raise ValueError(
+            "FrameObservation.component_labels shape does not match closed_mask")
+    height, width = shape
+    x, y, crop_width, crop_height = _component_bbox(component)
+    component_id = int(component["component_id"])
+    if (x < 0 or y < 0 or x + crop_width > width or
+            y + crop_height > height):
+        raise ValueError("ComponentObservation.bbox_xywh escapes closed_mask")
+    pixels = bytearray(crop_width * crop_height)
+    for crop_y in range(crop_height):
+        row = y + crop_y
+        for crop_x in range(crop_width):
+            column = x + crop_x
+            index = row * width + column
+            label = struct.unpack_from("<i", labels, index * 4)[0]
+            if raw[index] and label == component_id:
+                pixels[crop_y * crop_width + crop_x] = 255
+    return crop_width, crop_height, bytes(pixels)
+
+
+def _density_component_pixels(record, component, field_name):
+    dtype = "<f8" if field_name == "final_field" else "|u1"
+    shape, raw = _decode_array(record[field_name], dtype)
+    local_height, local_width = shape
+    origin_x, origin_y = map(
+        int, _tuple_items(component.get("image_origin_uv", ())))
+    x, y, crop_width, crop_height = _component_bbox(component)
+    pixels = bytearray(crop_width * crop_height)
+    for crop_y in range(crop_height):
+        local_y = y + crop_y - origin_y
+        if not 0 <= local_y < local_height:
+            continue
+        for crop_x in range(crop_width):
+            local_x = x + crop_x - origin_x
+            if not 0 <= local_x < local_width:
+                continue
+            index = local_y * local_width + local_x
+            if dtype == "|u1":
+                intensity = 255 if raw[index] else 0
+            else:
+                value = struct.unpack_from("<d", raw, index * 8)[0]
+                intensity = round(min(max(float(value), 0.0), 1.0) * 255)
+            pixels[crop_y * crop_width + crop_x] = intensity
+    return crop_width, crop_height, bytes(pixels)
+
+
+def render_standard_gate_component_layer(
+    review_path, component_id, selected_profile_id, layer_id
+):
+    """Render one exact selected-profile layer cropped to one component."""
+    payload = json.loads(review_path.read_text(encoding="utf-8"))
+    frame, density_records = _standard_gate_frame_evidence(payload)
+    component = _component_fields_by_id(frame).get(int(component_id))
+    if component is None:
+        raise KeyError("ComponentObservation.component_id")
+    if layer_id == "FrameObservation.closed_mask":
+        width, height, pixels = _closed_mask_component_pixels(frame, component)
+    else:
+        match = re.fullmatch(
+            r"DensityEvidence\[([^]]+)\]\.([A-Za-z0-9_]+)", layer_id)
+        if (match is None or match.group(1) != selected_profile_id or
+                match.group(2) not in DENSITY_ARRAY_FIELDS):
+            raise KeyError(layer_id)
+        density = _selected_density_record(
+            density_records, int(component_id), selected_profile_id)
+        if density is None:
+            raise KeyError("DensityEvidence")
+        width, height, pixels = _density_component_pixels(
+            density, component, match.group(2))
+    return _grayscale_png(width, height, pixels)
+
+
+def standard_gate_review_layer(
+    run_id, frame_id, sim_time_ns, component_id,
+    layer_id, logs_root=LOGS_ROOT, review_root=REVIEW_ROOT,
+):
+    """Resolve a layer only for an exact serialized StandardGateResult."""
+    if run_id not in discover_logged_runs(logs_root):
+        raise FileNotFoundError(run_id)
+    identity = (int(frame_id), int(sim_time_ns))
+    geometry_matches = [
+        record for record in discover_geometry_review_records(review_root)
+        if record.run_id == run_id
+        and (record.frame_id, record.sim_time_ns) == identity
+    ]
+    if not geometry_matches:
+        raise FileNotFoundError(identity)
+    if len(geometry_matches) != 1:
+        raise ValueError("duplicate GeometryFrameResult frame identity")
+    runtime = _geometry_review_item(geometry_matches[0])["runtime_result"]
+    standard_matches = [
+        result for result in runtime.get("standard_gate_results", ())
+        if isinstance(result, dict)
+        and int(result.get("component_id", -1)) == int(component_id)
+    ]
+    if not standard_matches:
+        raise FileNotFoundError(component_id)
+    if len(standard_matches) != 1:
+        raise ValueError("duplicate StandardGateResult component identity")
+    standard = standard_matches[0]
+    if (int(standard["frame_id"]), int(standard["sim_time_ns"])) != identity:
+        raise ValueError(
+            "StandardGateResult identity does not match GeometryFrameResult")
+    profile_id = str(standard["selected_density_profile"]["profile_id"])
+
+    reviews = [
+        record for record in discover_review_records(review_root)
+        if record.run_id == run_id
+    ]
+    review_item = _review_evidence_by_identity(
+        reviews, expected_run_id=run_id).get(identity)
+    if review_item is None:
+        raise FileNotFoundError(identity)
+    return render_standard_gate_component_layer(
+        review_item[0].path, component_id, profile_id, layer_id)
+
+
 class ReviewUiHandler(SimpleHTTPRequestHandler):
     """Static frontend plus read-only catalogs for logs and review dumps."""
 
@@ -724,6 +1157,31 @@ class ReviewUiHandler(SimpleHTTPRequestHandler):
                     HTTPStatus.UNPROCESSABLE_ENTITY,
                     "GeometryFrameResult is ambiguous or invalid")
             return self._send_json(payload)
+        match = re.fullmatch(r"/api/runs/([^/]+)/geometry-history", path)
+        if match:
+            try:
+                payload = geometry_frame_history(
+                    match.group(1), self.logs_root, self.review_root)
+            except FileNotFoundError:
+                return self.send_error(HTTPStatus.NOT_FOUND, "Unknown run")
+            except (TypeError, ValueError, OSError, json.JSONDecodeError):
+                return self.send_error(
+                    HTTPStatus.UNPROCESSABLE_ENTITY,
+                    "GeometryFrameResult history is ambiguous or invalid")
+            return self._send_json(payload)
+        match = re.fullmatch(r"/api/runs/([^/]+)/pnp-world-replay", path)
+        if match:
+            try:
+                payload = pnp_world_replay(
+                    match.group(1), self.logs_root, self.review_root)
+            except FileNotFoundError:
+                return self.send_error(
+                    HTTPStatus.NOT_FOUND, "PnP world replay unavailable")
+            except (TypeError, ValueError, OSError, json.JSONDecodeError):
+                return self.send_error(
+                    HTTPStatus.UNPROCESSABLE_ENTITY,
+                    "PnP world replay is ambiguous or invalid")
+            return self._send_json(payload)
         match = re.fullmatch(r"/api/runs/([^/]+)/topology-components", path)
         if match:
             try:
@@ -736,9 +1194,28 @@ class ReviewUiHandler(SimpleHTTPRequestHandler):
                     HTTPStatus.UNPROCESSABLE_ENTITY,
                     "TopologyDecision review is unavailable")
             return self._send_json(payload)
+        match = re.fullmatch(
+            r"/api/runs/([^/]+)/standard-gate-results", path)
+        if match:
+            try:
+                payload = standard_gate_result_catalog(
+                    match.group(1), self.logs_root, self.review_root)
+            except FileNotFoundError:
+                return self.send_error(HTTPStatus.NOT_FOUND, "Unknown run")
+            except (KeyError, TypeError, ValueError, OSError,
+                    json.JSONDecodeError):
+                return self.send_error(
+                    HTTPStatus.UNPROCESSABLE_ENTITY,
+                    "StandardGateResult review is unavailable")
+            return self._send_json(payload)
         match = re.fullmatch(r"/frames/([^/]+)/([^/]+)", path)
         if match:
             return self._send_frame(match.group(1), match.group(2))
+        match = re.fullmatch(
+            r"/standard-gate-layers/([^/]+)/(\d+)/(\d+)/(\d+)/"
+            r"([^/]+)\.png", path)
+        if match:
+            return self._send_standard_gate_layer(*match.groups())
         match = re.fullmatch(r"/schema-layers/([^/]+)/([^/]+)/([^/]+)\.png", path)
         if match:
             return self._send_schema_layer(*match.groups())
@@ -786,6 +1263,35 @@ class ReviewUiHandler(SimpleHTTPRequestHandler):
         except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError):
             return self.send_error(HTTPStatus.UNPROCESSABLE_ENTITY,
                                    "Review layer is unavailable")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def _send_standard_gate_layer(
+        self, run_id, frame_id, sim_time_ns, component_id, layer_id
+    ):
+        density_match = re.fullmatch(
+            r"DensityEvidence\[([^]]+)\]\.([A-Za-z0-9_]+)", layer_id)
+        if (not RUN_PATTERN.fullmatch(run_id) or
+                (layer_id not in STANDARD_GATE_COMPONENT_LAYER_FIELDS and
+                 (density_match is None or
+                  density_match.group(2) not in DENSITY_ARRAY_FIELDS))):
+            return self.send_error(HTTPStatus.NOT_FOUND)
+        try:
+            encoded = standard_gate_review_layer(
+                run_id, int(frame_id), int(sim_time_ns), int(component_id),
+                layer_id, self.logs_root, self.review_root)
+        except FileNotFoundError:
+            return self.send_error(
+                HTTPStatus.NOT_FOUND, "StandardGateResult layer unavailable")
+        except (KeyError, TypeError, ValueError, OSError,
+                json.JSONDecodeError, struct.error):
+            return self.send_error(
+                HTTPStatus.UNPROCESSABLE_ENTITY,
+                "StandardGateResult layer is invalid")
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "image/png")
         self.send_header("Content-Length", str(len(encoded)))

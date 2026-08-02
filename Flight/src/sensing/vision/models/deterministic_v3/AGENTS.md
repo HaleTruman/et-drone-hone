@@ -1,5 +1,10 @@
 > **Branch isolation notice:** This work has moved to the `ft-vision-gate-geometry-a` branch. All work for this directory must remain contained within the current `ft-vision-gate-geometry-a` working branch and its associated worktree; do not make or mirror these changes in another branch or worktree.
 
+> **Active geometry transition (2026-08-02):** Specialized fitters are taking ownership of their own quadrilateral construction.
+> Standard-gate candidate evaluation is moving into `src/standard_gate_processing/` and currently admits only high-confidence fits to PnP.
+> Topology remains recorded evidence while the boundary between routing and specialized acceptance is being refined.
+> Treat this portion of the pipeline as actively changing and update this contract when the new ownership model is accepted.
+
 # Geometry Pipeline Mission and Contract
 
 **important** this document must remain unchanged without prior authorization from the user 
@@ -42,6 +47,7 @@ Topology routing must occur before specialized fitting. A fitter may reject its 
   ├── preprocessing.py
   ├── density_bank.py
   ├── topology.py
+  ├── quadrilateral.py
   ├── standard_gate.py
   │
   ├── c_shape/
@@ -68,11 +74,16 @@ Topology routing must occur before specialized fitting. A fitter may reject its 
     inputs.
 
   - density_bank.py: Computes and caches named density variants.
+  - quadrilateral.py: Common corner ordering and validation used by every
+    topology-specific fitter before PnP.
   - topology.py: Decides standard, C-shape, multi-gate, clipped, or
     ambiguous. Frame-edge-clipped or topology-unstable components must be rejected and not be forced into a valid observation path
 
   - standard_gate.py: Existing ordinary one-aperture process.
-  - c_shape/: Everything unique to missing-side construction.
+  - c_shape/: Everything unique to missing-side construction;
+    `process.py` accepts only an approved `c_shape` route and adapts the pinned
+    tailored-shortfall baseline into schema-owned `CShapeResult` evidence and
+    the shared `QuadrilateralEstimate` contract consumed by PnP.
   - multi_gate/: Everything unique to two-aperture evidence ownership and
     fitting.
 
