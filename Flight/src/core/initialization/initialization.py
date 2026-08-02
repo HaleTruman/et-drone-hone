@@ -1,3 +1,7 @@
+"""
+The Emperor is our guiding light, a beacon of hope for humanity in a galaxy of darkness.
+"""
+
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
@@ -7,7 +11,6 @@ import time
 
 from autonomy.pathing import PathManager
 from core.control.attitude import AttitudeController
-from core.control.carrot import CarrotController
 from core.control.hover.controller import HoverController
 from core.control.path_follower import GeometricPathFollower
 from core.logging import Logger
@@ -35,7 +38,7 @@ VISION_HOST = "0.0.0.0"  # is the local interface where the vision receiver list
 VISION_PORT = 5600  # is the UDP/TCP port used by the vision frame receiver.
 
 # Control loop timing.
-INNER_LOOP_HZ = 100.0  # is the fast control loop rate used for state updates and attitude commands.
+INNER_LOOP_HZ = 120.0  # is the fast control loop rate used for state updates and attitude commands.
 OUTER_LOOP_HZ = 30.0  # is the slower loop rate used for vision, path planning, and path-following targets.
 RUN_S: float | None = None  # optionally limits flight duration in seconds; None runs until interrupted or finished.
 
@@ -49,19 +52,19 @@ ARM_TIMEOUT_S = 5.0  # is how long the system waits for the vehicle to arm succe
 
 # Gate mapping
 GATE_MERGE_DISTANCE_M = 4.0  # merges repeated gate observations within this local-NED distance.
-REQUIRED_MINIMUM_OBSERVATION_COUNT = 7  # requires this many merged observations before a gate is published.
-GATE_LOCKOUT_COUNT = 100  # locks a gate pose after this many merged observations.
+REQUIRED_MINIMUM_OBSERVATION_COUNT = 6  # requires this many merged observations before a gate is published.
+GATE_LOCKOUT_COUNT = 150  # locks a gate pose after this many merged observations.
 GATE_MAX_OBSERVATION_DISTANCE_M = 40.0  # ignores gate observations farther than this from the vehicle.
 
 # Path planning.
-PLANNING_MODE = "center_targets"  # chooses the PathManager strategy: test_path, center_targets, or gate_map.
-PLANNING_GATE_COUNT = 5  # limits how many upcoming gates are included in each path plan.
-EXCLUSION_DISTANCE = 2.0  # ignores gates that are too close to the current vehicle position.
-GATE_MAX_PLANNING_DISTANCE_M = 40.0  # ignores gates farther than this from the current vehicle position.
-GATE_PASSED_DISTANCE_M = 1.5  # treats gates closer than this as already passed for planning purposes.
-GATE_CENTER_TOLERANCE_M = 0.05  # is the allowed path distance from each selected gate center.
-SPLINE_CORNER_TIGHTNESS = 0.25  # controls how tightly generated splines follow corner anchor points.
-ADAPTIVE_SPLINE_TIGHTNESS = True  # enables automatic corner tightness changes based on segment geometry.
+PLANNING_MODE = "test"  # chooses the PathManager strategy: test or gate.
+PATH_UPDATE_MODE = "projected"  # chooses how new plans replace the active path: original, projected, persist_crossed, or splice.
+PATH_UPDATE_OBSERVATION_INTERVAL = 50  # updates the planned path after this many processed vision observations; 1 updates every observation.
+GATE_PASSED_DISTANCE_M = 0.75  # treats gates closer than this as already passed for planning purposes.
+PATH_CROSSED_GATE_PERSIST_DISTANCE_M = 5.0  # keeps a crossed gate as the path start anchor while the drone is near it.
+PATH_CROSSED_GATE_CURVATURE_PRESERVE_M = 3.0  # preserves this much active-path curvature after a persisted crossed gate.
+SPLINE_CORNER_TIGHTNESS = 0.03  # controls how tightly generated splines follow corner anchor points.
+ADAPTIVE_SPLINE_TIGHTNESS = False  # enables automatic corner tightness changes based on segment geometry.
 DISTANT_SPLINE_CORNER_TIGHTNESS = 0.10  # is the looser spline tightness used for distant or gentle turns.
 MIN_SPLINE_CORNER_TIGHTNESS = 0.20  # is the lower bound for adaptive spline tightness near turns.
 MAX_SPLINE_CORNER_TIGHTNESS = 0.95  # is the upper bound for adaptive spline tightness near sharp turns.
@@ -71,46 +74,68 @@ SHORT_SEGMENT_REFERENCE_M = 5.0  # marks the segment length where nearby turns b
 LONG_SEGMENT_REFERENCE_M = 25.0  # marks the segment length where distance-based spline tightening fades out.
 PATH_SPACING_M = 0.25  # is the waypoint spacing used when sampling generated paths.
 PATH_TAIL_LENGTH_M = 10.0  # extends planned paths beyond the last gate along the terminal gate-to-gate tangent.
+PATH_SPLICE_LOOKAHEAD_GAIN_S = 1.5  # multiplies vehicle speed to choose how far ahead on the active path a new plan is spliced.
 
 # Control mode and safety envelope.
 CONTROL_METHOD = "geometric_path_follower"  # selects which path-following controller produces the attitude target.
 FAILSAFE_DISTANCE = 10  # is the maximum allowed cross-track path error before ending racing flight.
 ALLOW_FLIGHT = True  # enables sending flight commands when the system mode allows it.
 
-# Attitude controller gains
-ATTITUDE_ROLL_GAIN = 1.8  # scales roll attitude error into commanded body rate.
-ATTITUDE_PITCH_GAIN = 1.8  # scales pitch attitude error into commanded body rate.
-ATTITUDE_YAW_GAIN = 0.8  # scales yaw attitude error into commanded body rate.
-ATTITUDE_DAMPING = 0.20  # subtracts current body-rate feedback from attitude commands.
-ATTITUDE_RATE_FILTER_ALPHA = 0.40  # smooths measured body rates before attitude damping; higher follows gyro faster.
-ATTITUDE_MAX_BODY_RATE_RPS = 50.0  # caps commanded body rates from the attitude controller.
+# Attitude inner-loop response.
+ATTITUDE_ERROR_QUATERNION_ROLL_SCALE = 2.0  # Test-only sim command boost; increase to bank faster when sending quaternion error targets.
+ATTITUDE_ERROR_QUATERNION_PITCH_SCALE = 2.0  # Test-only sim command boost for pitch error quaternion vector component.
+ATTITUDE_ERROR_QUATERNION_YAW_SCALE = 2.0  # Test-only sim command boost for yaw error quaternion vector component.
+ATTITUDE_ROLL_GAIN = 1.5  # Roll attitude P gain; increase for faster banking, decrease if roll oscillates.
+ATTITUDE_PITCH_GAIN = 1.5  # Pitch attitude P gain; increase for faster pitch response, decrease if pitch oscillates.
+ATTITUDE_YAW_GAIN = 1.5  # Yaw attitude P gain; increase for faster heading alignment, decrease if yaw hunts.
+ATTITUDE_DAMPING = 0.2  # Body-rate damping; increase to reduce attitude overshoot, decrease if response feels sluggish.
+ATTITUDE_RATE_FILTER_ALPHA = 0.8  # Body-rate filter alpha; higher follows gyro faster, lower smooths noisy damping.
+ATTITUDE_MAX_BODY_RATE_RPS = 7.0  # Body-rate command cap; increase for faster attitude changes, decrease for gentler motion.
 
-# Path preview distances.
-CARROT_LOOKAHEAD_M = 1.4  # is the lookahead distance used by the simpler carrot controller.
-SPEED_LOOKAHEAD_M = 10  # is how far ahead curvature is checked for speed planning.
-GEOMETRIC_LOOKAHEAD_M = 1.4 # is the lookahead distance used for geometric follower heading preview.
+# Path lookahead and preview.
+CARROT_LOOKAHEAD_M = 6.0 # Carrot-point preview distance; increase to turn earlier/smoother, decrease to track nearby path more tightly.
+SPEED_LOOKAHEAD_M = 30  # Curvature preview distance for speed planning; increase to slow earlier, decrease to react later.
 
-# Geometric path-following feedback.
-GEOMETRIC_CROSS_TRACK_GAIN = 7.5  # scales position correction back toward the path.
-GEOMETRIC_CROSS_TRACK_DAMPING = 4.4  # scales velocity damping perpendicular to the path.
-GEOMETRIC_ACCELERATION_FILTER_ALPHA = 0.9  # smooths outer-loop acceleration commands; 1.0 disables smoothing.
+# Cross-track position hold: horizontal component.
+GEOMETRIC_CROSS_TRACK_GAIN = 4.5  # Horizontal cross-track P gain; increase to pull harder toward the path, decrease if it weaves.
+GEOMETRIC_CROSS_TRACK_DAMPING =  2.0 # Horizontal cross-track D gain; increase to damp sideways drift, decrease if turns feel over-braked.
 
-# Speed planner.
-GEOMETRIC_MAX_SPEED_MPS = 25  # is the maximum along-track speed requested by the geometric follower.
-GEOMETRIC_MAX_LATERAL_ACCELERATION_MPS2 = 50.0  # limits speed in curves based on available lateral acceleration.
-GEOMETRIC_CURVATURE_SPEED_DEADBAND = 3.5  # ignores small curvature when computing curve-limited speed. Will go maximum speed if curvature is below this value
-GEOMETRIC_CURVATURE_SPEED_RAMP = 0.3  # controls how quickly commanded speed drops as curvature increases. Larger means speed decreases slower
+# Cross-track position hold: vertical component.
+GEOMETRIC_VERTICAL_CROSS_TRACK_GAIN = 4.5  # Vertical cross-track P gain; increase to correct altitude error sooner, decrease if altitude oscillates.
+GEOMETRIC_VERTICAL_CROSS_TRACK_DAMPING = 2.0  # Vertical cross-track D gain; increase to damp climb/descent rate, decrease if altitude lags.
 
-# Curvature feed-forward.
-GEOMETRIC_CURVATURE_FEEDFORWARD_GAIN = 3.0  # scales proactive acceleration into upcoming turns.
-GEOMETRIC_CURVATURE_FEEDFORWARD_MAX_ACCELERATION_MPS2 = 25.0  # caps proactive turn acceleration.
+# Cross-track gain scheduling from upcoming curvature.
+GEOMETRIC_CROSS_GAIN_CURVATURE_DEADBAND = 0.25  # Curvature below this leaves cross-track gains unchanged; raise to ignore gentler turns.
+GEOMETRIC_CROSS_GAIN_CURVATURE_RAMP = 0.5  # Curvature span to full scheduled gain; lower makes boosts arrive faster, higher makes them gradual.
+GEOMETRIC_HORIZONTAL_CROSS_GAIN_CURVATURE_BOOST = 2.5  # Max fractional horizontal gain boost in curves; increase for tighter turns.
+GEOMETRIC_VERTICAL_CROSS_GAIN_CURVATURE_BOOST = 1.5  # Max fractional vertical gain boost in curves; keep modest to avoid altitude coupling.
 
-# Thrust and acceleration limits.
-GEOMETRIC_HOVER_THRUST = 0.265  # is the normalized thrust command expected to hold hover.
-GEOMETRIC_MAX_COMMANDED_ACCELERATION_MPS2 = 50  # caps the total desired acceleration magnitude.
-GEOMETRIC_MAX_UPWARD_ACCELERATION_MPS2 = 15.0  # caps upward commanded acceleration in local-NED terms.
-GEOMETRIC_MAX_DOWNWARD_ACCELERATION_MPS2 = 9.0  # caps downward commanded acceleration in local-NED terms.
-GEOMETRIC_MAX_TILT_DEG = 60  # caps the tilt implied by the desired acceleration command.
+# Command smoothing.
+GEOMETRIC_ACCELERATION_FILTER_ALPHA = 0.3  # Desired-acceleration filter alpha; 1 disables smoothing, lower softens command jumps.
+
+# Along-track speed loop and curve speed planning.
+GEOMETRIC_SPEED_GAIN = 0.65  # Along-track speed P gain; increase to reach target speed faster, decrease if it surges.
+GEOMETRIC_SPEED_DAMPING = 0.6  # Along-track speed D gain on acceleration; increase to reduce speed overshoot, decrease for quicker response.
+GEOMETRIC_MAX_SPEED_MPS = 40  # Straight-path target speed cap; increase for faster runs, decrease if tracking cannot keep up.
+GEOMETRIC_MAX_LATERAL_ACCELERATION_MPS2 = 50.0  # Curve-speed lateral accel budget; increase to carry more speed through turns.
+GEOMETRIC_CURVATURE_SPEED_DEADBAND = 0.25  # Curvature below this commands max speed; raise to ignore mild curves, lower to slow sooner.
+GEOMETRIC_CURVATURE_SPEED_RAMP = 0.1  # Curvature softening ramp for speed reduction; reduce for a lower speed in tight corners.
+GEOMETRIC_CROSS_TRACK_SPEED_DERATE_START_M = 0.5  # Cross-track error where speed derating starts; raise to ignore small tracking errors.
+GEOMETRIC_CROSS_TRACK_SPEED_DERATE_FULL_M = 2.0  # Cross-track error where derating reaches full strength; lower to slow harder sooner.
+GEOMETRIC_CROSS_TRACK_SPEED_DERATE_MIN_SCALE = 0.7  # Minimum speed scale at full derate; lower to slow more while far off path.
+GEOMETRIC_LAUNCH_SPEED_RAMP_S = 0.35  # Seconds to ramp path-following speed from zero after takeoff; increase to soften launch.
+
+# Curvature turn feed-forward.
+GEOMETRIC_CURVATURE_FEEDFORWARD_GAIN = 0.7  # Turn feed-forward gain; increase to bank into turns earlier, decrease if it over-turns.
+GEOMETRIC_CURVATURE_FEEDFORWARD_MAX_ACCELERATION_MPS2 = 30.0  # Feed-forward accel cap; increase for stronger turn anticipation.
+
+# Geometric acceleration, tilt, and thrust limits.
+GEOMETRIC_HOVER_THRUST = 0.2644  # Normalized hover thrust; tune to the thrust that holds level hover.
+GEOMETRIC_MAX_COMMANDED_ACCELERATION_MPS2 = 50  # Total desired-accel cap; decrease to soften all path-follower commands.
+GEOMETRIC_MAX_UPWARD_ACCELERATION_MPS2 = 20.0  # Upward accel cap in NED (-Z); increase for harder climbs, decrease to prevent pop-ups.
+GEOMETRIC_MAX_DOWNWARD_ACCELERATION_MPS2 = 9.0  # Downward accel cap in NED (+Z); increase to descend faster, keep below gravity for margin.
+GEOMETRIC_MAX_TILT_DEG = 120  # Desired tilt cap; increase for more aggressive banking/inversion, decrease for upright flight.
+GEOMETRIC_TILT_THRUST_ALIGNMENT_MIN = 0.0 # Minimum thrust scale while actual tilt catches desired tilt; raise to preserve thrust, lower to suppress climb-before-bank.
 
 # Output and recording.
 CREATE_VIDEO = False  # enables post-run MP4 generation from logged visual outputs.
@@ -139,20 +164,21 @@ VISION_PERCEPTION_BACKEND = "deterministic_v3"  # selects the gate perception im
 VISION_EXECUTOR_MAX_WORKERS = 1  # controls the number of background workers for vision processing.
 VISION_EXECUTOR_THREAD_PREFIX = "vision"  # names background vision worker threads for debugging.
 PATH_MAX_POINTS = 1000  # caps the number of sampled waypoints kept in a generated path.
-TEST_PATH_LENGTH_M = 100.0  # is the length of the startup straight-line test path.
-TEST_PATH_POINT_COUNT = 200  # is the number of samples used for the startup straight-line test path.
-TEST_PATH_UP_DOWN_ANGLE_DEG = 2.5  # tilts the startup straight-line test path vertically.
-TEST_PATH_LEFT_RIGHT_ANGLE_DEG = 0.0  # tilts the startup straight-line test path horizontally.
-CARROT_MAX_SPEED_MPS = 10  # is the maximum speed used by the simpler carrot controller.
-CARROT_POSITION_GAIN = 5.5  # scales position error in the simpler carrot controller.
-CARROT_VELOCITY_GAIN = 0.75  # scales velocity damping in the simpler carrot controller.
-CARROT_INITIAL_THRUST = 0.265  # is the baseline normalized thrust for the simpler carrot controller.
-HOVER_LATERAL_VELOCITY_GAIN = 2.5  # damps horizontal velocity when the finish hover controller is active.
-HOVER_VERTICAL_VELOCITY_GAIN = 0.18  # damps vertical velocity when the finish hover controller is active.
-HOVER_VERTICAL_ACCELERATION_GAIN = 0.035  # scales vertical acceleration feedback in the finish hover controller.
+TEST_PATH_GATE_POINTS_LOCAL_NED_M = [
+    (10.9, 0.0, -0.5),
+    (26, 8.5, -2.8),
+    (34.535, 11.5, -2.252),
+    (43.9, 3.7, -1.2),
+    (60.848, -13.544, -0.085),
+]  # mock gate centers used by build_test_path() when PLANNING_MODE is test.
+
+# Finish-hover velocity damping.
+HOVER_LATERAL_VELOCITY_GAIN = 2.5  # Hover horizontal velocity damping; increase to stop XY drift faster, decrease if it rocks.
+HOVER_VERTICAL_VELOCITY_GAIN = 0.18  # Hover vertical velocity damping; increase to stop climb/descent faster, decrease if it bounces.
+HOVER_VERTICAL_ACCELERATION_GAIN = 0.035  # Hover vertical accel damping; increase to resist vertical acceleration, decrease if noisy.
 
 # Logging.
-RUNS_ROOT = Path(__file__).resolve().parents[3] / "logs" / "runs"  # is the root directory where timestamped run logs are created.
+RUNS_ROOT = Path(__file__).resolve().parents[4] / "Logs" / "flight" / "runs"  # is the root directory where timestamped run logs are created.
 
 
 def _initialization_constants() -> dict[str, object]:
@@ -192,6 +218,7 @@ class RuntimeSettings:
     post_reset_delay_s: float
     arm_timeout_s: float
     planning_mode: str
+    path_update_observation_interval: int
     control_method: str
     failsafe_distance_m: float
     allow_flight: bool
@@ -214,7 +241,6 @@ def initialize() -> tuple[
     GateMap,
     PathManager,
     AttitudeController,
-    CarrotController,
     GeometricPathFollower,
     HoverController,
 ]:
@@ -233,6 +259,7 @@ def initialize() -> tuple[
         post_reset_delay_s=POST_RESET_DELAY_S,
         arm_timeout_s=ARM_TIMEOUT_S,
         planning_mode=PLANNING_MODE,
+        path_update_observation_interval=max(1, int(PATH_UPDATE_OBSERVATION_INTERVAL)),
         control_method=CONTROL_METHOD,
         failsafe_distance_m=FAILSAFE_DISTANCE,
         allow_flight=ALLOW_FLIGHT,
@@ -304,11 +331,6 @@ def initialize() -> tuple[
     )
 
     path_manager = PathManager(
-        max_gates=PLANNING_GATE_COUNT,
-        exclusion_distance_m=EXCLUSION_DISTANCE,
-        max_gate_distance_m=GATE_MAX_PLANNING_DISTANCE_M,
-        passed_gate_distance_m=GATE_PASSED_DISTANCE_M,
-        gate_center_tolerance_m=GATE_CENTER_TOLERANCE_M,
         spline_corner_tightness=SPLINE_CORNER_TIGHTNESS,
         adaptive_spline_tightness=ADAPTIVE_SPLINE_TIGHTNESS,
         distant_spline_corner_tightness=DISTANT_SPLINE_CORNER_TIGHTNESS,
@@ -319,17 +341,18 @@ def initialize() -> tuple[
         short_segment_reference_m=SHORT_SEGMENT_REFERENCE_M,
         long_segment_reference_m=LONG_SEGMENT_REFERENCE_M,
         planning_mode=PLANNING_MODE,
+        path_update_mode=PATH_UPDATE_MODE,
+        path_crossed_gate_persist_distance_m=PATH_CROSSED_GATE_PERSIST_DISTANCE_M,
+        path_crossed_gate_curvature_preserve_m=PATH_CROSSED_GATE_CURVATURE_PRESERVE_M,
         spacing_m=PATH_SPACING_M,
         path_tail_length_m=PATH_TAIL_LENGTH_M,
+        path_splice_lookahead_gain_s=PATH_SPLICE_LOOKAHEAD_GAIN_S,
         max_points=PATH_MAX_POINTS,
     )
-
-    path_manager.build_straight_line(
-        length_m=TEST_PATH_LENGTH_M,
-        point_count=TEST_PATH_POINT_COUNT,
-        up_down_angle_deg=TEST_PATH_UP_DOWN_ANGLE_DEG,
-        left_right_angle_deg=TEST_PATH_LEFT_RIGHT_ANGLE_DEG,
-    )
+    if PLANNING_MODE == "test":
+        path_manager.build_test_path(
+            gate_points_local_ned_m=TEST_PATH_GATE_POINTS_LOCAL_NED_M,
+        )
 
     attitude_controller = AttitudeController(
         roll_gain=ATTITUDE_ROLL_GAIN,
@@ -338,28 +361,35 @@ def initialize() -> tuple[
         damping=ATTITUDE_DAMPING,
         rate_filter_alpha=ATTITUDE_RATE_FILTER_ALPHA,
         max_body_rate_rps=ATTITUDE_MAX_BODY_RATE_RPS,
-    )
-
-    carrot_controller = CarrotController(
-        max_speed_mps=CARROT_MAX_SPEED_MPS,
-        lookahead_m=CARROT_LOOKAHEAD_M,
-        speed_lookahead_m=SPEED_LOOKAHEAD_M,
-        position_gain=CARROT_POSITION_GAIN,
-        velocity_gain=CARROT_VELOCITY_GAIN,
-        initial_thrust=CARROT_INITIAL_THRUST,
+        error_quaternion_roll_scale=ATTITUDE_ERROR_QUATERNION_ROLL_SCALE,
+        error_quaternion_pitch_scale=ATTITUDE_ERROR_QUATERNION_PITCH_SCALE,
+        error_quaternion_yaw_scale=ATTITUDE_ERROR_QUATERNION_YAW_SCALE,
     )
 
     geometric_path_follower = GeometricPathFollower(
-        path_manager,
         kp_cross=GEOMETRIC_CROSS_TRACK_GAIN,
         kd_cross=GEOMETRIC_CROSS_TRACK_DAMPING,
+        kp_cross_vertical=GEOMETRIC_VERTICAL_CROSS_TRACK_GAIN,
+        kd_cross_vertical=GEOMETRIC_VERTICAL_CROSS_TRACK_DAMPING,
+        cross_gain_curvature_deadband=GEOMETRIC_CROSS_GAIN_CURVATURE_DEADBAND,
+        cross_gain_curvature_ramp=GEOMETRIC_CROSS_GAIN_CURVATURE_RAMP,
+        horizontal_cross_gain_curvature_boost=(
+            GEOMETRIC_HORIZONTAL_CROSS_GAIN_CURVATURE_BOOST
+        ),
+        vertical_cross_gain_curvature_boost=GEOMETRIC_VERTICAL_CROSS_GAIN_CURVATURE_BOOST,
+        kp_speed=GEOMETRIC_SPEED_GAIN,
+        kd_speed=GEOMETRIC_SPEED_DAMPING,
         acceleration_filter_alpha=GEOMETRIC_ACCELERATION_FILTER_ALPHA,
-        lookahead_m=GEOMETRIC_LOOKAHEAD_M,
+        lookahead_m=CARROT_LOOKAHEAD_M,
         speed_lookahead_m=SPEED_LOOKAHEAD_M,
         v_max=GEOMETRIC_MAX_SPEED_MPS,
         a_lat_max=GEOMETRIC_MAX_LATERAL_ACCELERATION_MPS2,
         curvature_speed_deadband=GEOMETRIC_CURVATURE_SPEED_DEADBAND,
         curvature_speed_ramp=GEOMETRIC_CURVATURE_SPEED_RAMP,
+        cross_track_speed_derate_start_m=GEOMETRIC_CROSS_TRACK_SPEED_DERATE_START_M,
+        cross_track_speed_derate_full_m=GEOMETRIC_CROSS_TRACK_SPEED_DERATE_FULL_M,
+        cross_track_speed_derate_min_scale=GEOMETRIC_CROSS_TRACK_SPEED_DERATE_MIN_SCALE,
+        launch_speed_ramp_s=GEOMETRIC_LAUNCH_SPEED_RAMP_S,
         curvature_feedforward_gain=GEOMETRIC_CURVATURE_FEEDFORWARD_GAIN,
         curvature_feedforward_max_acceleration_mps2=(
             GEOMETRIC_CURVATURE_FEEDFORWARD_MAX_ACCELERATION_MPS2
@@ -369,6 +399,7 @@ def initialize() -> tuple[
         max_upward_acceleration_mps2=GEOMETRIC_MAX_UPWARD_ACCELERATION_MPS2,
         max_downward_acceleration_mps2=GEOMETRIC_MAX_DOWNWARD_ACCELERATION_MPS2,
         max_tilt_deg=GEOMETRIC_MAX_TILT_DEG,
+        tilt_thrust_alignment_min=GEOMETRIC_TILT_THRUST_ALIGNMENT_MIN,
     )
 
     hover_controller = HoverController(
@@ -391,7 +422,6 @@ def initialize() -> tuple[
         gate_map,
         path_manager,
         attitude_controller,
-        carrot_controller,
         geometric_path_follower,
         hover_controller,
     )

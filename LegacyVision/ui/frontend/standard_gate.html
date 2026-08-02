@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>StandardGateResult Review</title>
+    <link rel="stylesheet" href="styles.css?v=standard-gate-review-v1" />
+    <link rel="stylesheet" href="standard_gate.css?v=standard-gate-review-v3" />
+  </head>
+  <body>
+    <main class="viewer-shell">
+      <nav class="viewer-tabs" aria-label="Review pipelines">
+        <a href="source.html">source</a>
+        <a href="index.html">DensityEvidence</a>
+        <a href="topology.html">TopologyDecision.topology_label</a>
+        <a class="active" href="standard_gate.html">StandardGateResult</a>
+        <a href="pnp_scene.html">PnP / final pose replay</a>
+      </nav>
+      <header class="viewer-header standard-gate-header"
+              aria-label="StandardGateResult filters">
+        <section class="header-section controls-left">
+          <select id="run-select" aria-label="source.run_id"></select>
+        </section>
+        <section class="header-section controls-center standard-gate-filter">
+          <label for="accepted-select">StandardGateResult.accepted</label>
+          <select id="accepted-select">
+            <option value="all">all</option>
+            <option value="true">true</option>
+            <option value="false">false</option>
+          </select>
+          <button id="previous-batch" type="button">Previous 200</button>
+          <output id="batch-status">0 of 0</output>
+          <button id="next-batch" type="button">Next 200</button>
+          <small>
+            Rendering 200 records at a time: FrameObservation.closed_mask and
+            StandardGateResult.fitted_corners_uv only.
+          </small>
+        </section>
+        <section class="header-section controls-right">
+          <div id="standard-gate-summary" class="standard-gate-summary"></div>
+        </section>
+      </header>
+      <section class="frame-container" aria-live="polite">
+        <div id="frame-message">Loading StandardGateResult records…</div>
+        <div id="layer-grid" class="standard-gate-grid" hidden></div>
+      </section>
+    </main>
+    <script type="module" src="standard_gate_app.js?v=standard-gate-review-v3"></script>
+    <script type="module" src="magnifier.js?v=canvas-v1"></script>
+  </body>
+</html>

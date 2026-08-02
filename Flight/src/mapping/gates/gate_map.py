@@ -54,53 +54,61 @@ class GateMap:
         )
         self._gates: list[GateRecord] = []
         self._candidates: list[GateRecord] = []
+        self._last_crossed_gates: list[GateRecord] = []
 
     @property
     def gates(self) -> list[GateRecord]:
         return [_with_test_position_offset(gate) for gate in self._gates]
 
+    @property
+    def last_crossed_gates(self) -> list[GateRecord]:
+        return list(self._last_crossed_gates)
+
     def clear(self) -> None:
         self._gates.clear()
         self._candidates.clear()
+        self._last_crossed_gates.clear()
 
     def uncrossed_gates(self) -> list[GateRecord]:
         return [gate for gate in self.gates if not gate.crossed]
 
     def update(
         self,
-        observation: VisionObservation,
+        observation: VisionObservation | None = None,
         observer_position_local_ned_m: Vec3 | None = None,
     ) -> list[GateRecord]:
-        observed_time_s = _observation_time_s(observation)
-        for gate in observation.gates:
-            position = tuple(float(value) for value in gate.position_local_ned)
-            if not self._within_observation_distance(position, observer_position_local_ned_m):
-                continue
-            gate_index = self._nearest_record_index(self._gates, position)
-            if gate_index is not None:
-                self._merge_record(gate_index, gate, observation, observed_time_s, self._gates)
-                continue
+        if observation is not None:
+            observed_time_s = _observation_time_s(observation)
+            for gate in observation.gates:
+                position = tuple(float(value) for value in gate.position_local_ned)
+                if not self._within_observation_distance(position, observer_position_local_ned_m):
+                    continue
+                gate_index = self._nearest_record_index(self._gates, position)
+                if gate_index is not None:
+                    self._merge_record(gate_index, gate, observation, observed_time_s, self._gates)
+                    continue
 
-            candidate_index = self._nearest_record_index(self._candidates, position)
-            if candidate_index is None:
-                self._candidates.append(_record_from_observation(gate, observation, observed_time_s))
-                candidate_index = len(self._candidates) - 1
-            else:
-                self._merge_record(
-                    candidate_index,
-                    gate,
-                    observation,
-                    observed_time_s,
-                    self._candidates,
-                )
+                candidate_index = self._nearest_record_index(self._candidates, position)
+                if candidate_index is None:
+                    self._candidates.append(_record_from_observation(gate, observation, observed_time_s))
+                    candidate_index = len(self._candidates) - 1
+                else:
+                    self._merge_record(
+                        candidate_index,
+                        gate,
+                        observation,
+                        observed_time_s,
+                        self._candidates,
+                    )
 
-            if (
-                self._candidates[candidate_index].observation_count
-                >= self.required_minimum_observation_count
-            ):
-                self._gates.append(self._candidates.pop(candidate_index))
+                if (
+                    self._candidates[candidate_index].observation_count
+                    >= self.required_minimum_observation_count
+                ):
+                    self._gates.append(self._candidates.pop(candidate_index))
 
         self._sort_and_rename_gates()
+        self._last_crossed_gates = self._crossed_gates_at(observer_position_local_ned_m)
         return self.gates
 
     def _within_observation_distance(
@@ -117,7 +125,10 @@ class GateMap:
         )
         return _distance_m(position, origin) <= self.max_observation_distance_m
 
-    def update_crossed_gates(self, position_local_ned_m: Vec3) -> list[GateRecord]:
+    def _crossed_gates_at(self, position_local_ned_m: Vec3 | None) -> list[GateRecord]:
+        if position_local_ned_m is None:
+            return []
+
         crossed_now: list[GateRecord] = []
         for index, record in enumerate(self._gates):
             visible_record = _with_test_position_offset(record)

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Temporary Density Profile Calibration</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="controls">
+      <section class="title-block">
+        <strong>DensityProfile calibration</strong>
+        <small id="corpus-summary">Loading isolated assets…</small>
+      </section>
+
+      <section class="selection-block">
+        <label>
+          ComponentObservation.area_px grouping
+          <select id="profile-select" disabled></select>
+        </label>
+        <label class="checkbox-label">
+          <input id="include-clipped" type="checkbox" />
+          include ComponentObservation.touches_frame=true
+        </label>
+        <small id="baseline-summary"></small>
+      </section>
+
+      <section id="candidate-controls" class="candidate-controls" aria-label="Candidate DensityProfile">
+        <label data-field="density_radius_px">
+          density_radius_px <output></output>
+          <span><input class="slider" type="range" /><input class="number" type="number" /></span>
+        </label>
+        <label data-field="ridge_radius_px">
+          ridge_radius_px <output></output>
+          <span><input class="slider" type="range" /><input class="number" type="number" /></span>
+        </label>
+        <label data-field="inverse_gamma">
+          inverse_gamma <output></output>
+          <span><input class="slider" type="range" /><input class="number" type="number" /></span>
+        </label>
+        <label data-field="ridge_gamma">
+          ridge_gamma <output></output>
+          <span><input class="slider" type="range" /><input class="number" type="number" /></span>
+        </label>
+        <button id="reset-candidate" type="button">Reset candidate</button>
+      </section>
+
+      <section class="page-controls">
+        <span id="page-summary"></span>
+        <small id="compute-summary"></small>
+      </section>
+    </header>
+
+    <main>
+      <div id="message">Loading…</div>
+      <section id="component-grid" hidden></section>
+      <div id="collection-sentinel" role="status">Preparing collection…</div>
+    </main>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

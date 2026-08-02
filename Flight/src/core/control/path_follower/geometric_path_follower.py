@@ -1,7 +1,7 @@
 """Geometric path follower for local-NED quadrotor racing paths.
 
-The controller consumes the runtime :class:`core.schema.VehicleState` and an
-:class:`autonomy.pathing.PathManager`.
+The controller consumes the runtime :class:`core.schema.VehicleState` plus
+path projection and preview samples from :mod:`autonomy.pathing`.
 It emits the repository's standard attitude-target payload:
 
     {"quaternion": [w, x, y, z], "thrust": normalized_thrust, ...}
@@ -10,6 +10,8 @@ Coordinate conventions:
 - Inertial: local NED, +z down, gravity = [0, 0, +g]
 - Body: FRD, +z down, positive collective thrust accelerates along -body_z
 - Quaternion: scalar-first [w, x, y, z], body-to-local-NED rotation
+
+"Spirits of the Machine-God, aid your servant and free his weapon so he may use it to break his foes"
 """
 
 from __future__ import annotations
@@ -20,9 +22,13 @@ import math
 
 import numpy as np
 
-from autonomy.pathing import PathManager
+from autonomy.pathing import PathCarrot
 from core.control.command_mapper import CommandMapper
-from core.coordinates import quaternion_from_rotation_matrix, GRAVITY_MPS2
+from core.coordinates import (
+    quaternion_from_rotation_matrix,
+    rotation_matrix_from_quaternion,
+    GRAVITY_MPS2,
+)
 from core.schema import QuatWxyz, VehicleState
 
 
@@ -31,11 +37,17 @@ class GeometricPathFollower:
 
     def __init__(
         self,
-        path_manager: PathManager,
         *,
         kp_cross: float = 1.2,
         kd_cross: float = 1.4,
+        kp_cross_vertical: float | None = None,
+        kd_cross_vertical: float | None = None,
+        cross_gain_curvature_deadband: float = 0.0,
+        cross_gain_curvature_ramp: float = 1.0,
+        horizontal_cross_gain_curvature_boost: float = 0.0,
+        vertical_cross_gain_curvature_boost: float = 0.0,
         kp_speed: float = 0.45,
+        kd_speed: float = 0.0,
         acceleration_filter_alpha: float = 0.25,
         lookahead_m: float = 3.0,
         speed_lookahead_m: float = 10.0,
@@ -44,6 +56,10 @@ class GeometricPathFollower:
         v_min: float = 1.5,
         curvature_speed_deadband: float = 0.04,
         curvature_speed_ramp: float = 0.08,
+        cross_track_speed_derate_start_m: float = 0.5,
+        cross_track_speed_derate_full_m: float = 2.0,
+        cross_track_speed_derate_min_scale: float = 0.5,
+        launch_speed_ramp_s: float = 1.0,
         curvature_feedforward_gain: float = 1.0,
         curvature_feedforward_max_acceleration_mps2: float = 8.0,
         hover_thrust: float = 0.265,
@@ -53,14 +69,21 @@ class GeometricPathFollower:
         max_tilt_deg: float = 60.0,
         min_normalized_thrust: float = 0.05,
         max_normalized_thrust: float = 1.0,
+        tilt_thrust_alignment_min: float = 0.35,
         drag_coeff: float = 0.0,
         gravity_mps2: float = GRAVITY_MPS2,
         command_mapper: CommandMapper | None = None,
     ) -> None:
-        self.path_manager = path_manager
         self.kp_cross = float(kp_cross)
         self.kd_cross = float(kd_cross)
+        self.kp_cross_vertical = float(kp_cross if kp_cross_vertical is None else kp_cross_vertical)
+        self.kd_cross_vertical = float(kd_cross if kd_cross_vertical is None else kd_cross_vertical)
+        self.cross_gain_curvature_deadband = max(0.0, float(cross_gain_curvature_deadband))
+        self.cross_gain_curvature_ramp = float(cross_gain_curvature_ramp)
+        self.horizontal_cross_gain_curvature_boost = float(horizontal_cross_gain_curvature_boost)
+        self.vertical_cross_gain_curvature_boost = float(vertical_cross_gain_curvature_boost)
         self.kp_speed = float(kp_speed)
+        self.kd_speed = float(kd_speed)
         self.acceleration_filter_alpha = float(acceleration_filter_alpha)
         self.lookahead_m = float(lookahead_m)
         self.speed_lookahead_m = float(speed_lookahead_m)
@@ -69,6 +92,10 @@ class GeometricPathFollower:
         self.v_min = float(v_min)
         self.curvature_speed_deadband = float(curvature_speed_deadband)
         self.curvature_speed_ramp = float(curvature_speed_ramp)
+        self.cross_track_speed_derate_start_m = float(cross_track_speed_derate_start_m)
+        self.cross_track_speed_derate_full_m = float(cross_track_speed_derate_full_m)
+        self.cross_track_speed_derate_min_scale = float(cross_track_speed_derate_min_scale)
+        self.launch_speed_ramp_s = float(launch_speed_ramp_s)
         self.curvature_feedforward_gain = float(curvature_feedforward_gain)
         self.curvature_feedforward_max_acceleration_mps2 = float(
             curvature_feedforward_max_acceleration_mps2
@@ -80,6 +107,7 @@ class GeometricPathFollower:
         self.max_tilt_rad = math.radians(float(max_tilt_deg))
         self.min_normalized_thrust = float(min_normalized_thrust)
         self.max_normalized_thrust = float(max_normalized_thrust)
+        self.tilt_thrust_alignment_min = float(tilt_thrust_alignment_min)
         self.drag_coeff = float(drag_coeff)
         self.gravity_ned = np.array((0.0, 0.0, float(gravity_mps2)), dtype=float)
         self.command_mapper = command_mapper or CommandMapper()
@@ -90,51 +118,95 @@ class GeometricPathFollower:
             raise ValueError("gravity_mps2 must be positive")
         self._validate_gains()
 
-    def set_path_manager(self, path_manager: PathManager) -> None:
-        self.path_manager = path_manager
-
-    def compute_control(self, vehicle_state: VehicleState) -> dict[str, Any]:
-        position = np.asarray(vehicle_state.position_local_ned_m, dtype=float)
+    def compute_control(
+        self,
+        vehicle_state: VehicleState,
+        *,
+        carrot: PathCarrot,
+        time_since_takeoff_s: float | None = None,
+    ) -> dict[str, Any]:
         velocity = np.asarray(vehicle_state.velocity_local_ned_mps, dtype=float)
+        acceleration = np.asarray(vehicle_state.acceleration_local_ned_mps2, dtype=float)
 
-        # Project the drone onto the path, then sample a lookahead point used for heading.
-        projection = self.path_manager.project(vehicle_state.position_local_ned_m)
-        preview = self.path_manager.carrot_point(
-            vehicle_state.position_local_ned_m,
-            self.lookahead_m,
-            self.speed_lookahead_m,
+        closest = np.asarray(carrot.projection_closest_point_local_ned_m, dtype=float)
+        tangent = _unit(
+            carrot.projection_tangent_local_ned,
+            "carrot.projection_tangent_local_ned",
         )
-
-        closest = np.asarray(projection.closest_point_local_ned_m, dtype=float)
-        tangent = _unit(projection.tangent_local_ned, "projection.tangent_local_ned")
-        heading = _unit(preview["tangent_local_ned"], "preview.tangent_local_ned")
+        carrot_heading = _unit(carrot.tangent_local_ned, "carrot.tangent_local_ned")
         curvature = _nonnegative_float(
-            preview.get("max_curvature_ahead", preview.get("curvature", 0.0)),
-            "preview.max_curvature_ahead",
+            carrot.max_curvature_ahead,
+            "carrot.max_curvature_ahead",
         )
 
-        # Split position and velocity error into along-path and cross-path components.
-        position_error = position - closest
-        along_track_error = tangent * float(np.dot(position_error, tangent))
-        cross_track_error = position_error - along_track_error
-
+        cross_track_error = np.asarray(carrot.cross_track_error_local_ned_m, dtype=float)
         along_track_speed_mps = float(np.dot(velocity, tangent))
         cross_track_velocity = velocity - along_track_speed_mps * tangent
-        commanded_speed_mps = self._curvature_speed_mps(curvature)
+        horizontal_cross_track_error = cross_track_error.copy()
+        horizontal_cross_track_error[2] = 0.0
+        vertical_cross_track_error = np.array((0.0, 0.0, cross_track_error[2]), dtype=float)
+        horizontal_cross_track_velocity = cross_track_velocity.copy()
+        horizontal_cross_track_velocity[2] = 0.0
+        vertical_cross_track_velocity = np.array((0.0, 0.0, cross_track_velocity[2]), dtype=float)
+        cross_gain_curvature_alpha = self._cross_gain_curvature_alpha(curvature)
+        horizontal_cross_gain_scale = (
+            1.0 + self.horizontal_cross_gain_curvature_boost * cross_gain_curvature_alpha
+        )
+        vertical_cross_gain_scale = (
+            1.0 + self.vertical_cross_gain_curvature_boost * cross_gain_curvature_alpha
+        )
+        kp_cross_effective = self.kp_cross * horizontal_cross_gain_scale
+        kd_cross_effective = self.kd_cross * horizontal_cross_gain_scale
+        kp_cross_vertical_effective = self.kp_cross_vertical * vertical_cross_gain_scale
+        kd_cross_vertical_effective = self.kd_cross_vertical * vertical_cross_gain_scale
+        cross_track_guidance_acceleration = (
+            -kp_cross_effective * horizontal_cross_track_error
+            - kd_cross_effective * horizontal_cross_track_velocity
+            - kp_cross_vertical_effective * vertical_cross_track_error
+            - kd_cross_vertical_effective * vertical_cross_track_velocity
+        )
+        curvature_commanded_speed_mps = self._curvature_speed_mps(curvature)
+        cross_track_error_m = float(np.linalg.norm(cross_track_error))
+        cross_track_speed_derate_alpha = self._cross_track_speed_derate_alpha(
+            cross_track_error_m
+        )
+        cross_track_speed_derate_scale = (
+            1.0
+            - cross_track_speed_derate_alpha
+            * (1.0 - self.cross_track_speed_derate_min_scale)
+        )
+        derated_commanded_speed_mps = float(
+            np.clip(
+                curvature_commanded_speed_mps * cross_track_speed_derate_scale,
+                self.v_min,
+                self.v_max,
+            )
+        )
+        launch_speed_ramp_scale = self._launch_speed_ramp_scale(time_since_takeoff_s)
+        commanded_speed_mps = float(
+            np.clip(
+                derated_commanded_speed_mps * launch_speed_ramp_scale,
+                0.0,
+                self.v_max,
+            )
+        )
         curvature_feedforward = self._curvature_feedforward_acceleration(
             tangent=tangent,
-            heading=heading,
+            heading=carrot_heading,
             along_track_speed_mps=along_track_speed_mps,
-            preview_distance_m=float(preview["along_track_m"]) - float(projection.along_track_m),
+            preview_distance_m=(
+                float(carrot.along_track_m)
+                - float(carrot.projection_along_track_m)
+            ),
         )
 
+        along_track_acceleration_mps2 = float(np.dot(acceleration, tangent))
         speed_acceleration_mps2 = self.kp_speed * (
             commanded_speed_mps - along_track_speed_mps
-        )
+        ) - self.kd_speed * along_track_acceleration_mps2
         # Cross-track feedback pulls back to the path; speed feedback pushes along it.
         desired_acceleration = (
-            -self.kp_cross * cross_track_error
-            - self.kd_cross * cross_track_velocity
+            cross_track_guidance_acceleration
             + speed_acceleration_mps2 * tangent
             + curvature_feedforward
         )
@@ -157,20 +229,52 @@ class GeometricPathFollower:
             raise ValueError("thrust acceleration vector cannot be zero")
 
         body_z_down_ned = -thrust_acceleration_ned / thrust_norm_mps2
-        heading_horizontal = heading.copy()
-        heading_horizontal[2] = 0.0
-        if float(np.linalg.norm(heading_horizontal)) <= 1e-9:
-            heading_horizontal = np.array((1.0, 0.0, 0.0), dtype=float)
+        attitude_heading = carrot_heading.copy()
+        attitude_heading[2] = 0.0
+        if float(np.linalg.norm(attitude_heading)) <= 1e-9:
+            attitude_heading = np.array((1.0, 0.0, 0.0), dtype=float)
         quaternion = np.asarray(
-            _attitude_from_body_z_and_heading(body_z_down_ned, heading_horizontal),
+            _attitude_from_body_z_and_heading(body_z_down_ned, attitude_heading),
             dtype=float,
         )
 
-        thrust = float(
+        raw_thrust = float(
             np.clip(
                 self.hover_thrust * thrust_norm_mps2 / self.gravity_ned[2],
                 self.min_normalized_thrust,
                 self.max_normalized_thrust,
+            )
+        )
+        actual_body_z_down_ned = rotation_matrix_from_quaternion(
+            vehicle_state.attitude_quaternion
+        )[:, 2]
+        thrust_alignment = float(
+            np.clip(np.dot(actual_body_z_down_ned, body_z_down_ned), -1.0, 1.0)
+        )
+        thrust_alignment_scale = float(
+            np.clip(thrust_alignment, self.tilt_thrust_alignment_min, 1.0)
+        )
+        tilt_compensated_thrust = float(raw_thrust * thrust_alignment_scale)
+        actual_body_z_down_z = float(actual_body_z_down_ned[2])
+        prevent_climb_thrust_cap = self.max_normalized_thrust
+        prevent_climb_thrust_cap_active = False
+        if desired_acceleration[2] >= 0.0 and actual_body_z_down_z > 1e-6:
+            prevent_climb_thrust_cap = float(
+                np.clip(
+                    self.hover_thrust / actual_body_z_down_z,
+                    self.min_normalized_thrust,
+                    self.max_normalized_thrust,
+                )
+            )
+            prevent_climb_thrust_cap_active = (
+                tilt_compensated_thrust > prevent_climb_thrust_cap
+            )
+        max_allowed_thrust = min(self.max_normalized_thrust, prevent_climb_thrust_cap)
+        thrust = float(
+            np.clip(
+                tilt_compensated_thrust,
+                self.min_normalized_thrust,
+                max_allowed_thrust,
             )
         )
 
@@ -178,19 +282,88 @@ class GeometricPathFollower:
         payload["source"] = "geometric_path_follower"
         payload["path_follower"] = {
             "projection_closest_point_local_ned_m": [float(value) for value in closest],
-            "projection_along_track_m": float(projection.along_track_m),
+            "projection_along_track_m": float(carrot.projection_along_track_m),
             "preview_position_local_ned_m": [
-                float(value) for value in preview["position_local_ned_m"]
+                float(value) for value in carrot.position_local_ned_m
             ],
-            "preview_along_track_m": float(preview["along_track_m"]),
-            "cross_track_error_m": float(np.linalg.norm(cross_track_error)),
+            "preview_along_track_m": float(carrot.along_track_m),
+            "cross_track_error_m": float(cross_track_error_m),
             "cross_track_error_local_ned_m": [float(value) for value in cross_track_error],
+            "horizontal_cross_track_error_local_ned_m": [
+                float(value) for value in horizontal_cross_track_error
+            ],
+            "vertical_cross_track_error_local_ned_m": [
+                float(value) for value in vertical_cross_track_error
+            ],
+            "cross_track_velocity_local_ned_mps": [
+                float(value) for value in cross_track_velocity
+            ],
+            "horizontal_cross_track_velocity_local_ned_mps": [
+                float(value) for value in horizontal_cross_track_velocity
+            ],
+            "vertical_cross_track_velocity_local_ned_mps": [
+                float(value) for value in vertical_cross_track_velocity
+            ],
+            "cross_track_guidance_acceleration_local_ned_mps2": [
+                float(value) for value in cross_track_guidance_acceleration
+            ],
+            "cross_track_guidance_acceleration_mps2": float(
+                np.linalg.norm(cross_track_guidance_acceleration)
+            ),
+            "position_guidance_acceleration_local_ned_mps2": [
+                float(value) for value in cross_track_guidance_acceleration
+            ],
+            "position_guidance_acceleration_mps2": float(
+                np.linalg.norm(cross_track_guidance_acceleration)
+            ),
+            "attitude_heading_local_ned": [
+                float(value) for value in _unit(attitude_heading, "attitude_heading")
+            ],
+            "attitude_heading_source": "carrot_tangent_local_ned",
             "kp_cross": float(self.kp_cross),
             "kd_cross": float(self.kd_cross),
+            "kp_cross_vertical": float(self.kp_cross_vertical),
+            "kd_cross_vertical": float(self.kd_cross_vertical),
+            "kp_cross_effective": float(kp_cross_effective),
+            "kd_cross_effective": float(kd_cross_effective),
+            "kp_cross_vertical_effective": float(kp_cross_vertical_effective),
+            "kd_cross_vertical_effective": float(kd_cross_vertical_effective),
+            "cross_gain_curvature_alpha": float(cross_gain_curvature_alpha),
+            "horizontal_cross_gain_scale": float(horizontal_cross_gain_scale),
+            "vertical_cross_gain_scale": float(vertical_cross_gain_scale),
+            "cross_gain_curvature_deadband": float(self.cross_gain_curvature_deadband),
+            "cross_gain_curvature_ramp": float(self.cross_gain_curvature_ramp),
+            "horizontal_cross_gain_curvature_boost": float(
+                self.horizontal_cross_gain_curvature_boost
+            ),
+            "vertical_cross_gain_curvature_boost": float(
+                self.vertical_cross_gain_curvature_boost
+            ),
             "along_track_speed_mps": float(along_track_speed_mps),
+            "along_track_acceleration_mps2": float(along_track_acceleration_mps2),
+            "curvature_commanded_speed_mps": float(curvature_commanded_speed_mps),
+            "derated_commanded_speed_mps": float(derated_commanded_speed_mps),
             "commanded_speed_mps": float(commanded_speed_mps),
+            "cross_track_speed_derate_alpha": float(cross_track_speed_derate_alpha),
+            "cross_track_speed_derate_scale": float(cross_track_speed_derate_scale),
+            "cross_track_speed_derate_start_m": float(
+                self.cross_track_speed_derate_start_m
+            ),
+            "cross_track_speed_derate_full_m": float(
+                self.cross_track_speed_derate_full_m
+            ),
+            "cross_track_speed_derate_min_scale": float(
+                self.cross_track_speed_derate_min_scale
+            ),
+            "launch_speed_ramp_s": float(self.launch_speed_ramp_s),
+            "launch_speed_ramp_scale": float(launch_speed_ramp_scale),
+            "time_since_takeoff_s": (
+                None if time_since_takeoff_s is None else float(time_since_takeoff_s)
+            ),
+            "kp_speed": float(self.kp_speed),
+            "kd_speed": float(self.kd_speed),
             "speed_acceleration_mps2": float(speed_acceleration_mps2),
-            "curvature": float(preview.get("curvature", curvature)),
+            "curvature": float(carrot.curvature),
             "max_curvature_ahead": float(curvature),
             "curvature_feedforward_gain": float(self.curvature_feedforward_gain),
             "curvature_feedforward_max_acceleration_mps2": float(
@@ -216,6 +389,20 @@ class GeometricPathFollower:
             "mode": "geometric_dynamic_inversion",
             "specific_thrust_mps2": float(thrust_norm_mps2),
             "hover_thrust": float(self.hover_thrust),
+            "raw_thrust": float(raw_thrust),
+            "tilt_compensated_thrust": float(tilt_compensated_thrust),
+            "prevent_climb_thrust_cap": float(prevent_climb_thrust_cap),
+            "prevent_climb_thrust_cap_active": bool(prevent_climb_thrust_cap_active),
+            "max_allowed_thrust": float(max_allowed_thrust),
+            "final_thrust": float(thrust),
+            "tilt_thrust_alignment": float(thrust_alignment),
+            "tilt_thrust_alignment_scale": float(thrust_alignment_scale),
+            "tilt_thrust_alignment_min": float(self.tilt_thrust_alignment_min),
+            "actual_body_z_down_ned": [float(value) for value in actual_body_z_down_ned],
+            "desired_body_z_down_ned": [float(value) for value in body_z_down_ned],
+            "actual_desired_body_z_angle_deg": float(
+                math.degrees(math.acos(thrust_alignment))
+            ),
         }
 
         self.last_payload = payload
@@ -234,6 +421,22 @@ class GeometricPathFollower:
         blend = 1.0 - math.exp(-excess_curvature / self.curvature_speed_ramp)
         blend = float(np.clip(blend, 0.0, 1.0))
         return float(self.v_max - blend * (self.v_max - curvature_limited))
+
+    def _cross_track_speed_derate_alpha(self, cross_track_error_m: float) -> float:
+        start_m = float(self.cross_track_speed_derate_start_m)
+        full_m = float(self.cross_track_speed_derate_full_m)
+        error_m = max(0.0, float(cross_track_error_m))
+        if error_m <= start_m:
+            return 0.0
+        if full_m <= start_m:
+            return 1.0
+        return float(np.clip((error_m - start_m) / (full_m - start_m), 0.0, 1.0))
+
+    def _launch_speed_ramp_scale(self, time_since_takeoff_s: float | None) -> float:
+        ramp_s = float(self.launch_speed_ramp_s)
+        if ramp_s <= 0.0 or time_since_takeoff_s is None:
+            return 1.0
+        return float(np.clip(float(time_since_takeoff_s) / ramp_s, 0.0, 1.0))
 
     def _curvature_feedforward_acceleration(
         self,
@@ -269,6 +472,18 @@ class GeometricPathFollower:
             acceleration = acceleration * (limit / acceleration_norm)
         return acceleration
 
+    def _cross_gain_curvature_alpha(self, curvature: float) -> float:
+        ramp = float(self.cross_gain_curvature_ramp)
+        if ramp <= 0.0:
+            return 1.0 if float(curvature) > self.cross_gain_curvature_deadband else 0.0
+        return float(
+            np.clip(
+                (float(curvature) - self.cross_gain_curvature_deadband) / ramp,
+                0.0,
+                1.0,
+            )
+        )
+
     def _limited_acceleration(self, acceleration: np.ndarray) -> np.ndarray:
         limit = float(self.max_commanded_acceleration_mps2)
         if limit <= 0.0:
@@ -297,19 +512,27 @@ class GeometricPathFollower:
 
         horizontal = acceleration[0:2]
         horizontal_norm = float(np.linalg.norm(horizontal))
-        if horizontal_norm <= 1e-12:
+        thrust_vertical_mps2 = float(self.gravity_ned[2] - acceleration[2])
+        thrust_norm_mps2 = math.hypot(horizontal_norm, thrust_vertical_mps2)
+        if thrust_norm_mps2 <= 1e-12:
             return acceleration
 
-        upward_thrust_acceleration_mps2 = max(
-            1e-6,
-            float(self.gravity_ned[2] - acceleration[2]),
-        )
-        max_horizontal_mps2 = upward_thrust_acceleration_mps2 * math.tan(self.max_tilt_rad)
-        if horizontal_norm <= max_horizontal_mps2:
+        tilt_rad = math.atan2(horizontal_norm, thrust_vertical_mps2)
+        if tilt_rad <= self.max_tilt_rad:
             return acceleration
 
         limited = acceleration.copy()
-        limited[0:2] = horizontal * (max_horizontal_mps2 / horizontal_norm)
+        if self.max_tilt_rad < math.pi / 2.0:
+            max_horizontal_mps2 = max(0.0, thrust_vertical_mps2) * math.tan(self.max_tilt_rad)
+            if horizontal_norm <= 1e-12:
+                return acceleration
+            limited[0:2] = horizontal * (max_horizontal_mps2 / horizontal_norm)
+        else:
+            if horizontal_norm <= 1e-12:
+                limited[2] = float(self.gravity_ned[2])
+            else:
+                limited_thrust_vertical_mps2 = horizontal_norm / math.tan(self.max_tilt_rad)
+                limited[2] = float(self.gravity_ned[2] - limited_thrust_vertical_mps2)
         return limited
 
     def _validate_gains(self) -> None:
@@ -323,22 +546,50 @@ class GeometricPathFollower:
             raise ValueError("curvature_speed_deadband cannot be negative")
         if self.curvature_speed_ramp <= 0.0:
             raise ValueError("curvature_speed_ramp must be positive")
+        if self.cross_track_speed_derate_start_m < 0.0:
+            raise ValueError("cross_track_speed_derate_start_m cannot be negative")
+        if self.cross_track_speed_derate_full_m < 0.0:
+            raise ValueError("cross_track_speed_derate_full_m cannot be negative")
+        if not 0.0 <= self.cross_track_speed_derate_min_scale <= 1.0:
+            raise ValueError("cross_track_speed_derate_min_scale must be in [0, 1]")
+        if self.launch_speed_ramp_s < 0.0:
+            raise ValueError("launch_speed_ramp_s cannot be negative")
         if self.curvature_feedforward_gain < 0.0:
             raise ValueError("curvature_feedforward_gain cannot be negative")
         if self.curvature_feedforward_max_acceleration_mps2 < 0.0:
             raise ValueError("curvature_feedforward_max_acceleration_mps2 cannot be negative")
+        if self.kp_cross < 0.0:
+            raise ValueError("kp_cross cannot be negative")
+        if self.kd_cross < 0.0:
+            raise ValueError("kd_cross cannot be negative")
+        if self.kp_cross_vertical < 0.0:
+            raise ValueError("kp_cross_vertical cannot be negative")
+        if self.kd_cross_vertical < 0.0:
+            raise ValueError("kd_cross_vertical cannot be negative")
+        if self.cross_gain_curvature_ramp < 0.0:
+            raise ValueError("cross_gain_curvature_ramp cannot be negative")
+        if self.horizontal_cross_gain_curvature_boost < -1.0:
+            raise ValueError("horizontal_cross_gain_curvature_boost cannot be less than -1")
+        if self.vertical_cross_gain_curvature_boost < -1.0:
+            raise ValueError("vertical_cross_gain_curvature_boost cannot be less than -1")
+        if self.kp_speed < 0.0:
+            raise ValueError("kp_speed cannot be negative")
+        if self.kd_speed < 0.0:
+            raise ValueError("kd_speed cannot be negative")
         if self.hover_thrust <= 0.0:
             raise ValueError("hover_thrust must be positive")
         if self.max_upward_acceleration_mps2 < 0.0:
             raise ValueError("max_upward_acceleration_mps2 cannot be negative")
         if self.max_downward_acceleration_mps2 < 0.0:
             raise ValueError("max_downward_acceleration_mps2 cannot be negative")
-        if not 0.0 <= self.max_tilt_rad < math.pi / 2.0:
-            raise ValueError("max_tilt_deg must be in [0, 90)")
+        if not 0.0 <= self.max_tilt_rad < math.pi:
+            raise ValueError("max_tilt_deg must be in [0, 180)")
         if not 0.0 <= self.acceleration_filter_alpha <= 1.0:
             raise ValueError("acceleration_filter_alpha must be in [0, 1]")
         if self.min_normalized_thrust > self.max_normalized_thrust:
             raise ValueError("min_normalized_thrust cannot exceed max_normalized_thrust")
+        if not 0.0 <= self.tilt_thrust_alignment_min <= 1.0:
+            raise ValueError("tilt_thrust_alignment_min must be in [0, 1]")
 
     def _filtered_acceleration(self, acceleration: np.ndarray) -> np.ndarray:
         alpha = float(self.acceleration_filter_alpha)

@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DensityProfile Spectrum Calibration</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="sticky-shell" class="sticky-shell">
+      <header class="endpoint-header" aria-label="Candidate spectrum endpoints">
+        <fieldset class="endpoint-controls" data-endpoint="large">
+          <legend>Largest-area endpoint</legend>
+          <label data-field="density_radius_px">
+            <span>density_radius_px</span>
+            <span class="control-inputs">
+              <input class="range" type="range" aria-label="Largest-area density_radius_px" />
+              <input class="number" type="number" aria-label="Largest-area density_radius_px value" />
+            </span>
+          </label>
+          <label data-field="ridge_radius_px">
+            <span>ridge_radius_px</span>
+            <span class="control-inputs">
+              <input class="range" type="range" aria-label="Largest-area ridge_radius_px" />
+              <input class="number" type="number" aria-label="Largest-area ridge_radius_px value" />
+            </span>
+          </label>
+          <label data-field="inverse_gamma">
+            <span>inverse_gamma</span>
+            <span class="control-inputs">
+              <input class="range" type="range" aria-label="Largest-area inverse_gamma" />
+              <input class="number" type="number" aria-label="Largest-area inverse_gamma value" />
+            </span>
+          </label>
+          <label data-field="ridge_gamma">
+            <span>ridge_gamma</span>
+            <span class="control-inputs">
+              <input class="range" type="range" aria-label="Largest-area ridge_gamma" />
+              <input class="number" type="number" aria-label="Largest-area ridge_gamma value" />
+            </span>
+          </label>
+          <label data-field="relative_cap">
+            <span>relative_cap</span>
+            <span class="control-inputs">
+              <input class="range" type="range" aria-label="Largest-area relative_cap" />
+              <input class="number" type="number" aria-label="Largest-area relative_cap value" />
+            </span>
+          </label>
+          <label data-field="open_kernel_radius_px">
+            <span>open_kernel_radius_px</span>
+            <span class="control-inputs">
+              <input class="range" type="range" aria-label="Largest-area open_kernel_radius_px" />
+              <input class="number" type="number" aria-label="Largest-area open_kernel_radius_px value" />
+            </span>
+          </label>
+          <label data-field="close_kernel_radius_px">
+            <span>close_kernel_radius_px</span>
+            <span class="control-inputs">
+              <input class="range" type="range" aria-label="Largest-area close_kernel_radius_px" />
+              <input class="number" type="number" aria-label="Largest-area close_kernel_radius_px value" />
+            </span>
+          </label>
+        </fieldset>
+
+        <section class="header-center" aria-live="polite">
+          <strong>DensityProfile spectrum</strong>
+          <button id="reset-endpoints" type="button" disabled>Reset endpoints</button>
+          <small id="candidate-status">Loading /api/manifest…</small>
+          <small class="morphology-note">
+            0 disables · radius 1 = 3×3 · server order: open → close → DensityBank
+          </small>
+          <small class="panel-order">
+            source_png · closed_mask_png · candidate_input_mask · final_field · p70_mask · p80_mask · p90_mask
+          </small>
+        </section>
+
+        <fieldset class="endpoint-controls" data-endpoint="small">
+          <legend>Smallest-area endpoint</legend>
+          <label data-field="density_radius_px">
+            <span>density_radius_px</span>
+            <span class="control-inputs">
+              <input class="range" type="range" aria-label="Smallest-area density_radius_px" />
+              <input class="number" type="number" aria-label="Smallest-area density_radius_px value" />
+            </span>
+          </label>
+          <label data-field="ridge_radius_px">
+            <span>ridge_radius_px</span>
+            <span class="control-inputs">
+              <input class="range" type="range" aria-label="Smallest-area ridge_radius_px" />
+              <input class="number" type="number" aria-label="Smallest-area ridge_radius_px value" />
+            </span>
+          </label>
+          <label data-field="inverse_gamma">
+            <span>inverse_gamma</span>
+            <span class="control-inputs">
+              <input class="range" type="range" aria-label="Smallest-area inverse_gamma" />
+              <input class="number" type="number" aria-label="Smallest-area inverse_gamma value" />
+            </span>
+          </label>
+          <label data-field="ridge_gamma">
+            <span>ridge_gamma</span>
+            <span class="control-inputs">
+              <input class="range" type="range" aria-label="Smallest-area ridge_gamma" />
+              <input class="number" type="number" aria-label="Smallest-area ridge_gamma value" />
+            </span>
+          </label>
+          <label data-field="relative_cap">
+            <span>relative_cap</span>
+            <span class="control-inputs">
+              <input class="range" type="range" aria-label="Smallest-area relative_cap" />
+              <input class="number" type="number" aria-label="Smallest-area relative_cap value" />
+            </span>
+          </label>
+          <label data-field="open_kernel_radius_px">
+            <span>open_kernel_radius_px</span>
+            <span class="control-inputs">
+              <input class="range" type="range" aria-label="Smallest-area open_kernel_radius_px" />
+              <input class="number" type="number" aria-label="Smallest-area open_kernel_radius_px value" />
+            </span>
+          </label>
+          <label data-field="close_kernel_radius_px">
+            <span>close_kernel_radius_px</span>
+            <span class="control-inputs">
+              <input class="range" type="range" aria-label="Smallest-area close_kernel_radius_px" />
+              <input class="number" type="number" aria-label="Smallest-area close_kernel_radius_px value" />
+            </span>
+          </label>
+        </fieldset>
+      </header>
+      <section id="column-headers" class="column-grid column-headers" aria-label="Resolved area bins"></section>
+    </div>
+
+    <main class="spectrum-main">
+      <div id="page-message" role="status">Loading exhaustive component distributions…</div>
+      <section id="component-columns" class="column-grid component-columns" hidden></section>
+      <div id="collection-sentinel" role="status">Preparing the first synchronized batch…</div>
+    </main>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

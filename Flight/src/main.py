@@ -1,3 +1,21 @@
+"""I met a traveller from an antique land
+Who said: Two vast and trunkless legs of stone
+Stand in the desart. Near them, on the sand,
+Half sunk, a shattered visage lies, whose frown,
+And wrinkled lip, and sneer of cold command,
+Tell that its sculptor well those passions read
+Which yet survive, stamped on these lifeless things,
+The hand that mocked them and the heart that fed:
+And on the pedestal these words appear:
+"My name is Ozymandias, king of kings:
+Look on my works, ye Mighty, and despair!"
+Nothing beside remains. Round the decay
+Of that colossal wreck, boundless and bare
+The lone and level sands stretch far away.
+
+- Percy Shelley, "Ozymandias"
+"""
+
 import time
 import traceback
 import numpy as np 
@@ -6,7 +24,7 @@ from core.initialization import initialize
 from core.logging import generate_mp4
 from core.schema import MavlinkHighresImu, StateRecord, VioCorrection
 from core.utils import time_since
-
+from core.coordinates import quaternion_from_roll_pitch_yaw_deg
 
 def main() -> int:
     (
@@ -23,7 +41,6 @@ def main() -> int:
         gate_map,
         path_manager,
         attitude_controller,
-        carrot_controller,
         geometric_path_follower,
         hover_controller,
     ) = initialize()
@@ -39,8 +56,7 @@ def main() -> int:
     latest_frame = None
     observation = None
     planned_path = None
-    carrot_target = None
-    geometric_target = None
+    control_target = None
     vision_pending = None
     pending_vio_correction: VioCorrection | None = None
 
@@ -176,12 +192,10 @@ def main() -> int:
                     gate_count=len(observation.gates),
                     perception=vision_perception.snapshot(),
                 )
-
                 gate_map.update(
                     observation,
                     observer_position_local_ned_m=vehicle_state_estimator.state.position_local_ned_m,
                 )
-                gate_map.update_crossed_gates(vehicle_state_estimator.state.position_local_ned_m)
                 logger.log_gate_map(
                     gate_map.gates,
                     time_since_startup_s=time_since(started_s),
@@ -194,7 +208,7 @@ def main() -> int:
                 )
 
                 planned_path = path_manager.plan(
-                    gates=gate_map.uncrossed_gates(),
+                    gates=gate_map.gates,
                     vehicle_state=vehicle_state_estimator.state,
                 )
 
@@ -208,31 +222,6 @@ def main() -> int:
             if sleep_s > 0.0:
                 time.sleep(sleep_s)
 
-
-
-        if planned_path is None:
-            if observation is not None:
-                gate_map.update(
-                    observation,
-                    observer_position_local_ned_m=vehicle_state.position_local_ned_m,
-                )
-                gate_map.update_crossed_gates(vehicle_state.position_local_ned_m)
-                logger.log_gate_map(
-                    gate_map.gates,
-                    time_since_startup_s=time_since(started_s),
-                    cycle=inner_cycle,
-                    outer_cycle=outer_cycle,
-                    frame_id=observation.frame_id,
-                    sim_time_ns=observation.sim_time_ns,
-                    gate_count=len(gate_map.gates),
-                    source=observation.source,
-                )
-
-            planned_path = path_manager.plan(
-                gates=gate_map.uncrossed_gates(),
-                vehicle_state=vehicle_state,
-            )
-
         if path_manager.test_path is not None:
             logger.log_test_path(
                 path_manager.test_path.to_log_dict(origin_local_ned_m=vehicle_state.position_local_ned_m),
@@ -245,7 +234,6 @@ def main() -> int:
                 cycle=inner_cycle,
                 planner=path_manager.planning_mode,
             )
-
 
 
         ## MAIN LOOP
@@ -306,22 +294,29 @@ def main() -> int:
             if outer_loop_ran:
                 next_outer_cycle_s += outer_period_s
 
-                # if the vision job has completed
+                # If observation is complete
                 if vision_pending is not None and vision_pending[0].done():
                     vision_future, frame_log, frame_outer_cycle, frame_vehicle_state = vision_pending
                     vision_pending = None
 
-                    # do things with the observation 
                     try:
                         observation = vision_future.result()
-                        state_frame_delta_ns = (
-                            frame_log["vehicle_state_elapsed_ns"] - frame_log["frame_elapsed_ns"]
-                            if frame_log.get("vehicle_state_elapsed_ns") is not None
-                            and frame_log.get("frame_elapsed_ns") is not None
-                            else None
-                        )
+                        state_frame_delta_ns = frame_log["vehicle_state_elapsed_ns"] - frame_log["frame_elapsed_ns"]
                         frame_log["gate_count"] = len(observation.gates)
                         frame_log["observation"] = observation.to_controller_payload(output_dir="memory")
+
+                        # update gatemap
+                        gate_map.update(
+                            observation,
+                            observer_position_local_ned_m=frame_vehicle_state.position_local_ned_m,
+                        )
+
+                        planned_path = path_manager.plan(
+                            gates=gate_map.gates,
+                            vehicle_state=frame_vehicle_state,
+                        )
+
+                        # Log
                         logger.log_vision_observation(
                             observation,
                             frame_id=frame_log["frame_id"],
@@ -333,13 +328,6 @@ def main() -> int:
                             perception=vision_perception.snapshot(),
                         )
                         logger.log_vision_frame(frame_log, cycle=frame_outer_cycle, status="processed")
-
-                        # update gatemap
-                        gate_map.update(
-                            observation,
-                            observer_position_local_ned_m=frame_vehicle_state.position_local_ned_m,
-                        )
-                        gate_map.update_crossed_gates(frame_vehicle_state.position_local_ned_m)
                         logger.log_gate_map(
                             gate_map.gates,
                             time_since_startup_s=time_since(started_s),
@@ -349,11 +337,6 @@ def main() -> int:
                             sim_time_ns=frame_log["sim_time_ns"],
                             gate_count=len(gate_map.gates),
                             source=observation.source,
-                        )
-
-                        planned_path = path_manager.plan(
-                            gates=gate_map.uncrossed_gates(),
-                            vehicle_state=frame_vehicle_state,
                         )
                         logger.log_planned_path(
                             planned_path.to_log_dict(origin_local_ned_m=frame_vehicle_state.position_local_ned_m),
@@ -371,11 +354,10 @@ def main() -> int:
 
                 # Pull latest frame
                 latest_frame = vision_rx.get_latest_frame()
-
                 if latest_frame is not None:
                     vision_rx.record_frame_cycle(latest_frame.frame_id, inner_cycle)
 
-                # do VIO
+                # VIO
                 if settings.enable_vio and latest_frame is not None:
                     vio_measurement = vio_provider.process_frame(latest_frame)
                     pending_vio_correction = (
@@ -391,7 +373,7 @@ def main() -> int:
                         )
                     )
 
-                # if there is no job queued and we have a frame
+                # If no observation job, we need to queue one
                 if vision_pending is None and latest_frame is not None and vehicle_state is not None:
                     frame_log = {
                         "frame_id": latest_frame.frame_id,
@@ -404,7 +386,6 @@ def main() -> int:
                         "frame_elapsed_ns": latest_frame.elapsed_time_ns
                     }
 
-                    # queue vision job
                     vision_pending = (
                         vision_executor.submit(vision_perception.process_vision_frame, latest_frame, vehicle_state=vehicle_state),
                         frame_log,
@@ -412,36 +393,14 @@ def main() -> int:
                         vehicle_state,
                     )
 
-                crossed_gates = gate_map.update_crossed_gates(vehicle_state.position_local_ned_m)
-                if crossed_gates:
-                    logger.log_gate_map(
-                        gate_map.gates,
-                        time_since_startup_s=time_since(started_s),
-                        cycle=inner_cycle,
-                        outer_cycle=outer_cycle,
-                        sim_time_ns=vehicle_state.sim_time_ns,
-                        gate_count=len(gate_map.gates),
-                        crossed_gate_ids=[gate.gate_id for gate in crossed_gates],
-                    )
-                    planned_path = path_manager.plan(
-                        gates=gate_map.uncrossed_gates(),
-                        vehicle_state=vehicle_state,
-                    )
-                    logger.log_planned_path(
-                        planned_path.to_log_dict(origin_local_ned_m=vehicle_state.position_local_ned_m),
-                        time_since_startup_s=time_since(started_s),
-                        cycle=inner_cycle,
-                        outer_cycle=outer_cycle,
-                        planner=path_manager.planning_mode,
-                    )
-
-                # CHECK FAILSAFE
+                # Computer outer loop command
                 if settings.allow_flight and system_mode_manager.is_racing():
                     path_projection = path_manager.project(vehicle_state.position_local_ned_m)
                     path_error_m = float(path_projection.cross_track_error_m)
+
+                    # If failsafe triggered
                     if path_error_m > settings.failsafe_distance_m:
                         system_mode_manager.update_mode("finish")
-                        carrot_target = None
                         logger.log_event(
                             "path_failsafe_finished",
                             reason="path_deviation_exceeded",
@@ -453,29 +412,23 @@ def main() -> int:
                             outer_cycle=outer_cycle,
                             sim_time_ns=vehicle_state.sim_time_ns,
                         )
-
-                # compute attitude target for path-following controller
-                if settings.allow_flight and system_mode_manager.is_racing():
-                    if settings.control_method == "geometric_path_follower":
-                        geometric_target = None
                     else:
-                        carrot = path_manager.carrot_point(
+                        path_carrot = path_manager.carrot(
                             vehicle_state.position_local_ned_m,
-                            carrot_controller.lookahead_m,
-                            carrot_controller.speed_lookahead_m,
+                            geometric_path_follower.lookahead_m,
+                            geometric_path_follower.speed_lookahead_m,
                         )
-                        carrot_target = carrot_controller.compute_control(
-                            vehicle_state=vehicle_state,
-                            carrot=carrot,
+                        control_target = geometric_path_follower.compute_control(
+                            vehicle_state,
+                            carrot=path_carrot,
+                            time_since_takeoff_s=time_since(takeoff_started_s),
                         )
-           
-
+                else:
+                    control_target = None
 
                 outer_cycle += 1
             # ======================== OUTER LOOP END ========================
 
-
-            control_target = {}
 
             if imu_data_t is None:
                 command_result = {
@@ -487,64 +440,54 @@ def main() -> int:
             else:
                 command_result = None
 
-                if settings.allow_flight and system_mode_manager.is_racing():
-                    if settings.control_method == "geometric_path_follower":
-                        geometric_target = geometric_path_follower.compute_control(vehicle_state)
-                        path_following_target = geometric_target
-                    else:
-                        if carrot_target is None:
-                            carrot = path_manager.carrot_point(
-                                vehicle_state.position_local_ned_m,
-                                carrot_controller.lookahead_m,
-                                carrot_controller.speed_lookahead_m,
+                if settings.allow_flight:
+                    if system_mode_manager.is_racing():
+                        if control_target is not None:
+                            control_target = attitude_controller.compute_control(
+                                vehicle_state,
+                                desired_attitude_quaternion=control_target["quaternion"],
+                                thrust=control_target["thrust"]
                             )
-                            carrot_target = carrot_controller.compute_control(
-                                vehicle_state=vehicle_state,
-                                carrot=carrot,
-                            )
-                        path_following_target = carrot_target
 
-                    if path_following_target:
+                            # using quaternion error now rather than attitude controller body rates - praying heavily.
+                            mavlink_client.send_attitude_target(control_target)
+
+                        command_result = {
+                            "emitted": control_target is not None,
+                            "sim_time_ns": telemetry.sim_time_ns,
+                            "reason": (
+                                control_target.get("source", "path_following")
+                                if control_target is not None
+                                else "missing_path_following_target"
+                            ),
+                            "control_target": control_target,
+                            "inner_loop_cycle": inner_cycle,
+                            "outer_loop_cycle": outer_cycle,
+                        }
+                    else:
+                        hover_target = hover_controller.compute_control(vehicle_state)
                         control_target = attitude_controller.compute_control(
                             vehicle_state,
-                            desired_attitude_quaternion=path_following_target["quaternion"],
-                            thrust=path_following_target["thrust"]
+                            desired_attitude_quaternion=hover_target["quaternion"],
+                            thrust=hover_target["thrust"],
                         )
-                    
-                    mavlink_client.send_attitude_target(control_target)
 
-                    command_result = {
-                        "emitted": True,
-                        "sim_time_ns": telemetry.sim_time_ns,
-                        "reason": path_following_target.get("source", "path_following") if path_following_target else "path_following",
-                        "attitude_target": control_target,
-                        "inner_loop_cycle": inner_cycle,
-                        "outer_loop_cycle": outer_cycle,
-                    }
-                elif settings.allow_flight and system_mode_manager.is_finished():
-                    hover_target = hover_controller.compute_control(vehicle_state)
-                    control_target = attitude_controller.compute_control(
-                        vehicle_state,
-                        desired_attitude_quaternion=hover_target["quaternion"],
-                        thrust=hover_target["thrust"],
-                    )
+                        mavlink_client.send_attitude_target(control_target)
 
-                    mavlink_client.send_attitude_target(control_target)
-
-                    command_result = {
-                        "emitted": True,
-                        "sim_time_ns": telemetry.sim_time_ns,
-                        "reason": "finished_hover",
-                        "attitude_target": control_target,
-                        "inner_loop_cycle": inner_cycle,
-                        "outer_loop_cycle": outer_cycle,
-                    }
+                        command_result = {
+                            "emitted": True,
+                            "sim_time_ns": telemetry.sim_time_ns,
+                            "reason": "finished_hover",
+                            "control_target": control_target,
+                            "inner_loop_cycle": inner_cycle,
+                            "outer_loop_cycle": outer_cycle,
+                        }
                 else:
                     command_result = {
                             "emitted": False,
                             "sim_time_ns": telemetry.sim_time_ns if telemetry else None,
                             "reason": "flight_disabled" if not settings.allow_flight else "system_mode_not_racing",
-                            "attitude_target": control_target,
+                            "control_target": control_target,
                             "inner_loop_cycle": inner_cycle,
                             "outer_loop_cycle": outer_cycle,
                         }
@@ -604,7 +547,6 @@ def main() -> int:
                     "hz": settings.outer_loop_hz,
                     "ran": outer_loop_ran,
                 },
-                carrot=carrot_controller.last_payload,
                 geometric_path_follower=geometric_path_follower.last_payload,
                 vision={
                     **vision_rx.snapshot(),

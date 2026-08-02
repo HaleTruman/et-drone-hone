@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PnP Evidence and Final Pose Replay</title>
+    <link rel="stylesheet" href="styles.css?v=standard-gate-review-v1" />
+    <link rel="stylesheet" href="pnp_scene.css?v=world-replay-v1" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <main class="viewer-shell">
+      <nav class="viewer-tabs" aria-label="Review pipelines">
+        <a href="source.html">source</a>
+        <a href="index.html">DensityEvidence</a>
+        <a href="topology.html">TopologyDecision.topology_label</a>
+        <a href="standard_gate.html">StandardGateResult</a>
+        <a class="active" href="pnp_scene.html">PnP / final pose replay</a>
+      </nav>
+      <header class="viewer-header" aria-label="Frame navigation">
+        <section class="header-section controls-left">
+          <select id="run-select" aria-label="source.run_id"></select>
+        </section>
+        <section class="header-section controls-center">
+          <div class="frame-slider-wrap">
+            <input id="frame-slider" type="range" min="0" max="0" value="0" disabled />
+            <div id="frame-meta">UI frame 0 / 0</div>
+          </div>
+        </section>
+        <section class="header-section controls-right">
+          <button id="previous-frame" type="button" aria-label="Previous frame" disabled>◀</button>
+          <button id="next-frame" type="button" aria-label="Next frame" disabled>▶</button>
+        </section>
+      </header>
+      <section class="pnp-scene-workspace" aria-live="polite">
+        <div class="pnp-scene-stage">
+          <canvas id="pnp-scene-canvas" aria-label="Camera and LOCAL_NED PnP replay scene"></canvas>
+          <div class="pnp-view-modes" role="group" aria-label="3-D inspection perspective">
+            <button id="camera-projection-mode" class="active" type="button" aria-pressed="true">
+              Camera projection
+            </button>
+            <button id="open-3d-mode" type="button" aria-pressed="false">
+              World 3-D
+            </button>
+            <button id="fit-3d-evidence" type="button" hidden>
+              Fit selected evidence
+            </button>
+          </div>
+          <div class="pnp-scene-toggles" aria-label="GeometryFrameResult pose fields">
+            <label>
+              <input id="raw-pnp-toggle" type="checkbox" checked />
+              <span class="pnp-swatch pnp-swatch-raw" aria-hidden="true"></span>
+              GeometryFrameResult.pnp_relative_pose_estimates selected candidate
+            </label>
+            <label>
+              <input id="secondary-pnp-toggle" type="checkbox" />
+              <span class="pnp-swatch pnp-swatch-secondary" aria-hidden="true"></span>
+              GeometryFrameResult.pnp_relative_pose_estimates secondary candidate
+            </label>
+            <label>
+              <input id="final-pose-toggle" type="checkbox" checked />
+              <span class="pnp-swatch pnp-swatch-final" aria-hidden="true"></span>
+              GeometryFrameResult.camera_pose_estimates
+            </label>
+            <label>
+              <input id="historic-raw-pose-toggle" type="checkbox" />
+              <span class="pnp-swatch pnp-swatch-history-raw" aria-hidden="true"></span>
+              prior GeometryFrameResult.pnp_relative_pose_estimates selected candidate
+            </label>
+            <label>
+              <input id="historic-final-pose-toggle" type="checkbox" />
+              <span class="pnp-swatch pnp-swatch-history-final" aria-hidden="true"></span>
+              prior GeometryFrameResult.camera_pose_estimates
+            </label>
+            <label id="pnp-world-controls" hidden>
+              <input id="world-camera-path-toggle" type="checkbox" checked />
+              trajectory[].ui_projection.camera_position_local_ned_m through selected sample_index
+            </label>
+            <label id="pnp-world-full-path-controls" hidden>
+              <input id="world-full-path-toggle" type="checkbox" checked />
+              trajectory[].ui_projection.camera_position_local_ned_m full-run context
+            </label>
+          </div>
+          <div id="pnp-scene-status" class="pnp-scene-status">Loading source.relative_path…</div>
+          <div id="pnp-view-coordinate" class="pnp-view-coordinate">
+            OpenCV camera projection
+          </div>
+          <div class="pnp-scene-reticle" aria-hidden="true"></div>
+        </div>
+        <aside class="pnp-scene-readout">
+          <h1>PnP evidence and final pose replay</h1>
+          <section id="pnp-camera-readout">
+            <dl id="pnp-scene-metadata"></dl>
+            <p>
+              Camera projection consumes GeometryFrameResult.camera_calibration,
+              gate_model, pnp_relative_pose_estimates, and camera_pose_estimates
+              directly. Cyan is the selected raw PnP candidate, optional amber is
+              the secondary candidate, and magenta is the final regressed pose.
+              Prior selected raw candidates are yellow and prior final poses are
+              green; secondary candidates intentionally have no history layer.
+            </p>
+          </section>
+          <section id="pnp-world-readout" hidden>
+            <dl id="pnp-world-metadata"></dl>
+            <p>
+              World 3-D uses exact logged frame/cycle association and the
+              production void_ned camera transform. The browser renders the
+              resulting ui_projection LOCAL_NED values as north/up/east and does
+              not recompute flight geometry. Gate orientation is provisional;
+              missing or mismatched logged camera-mount evidence suppresses world
+              gates while retaining the logged trajectory.
+            </p>
+          </section>
+        </aside>
+      </section>
+    </main>
+    <script type="module" src="pnp_scene_app.js?v=pnp-contract-v2"></script>
+  </body>
+</html>
