@@ -64,6 +64,7 @@ class GeometricPathFollower:
         curvature_feedforward_max_acceleration_mps2: float = 8.0,
         hover_thrust: float = 0.265,
         max_commanded_acceleration_mps2: float = 6.0,
+        max_commanded_jerk_mps3: float = 50.0,
         max_upward_acceleration_mps2: float = 8.0,
         max_downward_acceleration_mps2: float = 3.0,
         max_tilt_deg: float = 60.0,
@@ -102,6 +103,7 @@ class GeometricPathFollower:
         )
         self.hover_thrust = float(hover_thrust)
         self.max_commanded_acceleration_mps2 = float(max_commanded_acceleration_mps2)
+        self.max_commanded_jerk_mps3 = float(max_commanded_jerk_mps3)
         self.max_upward_acceleration_mps2 = float(max_upward_acceleration_mps2)
         self.max_downward_acceleration_mps2 = float(max_downward_acceleration_mps2)
         self.max_tilt_rad = math.radians(float(max_tilt_deg))
@@ -113,6 +115,14 @@ class GeometricPathFollower:
         self.command_mapper = command_mapper or CommandMapper()
         self.last_payload: dict[str, Any] | None = None
         self._filtered_acceleration_ned: np.ndarray | None = None
+        self._last_commanded_acceleration_ned: np.ndarray | None = None
+        self._last_commanded_acceleration_time_s: float | None = None
+        self._last_jerk_limit_info: dict[str, Any] = {
+            "active": False,
+            "dt_s": None,
+            "max_delta_acceleration_mps2": None,
+            "requested_delta_acceleration_mps2": None,
+        }
 
         if gravity_mps2 <= 0.0:
             raise ValueError("gravity_mps2 must be positive")
@@ -215,11 +225,15 @@ class GeometricPathFollower:
             speed_mps = float(np.linalg.norm(velocity))
             desired_acceleration = desired_acceleration + self.drag_coeff * speed_mps * velocity
 
-        desired_acceleration = self._filtered_acceleration(
-            self._limited_acceleration(desired_acceleration)
+        raw_desired_acceleration = desired_acceleration.astype(float)
+        magnitude_limited_acceleration = self._limited_acceleration(raw_desired_acceleration)
+        filtered_acceleration = self._filtered_acceleration(magnitude_limited_acceleration)
+        constrained_acceleration = self._tilt_limited_acceleration(
+            self._vertical_limited_acceleration(filtered_acceleration)
         )
-        desired_acceleration = self._tilt_limited_acceleration(
-            self._vertical_limited_acceleration(desired_acceleration)
+        desired_acceleration = self._jerk_limited_acceleration(
+            constrained_acceleration,
+            sim_time_ns=vehicle_state.sim_time_ns,
         )
 
         # Convert the desired inertial acceleration into attitude plus normalized thrust.
@@ -378,6 +392,21 @@ class GeometricPathFollower:
             "curvature_speed_deadband": float(self.curvature_speed_deadband),
             "curvature_speed_ramp": float(self.curvature_speed_ramp),
             "acceleration_filter_alpha": float(self.acceleration_filter_alpha),
+            "max_commanded_acceleration_mps2": float(self.max_commanded_acceleration_mps2),
+            "max_commanded_jerk_mps3": float(self.max_commanded_jerk_mps3),
+            "jerk_limit": self._last_jerk_limit_info,
+            "raw_desired_acceleration_local_ned_mps2": [
+                float(value) for value in raw_desired_acceleration
+            ],
+            "magnitude_limited_acceleration_local_ned_mps2": [
+                float(value) for value in magnitude_limited_acceleration
+            ],
+            "filtered_acceleration_local_ned_mps2": [
+                float(value) for value in filtered_acceleration
+            ],
+            "constrained_acceleration_local_ned_mps2": [
+                float(value) for value in constrained_acceleration
+            ],
             "max_upward_acceleration_mps2": float(self.max_upward_acceleration_mps2),
             "max_downward_acceleration_mps2": float(self.max_downward_acceleration_mps2),
             "max_tilt_deg": float(math.degrees(self.max_tilt_rad)),
@@ -535,6 +564,52 @@ class GeometricPathFollower:
                 limited[2] = float(self.gravity_ned[2] - limited_thrust_vertical_mps2)
         return limited
 
+    def _jerk_limited_acceleration(
+        self,
+        acceleration: np.ndarray,
+        *,
+        sim_time_ns: int | float | None,
+    ) -> np.ndarray:
+        limit = float(self.max_commanded_jerk_mps3)
+        command_time_s = None if sim_time_ns is None else float(sim_time_ns) * 1e-9
+        previous = self._last_commanded_acceleration_ned
+        previous_time_s = self._last_commanded_acceleration_time_s
+        self._last_jerk_limit_info = {
+            "active": False,
+            "dt_s": None,
+            "max_delta_acceleration_mps2": None,
+            "requested_delta_acceleration_mps2": None,
+        }
+
+        if limit <= 0.0 or previous is None or command_time_s is None or previous_time_s is None:
+            self._last_commanded_acceleration_ned = acceleration.astype(float)
+            self._last_commanded_acceleration_time_s = command_time_s
+            return acceleration.astype(float)
+
+        dt_s = command_time_s - previous_time_s
+        if dt_s <= 1e-6:
+            self._last_commanded_acceleration_ned = acceleration.astype(float)
+            self._last_commanded_acceleration_time_s = command_time_s
+            return acceleration.astype(float)
+
+        delta = acceleration - previous
+        requested_delta = float(np.linalg.norm(delta))
+        max_delta = limit * dt_s
+        if requested_delta > max_delta and requested_delta > 1e-12:
+            acceleration = previous + delta * (max_delta / requested_delta)
+            self._last_jerk_limit_info["active"] = True
+
+        self._last_jerk_limit_info.update(
+            {
+                "dt_s": float(dt_s),
+                "max_delta_acceleration_mps2": float(max_delta),
+                "requested_delta_acceleration_mps2": requested_delta,
+            }
+        )
+        self._last_commanded_acceleration_ned = acceleration.astype(float)
+        self._last_commanded_acceleration_time_s = command_time_s
+        return acceleration.astype(float)
+
     def _validate_gains(self) -> None:
         if self.v_min < 0.0:
             raise ValueError("v_min cannot be negative")
@@ -582,6 +657,8 @@ class GeometricPathFollower:
             raise ValueError("max_upward_acceleration_mps2 cannot be negative")
         if self.max_downward_acceleration_mps2 < 0.0:
             raise ValueError("max_downward_acceleration_mps2 cannot be negative")
+        if self.max_commanded_jerk_mps3 < 0.0:
+            raise ValueError("max_commanded_jerk_mps3 cannot be negative")
         if not 0.0 <= self.max_tilt_rad < math.pi:
             raise ValueError("max_tilt_deg must be in [0, 180)")
         if not 0.0 <= self.acceleration_filter_alpha <= 1.0:

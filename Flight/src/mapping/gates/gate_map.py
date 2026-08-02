@@ -29,6 +29,7 @@ class GateRecord:
     average_residual_m: float = 0.0
     last_seen_time_s: float | None = None
     locked: bool = False
+    observation_identity: str | None = None
 
 
 class GateMap:
@@ -61,6 +62,10 @@ class GateMap:
         return [_with_test_position_offset(gate) for gate in self._gates]
 
     @property
+    def candidates(self) -> list[GateRecord]:
+        return list(self._candidates)
+
+    @property
     def last_crossed_gates(self) -> list[GateRecord]:
         return list(self._last_crossed_gates)
 
@@ -83,14 +88,33 @@ class GateMap:
                 position = tuple(float(value) for value in gate.position_local_ned)
                 if not self._within_observation_distance(position, observer_position_local_ned_m):
                     continue
-                gate_index = self._nearest_record_index(self._gates, position)
+                identity = _observation_identity(gate, observation)
+                gate_index = self._identity_record_index(self._gates, identity)
+                if gate_index is None:
+                    gate_index = self._nearest_record_index(self._gates, position)
                 if gate_index is not None:
-                    self._merge_record(gate_index, gate, observation, observed_time_s, self._gates)
+                    self._merge_record(
+                        gate_index,
+                        gate,
+                        observation,
+                        observed_time_s,
+                        self._gates,
+                        identity=identity,
+                    )
                     continue
 
-                candidate_index = self._nearest_record_index(self._candidates, position)
+                candidate_index = self._identity_record_index(self._candidates, identity)
+                identity_jump = False
                 if candidate_index is None:
-                    self._candidates.append(_record_from_observation(gate, observation, observed_time_s))
+                    candidate_index = self._nearest_record_index(self._candidates, position)
+                else:
+                    identity_jump = (
+                        _distance_m(position, self._candidates[candidate_index].position_local_ned_m)
+                        > self.merge_distance_m
+                    )
+                if candidate_index is None:
+                    self._candidates.append(_record_from_observation(
+                        gate, observation, observed_time_s, identity=identity))
                     candidate_index = len(self._candidates) - 1
                 else:
                     self._merge_record(
@@ -99,6 +123,8 @@ class GateMap:
                         observation,
                         observed_time_s,
                         self._candidates,
+                        identity=identity,
+                        replace_position=identity_jump,
                     )
 
                 if (
@@ -151,6 +177,15 @@ class GateMap:
                 nearest_distance = distance
         return nearest_index
 
+    @staticmethod
+    def _identity_record_index(records: list[GateRecord], identity: str | None) -> int | None:
+        if identity is None:
+            return None
+        for index, record in enumerate(records):
+            if record.observation_identity == identity:
+                return index
+        return None
+
     def _merge_record(
         self,
         index: int,
@@ -158,6 +193,9 @@ class GateMap:
         observation: VisionObservation,
         observed_time_s: float,
         records: list[GateRecord],
+        *,
+        identity: str | None,
+        replace_position: bool = False,
     ) -> None:
         record = records[index]
         position = tuple(float(value) for value in gate.position_local_ned)
@@ -167,6 +205,8 @@ class GateMap:
         position_local_ned_m = (
             record.position_local_ned_m
             if record.locked
+            else position
+            if replace_position
             else _average_vec3(record.position_local_ned_m, position)
         )
         quaternion = (
@@ -197,6 +237,7 @@ class GateMap:
             average_residual_m=(record.average_residual_m + residual_m) / 2.0,
             last_seen_time_s=observed_time_s,
             locked=locked,
+            observation_identity=identity or record.observation_identity,
         )
 
     def _sort_and_rename_gates(self) -> None:
@@ -212,6 +253,8 @@ def _record_from_observation(
     gate: VisionGateObservation,
     observation: VisionObservation,
     observed_time_s: float,
+    *,
+    identity: str | None,
 ) -> GateRecord:
     return GateRecord(
         gate_id="",
@@ -223,7 +266,20 @@ def _record_from_observation(
         last_observed_cycle=observation.frame_id,
         source=observation.source,
         last_seen_time_s=observed_time_s,
+        observation_identity=identity,
     )
+
+
+def _observation_identity(
+    gate: VisionGateObservation,
+    observation: VisionObservation,
+) -> str | None:
+    if gate.gate_id:
+        return f"{observation.source}:{gate.gate_id}"
+    track_id = gate.trace.get("track_id") if isinstance(gate.trace, dict) else None
+    if track_id:
+        return f"{observation.source}:track:{track_id}"
+    return None
 
 
 def _with_test_position_offset(record: GateRecord) -> GateRecord:

@@ -26,8 +26,12 @@ PROJECT_ROOT = LEGACYVISION_ROOT.parent
 FRONTEND_ROOT = UI_ROOT / "frontend"
 LOGS_ROOT = PROJECT_ROOT / "Logs" / "flight" / "runs"
 REVIEW_ROOT = PROJECT_ROOT / "Logs" / "review" / "runs"
+EVALUATION_ROOT = PROJECT_ROOT / "Logs" / "evaluation" / "runs"
 IMAGE_EXTENSIONS = frozenset((".jpg", ".jpeg", ".png"))
 RUN_PATTERN = re.compile(r"^run-[A-Za-z0-9_.-]+$")
+EVALUATION_PATTERN = re.compile(r"^evaluation-[A-Za-z0-9_.-]+$")
+BACKEND_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+OVERLAY_LAYER_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 FRAME_NUMBER_PATTERN = re.compile(r"frame-(\d+)")
 FRAME_IDENTITY_PATTERN = re.compile(r"^frame-(\d+)-(\d+)$")
 FRAME_MASK_FIELDS = (
@@ -814,6 +818,133 @@ def _confined(root, relative):
     return candidate
 
 
+def discover_evaluation_runs(evaluation_root=EVALUATION_ROOT):
+    evaluations = []
+    if not evaluation_root.is_dir():
+        return {
+            "version": "deterministic-v3.backend-evaluation-catalog.v1",
+            "evaluations": evaluations,
+        }
+    for path in sorted(evaluation_root.glob("evaluation-*")):
+        if not path.is_dir() or not EVALUATION_PATTERN.fullmatch(path.name):
+            continue
+        metadata = _read_json_file(path / "metadata.json")
+        summary = _read_json_file(path / "summary.json")
+        if not isinstance(metadata, dict) or not isinstance(summary, dict):
+            continue
+        source = metadata.get("source_run", {})
+        overlays = metadata.get("overlays", {})
+        evaluations.append({
+            "id": path.name,
+            "path": str(path),
+            "created_utc": metadata.get("created_utc"),
+            "source_run_id": source.get("run_id") if isinstance(source, dict) else None,
+            "selected_frame_count": metadata.get("selection", {}).get("selected_frame_count"),
+            "processed_frame_count": summary.get("processed_frame_count"),
+            "frames_changed": summary.get("frames_changed"),
+            "frames_with_errors": summary.get("frames_with_errors"),
+            "frames_with_vehicle_state": summary.get("frames_with_vehicle_state"),
+            "max_position_delta_m": summary.get("max_position_delta_m"),
+            "overlays_enabled": overlays.get("enabled") is True if isinstance(overlays, dict) else False,
+            "overlay_layers": overlays.get("layers", ()) if isinstance(overlays, dict) else (),
+        })
+    return {
+        "version": "deterministic-v3.backend-evaluation-catalog.v1",
+        "evaluations": evaluations,
+    }
+
+
+def _read_json_file(path):
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _read_jsonl(path):
+    with path.open(encoding="utf-8") as stream:
+        return [
+            json.loads(line)
+            for line in stream
+            if line.strip()
+        ]
+
+
+def _evaluation_frame_overlay_urls(evaluation_id, evaluation_dir, frame_record):
+    overlays = {}
+    filename = "frame-{:08d}-{}.png".format(
+        int(frame_record["source"]["frame_id"]),
+        int(frame_record["source"]["sim_time_ns"]),
+    )
+    overlays_root = evaluation_dir / "overlays"
+    if not overlays_root.is_dir():
+        return overlays
+    for backend_dir in sorted(path for path in overlays_root.iterdir() if path.is_dir()):
+        if not BACKEND_PATTERN.fullmatch(backend_dir.name):
+            continue
+        backend_layers = {}
+        for layer_dir in sorted(path for path in backend_dir.iterdir() if path.is_dir()):
+            if not OVERLAY_LAYER_PATTERN.fullmatch(layer_dir.name):
+                continue
+            overlay_path = layer_dir / filename
+            if overlay_path.is_file():
+                backend_layers[layer_dir.name] = (
+                    "/evaluation-overlays/{}/{}/{}/{}".format(
+                        quote(evaluation_id),
+                        quote(backend_dir.name),
+                        quote(layer_dir.name),
+                        quote(filename),
+                    )
+                )
+        if backend_layers:
+            overlays[backend_dir.name] = backend_layers
+    return overlays
+
+
+def evaluation_frame_catalog(evaluation_id, evaluation_root=EVALUATION_ROOT):
+    if not EVALUATION_PATTERN.fullmatch(evaluation_id):
+        raise FileNotFoundError(evaluation_id)
+    evaluation_dir = _confined(evaluation_root, evaluation_id)
+    metadata = _read_json_file(evaluation_dir / "metadata.json")
+    summary = _read_json_file(evaluation_dir / "summary.json")
+    frames_path = evaluation_dir / "frames.jsonl"
+    if (not evaluation_dir.is_dir() or not isinstance(metadata, dict) or
+            not isinstance(summary, dict) or not frames_path.is_file()):
+        raise FileNotFoundError(evaluation_id)
+    frames = []
+    for frame in _read_jsonl(frames_path):
+        source = frame.get("source", {})
+        run_id = source.get("run_id")
+        relative_path = source.get("relative_path")
+        filename = Path(str(relative_path)).name
+        frame_view = {
+            "source": source,
+            "comparison": frame.get("comparison", {}),
+            "source_image_url": (
+                "/frames/{}/{}".format(quote(str(run_id)), quote(filename))
+                if run_id and filename else None
+            ),
+            "overlays": _evaluation_frame_overlay_urls(
+                evaluation_id, evaluation_dir, frame),
+        }
+        frames.append(frame_view)
+    source_run = metadata.get("source_run", {})
+    metadata_view = {
+        key: value for key, value in metadata.items()
+        if key != "source_run"
+    }
+    metadata_view["source_run"] = {
+        key: value for key, value in source_run.items()
+        if key not in {"metadata", "summary", "status"}
+    } if isinstance(source_run, dict) else source_run
+    return {
+        "version": "deterministic-v3.backend-evaluation-frames.v1",
+        "id": evaluation_id,
+        "metadata": metadata_view,
+        "summary": summary,
+        "frames": frames,
+    }
+
+
 def _decode_array(value, expected_dtype):
     descriptor = value["__ndarray__"]
     if descriptor.get("encoding") not in {
@@ -1127,12 +1258,28 @@ class ReviewUiHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, frontend_root, logs_root, review_root, **kwargs):
         self.logs_root = Path(logs_root)
         self.review_root = Path(review_root)
+        self.evaluation_root = EVALUATION_ROOT
         super().__init__(*args, directory=str(frontend_root), **kwargs)
 
     def do_GET(self):
         path = unquote(urlsplit(self.path).path)
         if path == "/api/runs":
             return self._send_json(run_catalog(self.logs_root, self.review_root))
+        if path == "/api/evaluations":
+            return self._send_json(discover_evaluation_runs(self.evaluation_root))
+        match = re.fullmatch(r"/api/evaluations/([^/]+)/frames", path)
+        if match:
+            try:
+                payload = evaluation_frame_catalog(
+                    match.group(1), self.evaluation_root)
+            except FileNotFoundError:
+                return self.send_error(
+                    HTTPStatus.NOT_FOUND, "Unknown evaluation")
+            except (TypeError, ValueError, OSError, json.JSONDecodeError):
+                return self.send_error(
+                    HTTPStatus.UNPROCESSABLE_ENTITY,
+                    "Evaluation catalog is unavailable")
+            return self._send_json(payload)
         match = re.fullmatch(r"/api/runs/([^/]+)/frames", path)
         if match:
             try:
@@ -1211,6 +1358,10 @@ class ReviewUiHandler(SimpleHTTPRequestHandler):
         if match:
             return self._send_frame(match.group(1), match.group(2))
         match = re.fullmatch(
+            r"/evaluation-overlays/([^/]+)/([^/]+)/([^/]+)/([^/]+)", path)
+        if match:
+            return self._send_evaluation_overlay(*match.groups())
+        match = re.fullmatch(
             r"/standard-gate-layers/([^/]+)/(\d+)/(\d+)/(\d+)/"
             r"([^/]+)\.png", path)
         if match:
@@ -1241,6 +1392,22 @@ class ReviewUiHandler(SimpleHTTPRequestHandler):
         if not path.is_file() or path.suffix.lower() not in IMAGE_EXTENSIONS:
             return self.send_error(HTTPStatus.NOT_FOUND, "Unknown frame")
         return self._send_file(path, "public, max-age=60")
+
+    def _send_evaluation_overlay(self, evaluation_id, backend, layer_id, filename):
+        if (not EVALUATION_PATTERN.fullmatch(evaluation_id) or
+                not BACKEND_PATTERN.fullmatch(backend) or
+                not OVERLAY_LAYER_PATTERN.fullmatch(layer_id) or
+                Path(filename).name != filename or
+                Path(filename).suffix.lower() != ".png"):
+            return self.send_error(HTTPStatus.NOT_FOUND)
+        path = _confined(
+            self.evaluation_root / evaluation_id / "overlays" / backend /
+            layer_id,
+            filename,
+        )
+        if not path.is_file():
+            return self.send_error(HTTPStatus.NOT_FOUND, "Unknown overlay")
+        return self._send_file(path, "no-store", "image/png")
 
     def _send_review(self, relative):
         path = _confined(self.review_root, relative)

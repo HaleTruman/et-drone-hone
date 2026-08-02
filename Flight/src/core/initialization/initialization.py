@@ -44,24 +44,24 @@ RUN_S: float | None = None  # optionally limits flight duration in seconds; None
 
 # Startup, reset, and arming timeouts.
 HEARTBEAT_TIMEOUT_S = 120.0  # is how long startup waits for the MAVLink heartbeat before failing.
-STARTUP_DATA_TIMEOUT_S = 5.0  # is how long startup waits for fresh telemetry and vision data.
+STARTUP_DATA_TIMEOUT_S = 4.0  # is how long startup waits for fresh telemetry and vision data.
 IMU_INIT_TIMEOUT_S = 1.5  # is the stationary sample window used for initial IMU bias estimation.
 GATE_MAP_INIT_TIMEOUT_S = 1.5  # is the startup window used to collect initial vision observations and build a path.
 POST_RESET_DELAY_S = 0.7  # gives the simulator time to settle after a reset command.
 ARM_TIMEOUT_S = 5.0  # is how long the system waits for the vehicle to arm successfully.
 
 # Gate mapping
-GATE_MERGE_DISTANCE_M = 4.0  # merges repeated gate observations within this local-NED distance.
-REQUIRED_MINIMUM_OBSERVATION_COUNT = 6  # requires this many merged observations before a gate is published.
-GATE_LOCKOUT_COUNT = 150  # locks a gate pose after this many merged observations.
+GATE_MERGE_DISTANCE_M = 5.0  # merges repeated gate observations within this local-NED distance.
+REQUIRED_MINIMUM_OBSERVATION_COUNT = 5  # requires this many merged observations before a gate is published.
+GATE_LOCKOUT_COUNT = 500  # locks a gate pose after this many merged observations.
 GATE_MAX_OBSERVATION_DISTANCE_M = 40.0  # ignores gate observations farther than this from the vehicle.
 
 # Path planning.
-PLANNING_MODE = "test"  # chooses the PathManager strategy: test or gate.
-PATH_UPDATE_MODE = "projected"  # chooses how new plans replace the active path: original, projected, persist_crossed, or splice.
+PLANNING_MODE = "gate"  # chooses the PathManager strategy: test or gate.
+PATH_UPDATE_MODE = "persist_crossed"  # chooses how new plans replace the active path: original, projected, persist_crossed, or splice.
 PATH_UPDATE_OBSERVATION_INTERVAL = 50  # updates the planned path after this many processed vision observations; 1 updates every observation.
-GATE_PASSED_DISTANCE_M = 0.75  # treats gates closer than this as already passed for planning purposes.
-PATH_CROSSED_GATE_PERSIST_DISTANCE_M = 5.0  # keeps a crossed gate as the path start anchor while the drone is near it.
+GATE_PASSED_DISTANCE_M = 1.5  # treats gates closer than this as already passed for planning purposes.
+PATH_CROSSED_GATE_PERSIST_DISTANCE_M = 15.0  # keeps a crossed gate as the path start anchor while the drone is near it.
 PATH_CROSSED_GATE_CURVATURE_PRESERVE_M = 3.0  # preserves this much active-path curvature after a persisted crossed gate.
 SPLINE_CORNER_TIGHTNESS = 0.03  # controls how tightly generated splines follow corner anchor points.
 ADAPTIVE_SPLINE_TIGHTNESS = False  # enables automatic corner tightness changes based on segment geometry.
@@ -93,30 +93,30 @@ ATTITUDE_RATE_FILTER_ALPHA = 0.8  # Body-rate filter alpha; higher follows gyro 
 ATTITUDE_MAX_BODY_RATE_RPS = 7.0  # Body-rate command cap; increase for faster attitude changes, decrease for gentler motion.
 
 # Path lookahead and preview.
-CARROT_LOOKAHEAD_M = 6.0 # Carrot-point preview distance; increase to turn earlier/smoother, decrease to track nearby path more tightly.
+CARROT_LOOKAHEAD_M = 4.0 # Carrot-point preview distance; increase to turn earlier/smoother, decrease to track nearby path more tightly.
 SPEED_LOOKAHEAD_M = 30  # Curvature preview distance for speed planning; increase to slow earlier, decrease to react later.
 
 # Cross-track position hold: horizontal component.
-GEOMETRIC_CROSS_TRACK_GAIN = 4.5  # Horizontal cross-track P gain; increase to pull harder toward the path, decrease if it weaves.
+GEOMETRIC_CROSS_TRACK_GAIN = 3.5  # Horizontal cross-track P gain; increase to pull harder toward the path, decrease if it weaves.
 GEOMETRIC_CROSS_TRACK_DAMPING =  2.0 # Horizontal cross-track D gain; increase to damp sideways drift, decrease if turns feel over-braked.
 
 # Cross-track position hold: vertical component.
-GEOMETRIC_VERTICAL_CROSS_TRACK_GAIN = 4.5  # Vertical cross-track P gain; increase to correct altitude error sooner, decrease if altitude oscillates.
+GEOMETRIC_VERTICAL_CROSS_TRACK_GAIN = 3.5  # Vertical cross-track P gain; increase to correct altitude error sooner, decrease if altitude oscillates.
 GEOMETRIC_VERTICAL_CROSS_TRACK_DAMPING = 2.0  # Vertical cross-track D gain; increase to damp climb/descent rate, decrease if altitude lags.
 
 # Cross-track gain scheduling from upcoming curvature.
 GEOMETRIC_CROSS_GAIN_CURVATURE_DEADBAND = 0.25  # Curvature below this leaves cross-track gains unchanged; raise to ignore gentler turns.
 GEOMETRIC_CROSS_GAIN_CURVATURE_RAMP = 0.5  # Curvature span to full scheduled gain; lower makes boosts arrive faster, higher makes them gradual.
-GEOMETRIC_HORIZONTAL_CROSS_GAIN_CURVATURE_BOOST = 2.5  # Max fractional horizontal gain boost in curves; increase for tighter turns.
-GEOMETRIC_VERTICAL_CROSS_GAIN_CURVATURE_BOOST = 1.5  # Max fractional vertical gain boost in curves; keep modest to avoid altitude coupling.
+GEOMETRIC_HORIZONTAL_CROSS_GAIN_CURVATURE_BOOST = 2.3  # Max fractional horizontal gain boost in curves; increase for tighter turns.
+GEOMETRIC_VERTICAL_CROSS_GAIN_CURVATURE_BOOST = 1.3  # Max fractional vertical gain boost in curves; keep modest to avoid altitude coupling.
 
 # Command smoothing.
-GEOMETRIC_ACCELERATION_FILTER_ALPHA = 0.3  # Desired-acceleration filter alpha; 1 disables smoothing, lower softens command jumps.
+GEOMETRIC_ACCELERATION_FILTER_ALPHA = 0.2  # Desired-acceleration filter alpha; 1 disables smoothing, lower softens command jumps.
 
 # Along-track speed loop and curve speed planning.
 GEOMETRIC_SPEED_GAIN = 0.65  # Along-track speed P gain; increase to reach target speed faster, decrease if it surges.
 GEOMETRIC_SPEED_DAMPING = 0.6  # Along-track speed D gain on acceleration; increase to reduce speed overshoot, decrease for quicker response.
-GEOMETRIC_MAX_SPEED_MPS = 40  # Straight-path target speed cap; increase for faster runs, decrease if tracking cannot keep up.
+GEOMETRIC_MAX_SPEED_MPS = 15  # Straight-path target speed cap; increase for faster runs, decrease if tracking cannot keep up.
 GEOMETRIC_MAX_LATERAL_ACCELERATION_MPS2 = 50.0  # Curve-speed lateral accel budget; increase to carry more speed through turns.
 GEOMETRIC_CURVATURE_SPEED_DEADBAND = 0.25  # Curvature below this commands max speed; raise to ignore mild curves, lower to slow sooner.
 GEOMETRIC_CURVATURE_SPEED_RAMP = 0.1  # Curvature softening ramp for speed reduction; reduce for a lower speed in tight corners.
@@ -127,14 +127,15 @@ GEOMETRIC_LAUNCH_SPEED_RAMP_S = 0.35  # Seconds to ramp path-following speed fro
 
 # Curvature turn feed-forward.
 GEOMETRIC_CURVATURE_FEEDFORWARD_GAIN = 0.7  # Turn feed-forward gain; increase to bank into turns earlier, decrease if it over-turns.
-GEOMETRIC_CURVATURE_FEEDFORWARD_MAX_ACCELERATION_MPS2 = 30.0  # Feed-forward accel cap; increase for stronger turn anticipation.
+GEOMETRIC_CURVATURE_FEEDFORWARD_MAX_ACCELERATION_MPS2 = 10.0  # Feed-forward accel cap; increase for stronger turn anticipation.
 
 # Geometric acceleration, tilt, and thrust limits.
 GEOMETRIC_HOVER_THRUST = 0.2644  # Normalized hover thrust; tune to the thrust that holds level hover.
-GEOMETRIC_MAX_COMMANDED_ACCELERATION_MPS2 = 50  # Total desired-accel cap; decrease to soften all path-follower commands.
-GEOMETRIC_MAX_UPWARD_ACCELERATION_MPS2 = 20.0  # Upward accel cap in NED (-Z); increase for harder climbs, decrease to prevent pop-ups.
+GEOMETRIC_MAX_COMMANDED_ACCELERATION_MPS2 = 20  # Total desired-accel cap; decrease to soften all path-follower commands.
+GEOMETRIC_MAX_COMMANDED_JERK_MPS3 = 50.0  # Desired-accel slew cap; decrease to soften command-vector jumps.
+GEOMETRIC_MAX_UPWARD_ACCELERATION_MPS2 = 15.0  # Upward accel cap in NED (-Z); increase for harder climbs, decrease to prevent pop-ups.
 GEOMETRIC_MAX_DOWNWARD_ACCELERATION_MPS2 = 9.0  # Downward accel cap in NED (+Z); increase to descend faster, keep below gravity for margin.
-GEOMETRIC_MAX_TILT_DEG = 120  # Desired tilt cap; increase for more aggressive banking/inversion, decrease for upright flight.
+GEOMETRIC_MAX_TILT_DEG = 90  # Desired tilt cap; increase for more aggressive banking/inversion, decrease for upright flight.
 GEOMETRIC_TILT_THRUST_ALIGNMENT_MIN = 0.0 # Minimum thrust scale while actual tilt catches desired tilt; raise to preserve thrust, lower to suppress climb-before-bank.
 
 # Output and recording.
@@ -160,7 +161,7 @@ KALMAN_VIO_VELOCITY_MEASUREMENT_VARIANCE_M2PS2 = 1.0  # sets trusted variance fo
 KALMAN_MIN_MEASUREMENT_CONFIDENCE = 0.05  # prevents low-confidence VIO updates from becoming infinitely noisy.
 
 # Initialization defaults.
-VISION_PERCEPTION_BACKEND = "deterministic_v3"  # selects the gate perception implementation used for vision frames.
+VISION_PERCEPTION_BACKEND = "deterministic_v3_2"  # selects the gate perception implementation used for vision frames.
 VISION_EXECUTOR_MAX_WORKERS = 1  # controls the number of background workers for vision processing.
 VISION_EXECUTOR_THREAD_PREFIX = "vision"  # names background vision worker threads for debugging.
 PATH_MAX_POINTS = 1000  # caps the number of sampled waypoints kept in a generated path.
@@ -396,6 +397,7 @@ def initialize() -> tuple[
         ),
         hover_thrust=GEOMETRIC_HOVER_THRUST,
         max_commanded_acceleration_mps2=GEOMETRIC_MAX_COMMANDED_ACCELERATION_MPS2,
+        max_commanded_jerk_mps3=GEOMETRIC_MAX_COMMANDED_JERK_MPS3,
         max_upward_acceleration_mps2=GEOMETRIC_MAX_UPWARD_ACCELERATION_MPS2,
         max_downward_acceleration_mps2=GEOMETRIC_MAX_DOWNWARD_ACCELERATION_MPS2,
         max_tilt_deg=GEOMETRIC_MAX_TILT_DEG,

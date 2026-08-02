@@ -198,6 +198,8 @@ def main() -> int:
                 )
                 logger.log_gate_map(
                     gate_map.gates,
+                    candidates=gate_map.candidates,
+                    candidate_count=len(gate_map.candidates),
                     time_since_startup_s=time_since(started_s),
                     cycle=inner_cycle,
                     outer_cycle=outer_cycle,
@@ -330,6 +332,8 @@ def main() -> int:
                         logger.log_vision_frame(frame_log, cycle=frame_outer_cycle, status="processed")
                         logger.log_gate_map(
                             gate_map.gates,
+                            candidates=gate_map.candidates,
+                            candidate_count=len(gate_map.candidates),
                             time_since_startup_s=time_since(started_s),
                             cycle=inner_cycle,
                             outer_cycle=frame_outer_cycle,
