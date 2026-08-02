@@ -63,7 +63,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--mode",
-        choices=("center_targets", "gate_map"),
+        choices=("gate",),
         default=init.PLANNING_MODE,
         help="PathManager planning mode to test.",
     )
@@ -89,11 +89,6 @@ def _load_gate_payloads(path: Path | None) -> list[dict[str, Any]]:
 
 def _path_manager(mode: str) -> PathManager:
     return PathManager(
-        max_gates=init.PLANNING_GATE_COUNT,
-        exclusion_distance_m=init.EXCLUSION_DISTANCE,
-        max_gate_distance_m=init.GATE_MAX_PLANNING_DISTANCE_M,
-        passed_gate_distance_m=init.GATE_PASSED_DISTANCE_M,
-        gate_center_tolerance_m=init.GATE_CENTER_TOLERANCE_M,
         spline_corner_tightness=init.SPLINE_CORNER_TIGHTNESS,
         adaptive_spline_tightness=init.ADAPTIVE_SPLINE_TIGHTNESS,
         distant_spline_corner_tightness=init.DISTANT_SPLINE_CORNER_TIGHTNESS,
@@ -104,8 +99,12 @@ def _path_manager(mode: str) -> PathManager:
         short_segment_reference_m=init.SHORT_SEGMENT_REFERENCE_M,
         long_segment_reference_m=init.LONG_SEGMENT_REFERENCE_M,
         planning_mode=mode,
+        path_update_mode=init.PATH_UPDATE_MODE,
+        path_crossed_gate_persist_distance_m=init.PATH_CROSSED_GATE_PERSIST_DISTANCE_M,
+        path_crossed_gate_curvature_preserve_m=init.PATH_CROSSED_GATE_CURVATURE_PRESERVE_M,
         spacing_m=init.PATH_SPACING_M,
         path_tail_length_m=init.PATH_TAIL_LENGTH_M,
+        path_splice_lookahead_gain_s=init.PATH_SPLICE_LOOKAHEAD_GAIN_S,
         max_points=init.PATH_MAX_POINTS,
     )
 

@@ -214,6 +214,7 @@ def telemetry_series(run: RunBundle, selected_cycle_index: int | None) -> dict[s
     position: list[list[float | None]] = []
     velocity: list[list[float | None]] = []
     acceleration: list[list[float | None]] = []
+    desired_acceleration: list[list[float | None]] = []
     attitude: list[list[float | None]] = []
     rates: list[list[float | None]] = []
     imu_acceleration: list[list[float | None]] = []
@@ -231,9 +232,17 @@ def telemetry_series(run: RunBundle, selected_cycle_index: int | None) -> dict[s
         truth_odometry = sim_truth.get("odometry") if isinstance(sim_truth.get("odometry"), dict) else {}
         truth_local_position = sim_truth.get("local_position_ned") if isinstance(sim_truth.get("local_position_ned"), dict) else {}
         truth_attitude = sim_truth.get("attitude") if isinstance(sim_truth.get("attitude"), dict) else {}
+        geometric_path_follower = (
+            cycle.get("geometric_path_follower")
+            if isinstance(cycle.get("geometric_path_follower"), dict)
+            else {}
+        )
         position.append(_vec3(telemetry.get("position_local_ned_m")))
         velocity.append(_vec3(telemetry.get("velocity_local_ned_mps")))
         acceleration.append(_vec3(telemetry.get("acceleration_local_ned_mps2")))
+        desired_acceleration.append(
+            _vec3(geometric_path_follower.get("desired_acceleration_local_ned_mps2"))
+        )
         attitude.append(_vec4(telemetry.get("attitude_quaternion") or telemetry.get("attitude")))
         rates.append(_vec3(telemetry.get("body_rates_frd_rps") or telemetry.get("body_rates_rps")))
         imu_acceleration.append(_vec3(imu.get("acceleration_body_frd_mps2")))
@@ -270,6 +279,13 @@ def telemetry_series(run: RunBundle, selected_cycle_index: int | None) -> dict[s
             [("estimate", acceleration)],
         ),
         _telemetry_group(
+            "desired_acceleration",
+            "Geometric Desired Acceleration NED",
+            "m/s2",
+            ["ax", "ay", "az"],
+            [("desired", desired_acceleration)],
+        ),
+        _telemetry_group(
             "body_rates",
             "Body Rates FRD",
             "rad/s",
@@ -303,6 +319,7 @@ def telemetry_series(run: RunBundle, selected_cycle_index: int | None) -> dict[s
         "selected": selected,
         "position": position,
         "velocity": velocity,
+        "desired_acceleration": desired_acceleration,
         "rates": rates,
         "groups": [group for group in groups if group is not None],
     }
@@ -671,7 +688,7 @@ def _looks_like_legacy_test_path(path: dict[str, Any] | None) -> bool:
     if not isinstance(path, dict):
         return False
     source = str(path.get("source") or "")
-    return source in {"straight_line", "test_path"}
+    return source in {"straight_line", "test_path", "test"}
 
 
 def _gate_payload(gate: dict[str, Any]) -> dict[str, Any]:

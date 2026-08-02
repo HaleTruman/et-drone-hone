@@ -452,8 +452,18 @@ button.active, .modeButton.active, .plotTab.active {
 .legendSwatch.down { background: var(--green); }
 .legendSwatch.drone { background: var(--yellow); }
 .legendSwatch.gate { background: var(--violet); }
-.legendSwatch.path { background: #ffffff; }
+.legendSwatch.path {
+  background: linear-gradient(90deg, var(--green), var(--yellow), var(--red));
+}
+.legendSwatch.tightPath { background: var(--red); }
+.legendSwatch.lookahead {
+  height: 0;
+  border-top: 2px dashed var(--yellow);
+  background: transparent;
+}
 .legendSwatch.plannedPath { background: #ff2f2f; }
+.legendSwatch.velocity { background: #5cf2ff; }
+.legendSwatch.desiredAcceleration { background: #ff8a3d; }
 .legendSwatch.telemetryFourth { background: var(--yellow); }
 .legendSwatch.telemetryActual { background: #d8e3ea; }
 .legendSwatch.telemetryTruth {

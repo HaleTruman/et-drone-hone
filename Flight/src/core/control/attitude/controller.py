@@ -18,12 +18,23 @@ class AttitudeController:
         damping: float = 0.15,       # new: rate damping gain (tune this!)
         rate_filter_alpha: float = 0.35,
         max_body_rate_rps: float | Iterable[float] | None = None,
+        error_quaternion_roll_scale: float = 1.0,
+        error_quaternion_pitch_scale: float = 1.0,
+        error_quaternion_yaw_scale: float = 1.0,
     ) -> None:
         self.gains = np.array((float(roll_gain), float(pitch_gain), float(yaw_gain)), dtype=float)
         self.damping = float(damping)                     # scalar for simplicity (can be per-axis)
         self.rate_filter_alpha = float(np.clip(float(rate_filter_alpha), 0.0, 1.0))
         self._filtered_rates_frd_rps: np.ndarray | None = None
         self.max_body_rate_rps = self._rate_limits(max_body_rate_rps)
+        self.error_quaternion_scales = np.array(
+            (
+                float(error_quaternion_roll_scale),
+                float(error_quaternion_pitch_scale),
+                float(error_quaternion_yaw_scale),
+            ),
+            dtype=float,
+        )
         self.last_payload: dict[str, Any] | None = None
 
     def compute_control(
@@ -62,17 +73,36 @@ class AttitudeController:
 
         # Payload
         payload: dict[str, Any] = {
+            "quaternion": tuple(float(v) for v in desired),
             "body_rates_rps": tuple(float(v) for v in body_rates),
         }
         if thrust is not None:
             payload["thrust"] = float(thrust)
 
+        # Convert to the simulator's observed quaternion-error convention.
+        q_err_tgt = q_err.tolist()
+        q_err_tgt_converted = (q_err_tgt[0], -q_err_tgt[1], q_err_tgt[2], -q_err_tgt[3])
+        q_err_tgt_scaled = self._scaled_error_quaternion(q_err_tgt_converted)
+
+        payload["computed_body_rates_rps"] = tuple(float(v) for v in body_rates)
         payload["body_angle_error"] = tuple(attitude_error.tolist())
         payload["error_quaternion"] = tuple(q_err.tolist())
+        payload["error_quaternion_target_converted"] = tuple(q_err_tgt_converted)
+        payload["error_quaternion_target_scaled"] = q_err_tgt_scaled
+        payload["error_quaternion_vector_scales"] = tuple(
+            float(value) for value in self.error_quaternion_scales
+        )
         payload["filtered_body_rates_frd_rps"] = tuple(filtered_rates.tolist())
 
         self.last_payload = payload
         return payload
+
+    def _scaled_error_quaternion(
+        self, quaternion: tuple[float, float, float, float]
+    ) -> tuple[float, float, float, float]:
+        q = np.asarray(quaternion, dtype=float).copy()
+        q[1:4] *= self.error_quaternion_scales
+        return tuple(float(value) for value in normalize_quaternion(q))
 
     def _filtered_body_rates(self, current_rates: np.ndarray) -> np.ndarray:
         alpha = self.rate_filter_alpha

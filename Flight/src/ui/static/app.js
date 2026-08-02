@@ -37,6 +37,7 @@ const state = {
   telemetryXDomains: {},
   imageNatural: { width: 0, height: 0 },
   frameViewportState: { scrollLeft: 0, scrollTop: 0 },
+  plannedPathVisibilityUserSet: false,
   settings: {
     showObservations: true,
     showGateBoxes: true,
@@ -51,6 +52,8 @@ const state = {
     show3dTestPath: true,
     show3dPlannedPath: true,
     show3dTrail: true,
+    show3dVelocity: true,
+    show3dDesiredAcceleration: true,
     showTelemetryActual: true,
     showTelemetryTruth: true
   }
@@ -134,6 +137,8 @@ const els = {
   show3dTestPath: document.getElementById('show3dTestPath'),
   show3dPlannedPath: document.getElementById('show3dPlannedPath'),
   show3dTrail: document.getElementById('show3dTrail'),
+  show3dVelocity: document.getElementById('show3dVelocity'),
+  show3dDesiredAcceleration: document.getElementById('show3dDesiredAcceleration'),
   showTelemetryActual: document.getElementById('showTelemetryActual'),
   showTelemetryTruth: document.getElementById('showTelemetryTruth'),
   telemetryMeta: document.getElementById('telemetryMeta'),
@@ -180,6 +185,7 @@ async function loadRuns({ keepSelection = true } = {}) {
 
 async function loadRun() {
   setStatus('loading run');
+  state.plannedPathVisibilityUserSet = false;
   const payload = await fetchJson(`/api/run?run=${encodeURIComponent(state.runPath)}`);
   state.summary = payload.summary;
   state.frameIndex = Math.min(state.frameIndex, Math.max((state.summary.counts?.frames || 1) - 1, 0));
@@ -194,6 +200,7 @@ async function loadFrame(index) {
   setStatus(`loading frame ${state.frameIndex + 1}`);
   const payload = await fetchJson(`/api/frame?run=${encodeURIComponent(state.runPath)}&frame=${state.frameIndex}`);
   state.frame = payload;
+  applyDefault3dPathVisibility();
   els.frameImage.src = `/api/frame-image?run=${encodeURIComponent(state.runPath)}&frame=${state.frameIndex}&v=${payload.frame.jpeg_size}`;
   els.frameImage.onload = () => {
     state.imageNatural = { width: els.frameImage.naturalWidth || 0, height: els.frameImage.naturalHeight || 0 };
@@ -307,10 +314,12 @@ function renderNearbyFrames() {
 
 function renderTelemetryCards() {
   const telemetry = state.frame?.telemetry?.telemetry || {};
+  const geometricPathFollower = state.frame?.telemetry?.geometric_path_follower || {};
   const values = [
     ['Position NED', formatVec(telemetry.position_local_ned_m, 'm')],
     ['Velocity NED', formatVec(telemetry.velocity_local_ned_mps, 'm/s')],
     ['Acceleration', formatVec(telemetry.acceleration_local_ned_mps2, 'm/s2')],
+    ['Desired Accel NED', formatVec(geometricPathFollower.desired_acceleration_local_ned_mps2, 'm/s2')],
     ['Body Rates', formatVec(telemetry.body_rates_frd_rps || telemetry.body_rates_rps, 'rad/s')],
     ['Attitude', formatVec(telemetry.attitude_quaternion || telemetry.attitude, '')],
     ['Sim Time', telemetry.sim_time_ns ?? state.frame?.telemetry?.sim_time_ns ?? 'n/a']
@@ -1087,11 +1096,6 @@ function renderMap3d({ resetCamera = false } = {}) {
   const droneQuaternion = quat4(drone.attitude_quaternion) || [1, 0, 0, 0];
   const points = [dronePosition];
   addTrail(scene, points);
-  addPathLayer(scene.test_path, points, {
-    enabled: state.settings.show3dTestPath,
-    color: 0xffffff,
-    tubeRadius: 0.045
-  });
   if (!scene.planned_path_is_test_path) {
     addPathLayer(scene.planned_path, points, {
       enabled: state.settings.show3dPlannedPath,
@@ -1099,9 +1103,18 @@ function renderMap3d({ resetCamera = false } = {}) {
       tubeRadius: 0.04
     });
   }
+  addPathLayer(scene.test_path, points, {
+    enabled: state.settings.show3dTestPath,
+    color: 0xffffff,
+    tubeRadius: 0.0225,
+    colorByCurvature: true
+  });
   addGateMap(scene.gate_map || [], dronePosition, points);
   addObservationGates(scene, dronePosition, droneQuaternion, points);
   addDrone(dronePosition, droneQuaternion);
+  addLookaheadVector(dronePosition, points);
+  addVelocityVector(dronePosition, points);
+  addDesiredAccelerationVector(dronePosition, points);
   fitCameraToPoints(points, resetCamera);
   const obsCount = Array.isArray(scene.observation_gates) ? scene.observation_gates.length : 0;
   const mapCount = Array.isArray(scene.gate_map) ? scene.gate_map.length : 0;
@@ -1117,6 +1130,14 @@ function renderMap3d({ resetCamera = false } = {}) {
   resizeMap3d();
 }
 
+function applyDefault3dPathVisibility() {
+  if (state.plannedPathVisibilityUserSet || !els.show3dPlannedPath) return;
+  const testPathPoints = state.frame?.scene?.test_path?.points_local_ned_m;
+  const hasTestPath = Array.isArray(testPathPoints) && testPathPoints.map(point3).filter(Boolean).length >= 2;
+  state.settings.show3dPlannedPath = !hasTestPath;
+  els.show3dPlannedPath.checked = state.settings.show3dPlannedPath;
+}
+
 function addTrail(scene, points) {
   if (!state.settings.show3dTrail) return;
   const series = state.frame?.telemetry_series;
@@ -1126,16 +1147,82 @@ function addTrail(scene, points) {
   map3d.root.add(makeLine(positions, 0x64748b, 0.55));
 }
 
-function addPathLayer(plannedPath, points, { enabled, color, tubeRadius }) {
+function addPathLayer(plannedPath, points, { enabled, color, tubeRadius, colorByCurvature = false }) {
   if (!enabled) return;
   const pathPoints = Array.isArray(plannedPath?.points_local_ned_m)
     ? plannedPath.points_local_ned_m.map(point3).filter(Boolean)
     : [];
   if (pathPoints.length < 2) return;
   points.push(...pathPoints);
+  if (colorByCurvature) {
+    addCurvatureColoredPath(pathPoints, tubeRadius);
+    return;
+  }
   map3d.root.add(makeLine(pathPoints, color, 1));
   const tube = makeTube(pathPoints, color, tubeRadius);
   if (tube) map3d.root.add(tube);
+}
+
+function addCurvatureColoredPath(pathPoints, tubeRadius) {
+  const segmentCurvatures = curvatureBySegment(pathPoints);
+  for (let i = 0; i < pathPoints.length - 1; i += 1) {
+    const segment = [pathPoints[i], pathPoints[i + 1]];
+    const color = curvatureColor(segmentCurvatures[i]);
+    map3d.root.add(makeLine(segment, color, 1));
+    const tube = makeTube(segment, color, tubeRadius);
+    if (tube) map3d.root.add(tube);
+  }
+}
+
+function addLookaheadVector(dronePosition, points) {
+  const lookahead = lookaheadPoint();
+  if (!lookahead) return;
+  const offset = subVec3(lookahead, dronePosition);
+  if (lengthVec3(offset) < 1e-6) return;
+  points.push(lookahead);
+  map3d.root.add(makeDashedLine([dronePosition, lookahead], 0xffd45a, 0.96));
+  const marker = new THREE.Mesh(
+    new THREE.SphereGeometry(0.07, 16, 10),
+    new THREE.MeshBasicMaterial({ color: 0xffd45a })
+  );
+  marker.position.copy(nedToThree(lookahead));
+  map3d.root.add(marker);
+  addLabel('lookahead', addVec3(lookahead, [0, 0, -0.35]), 0xffd45a);
+}
+
+function lookaheadPoint() {
+  const follower = state.frame?.telemetry?.geometric_path_follower || {};
+  return point3(follower.path_follower?.preview_position_local_ned_m)
+    || point3(follower.preview_position_local_ned_m)
+    || point3(state.frame?.telemetry?.carrot?.position_local_ned_m);
+}
+
+function addDesiredAccelerationVector(dronePosition, points) {
+  if (!state.settings.show3dDesiredAcceleration) return;
+  const desiredAcceleration = point3(
+    state.frame?.telemetry?.geometric_path_follower?.desired_acceleration_local_ned_mps2
+  );
+  if (!desiredAcceleration) return;
+  const accelerationNorm = lengthVec3(desiredAcceleration);
+  if (accelerationNorm < 1e-6) return;
+  const direction = normalizeVec3(desiredAcceleration);
+  const length = clamp(accelerationNorm * 0.14, 0.35, 4.0);
+  const tip = addVec3(dronePosition, scaleVec3(direction, length));
+  points.push(tip);
+  map3d.root.add(makeArrowFromLocal(dronePosition, direction, length, 0xff8a3d, 'a_cmd'));
+}
+
+function addVelocityVector(dronePosition, points) {
+  if (!state.settings.show3dVelocity) return;
+  const velocity = point3(state.frame?.telemetry?.telemetry?.velocity_local_ned_mps);
+  if (!velocity) return;
+  const speed = lengthVec3(velocity);
+  if (speed < 1e-6) return;
+  const direction = normalizeVec3(velocity);
+  const length = clamp(speed * 0.18, 0.35, 5.0);
+  const tip = addVec3(dronePosition, scaleVec3(direction, length));
+  points.push(tip);
+  map3d.root.add(makeArrowFromLocal(dronePosition, direction, length, 0x5cf2ff, 'v'));
 }
 
 function addObservationGates(scene, dronePosition, droneQuaternion, points) {
@@ -1266,6 +1353,20 @@ function makeLine(points, color, opacity = 1) {
   return new THREE.Line(geometry, material);
 }
 
+function makeDashedLine(points, color, opacity = 1) {
+  const geometry = new THREE.BufferGeometry().setFromPoints(points.map(nedToThree));
+  const material = new THREE.LineDashedMaterial({
+    color,
+    dashSize: 0.32,
+    gapSize: 0.18,
+    transparent: opacity < 1,
+    opacity
+  });
+  const line = new THREE.Line(geometry, material);
+  line.computeLineDistances();
+  return line;
+}
+
 function makeTube(points, color, radius) {
   const curvePoints = points.map(nedToThree);
   if (curvePoints.length < 2) return null;
@@ -1350,6 +1451,38 @@ function nedVectorToThree(vector) {
 
 function normalizeThree(vector) {
   return vector.lengthSq() > 1e-12 ? vector.normalize() : new THREE.Vector3(1, 0, 0);
+}
+
+function curvatureBySegment(points) {
+  const vertexCurvatures = points.map(() => 0);
+  for (let i = 1; i < points.length - 1; i += 1) {
+    const previous = subVec3(points[i], points[i - 1]);
+    const next = subVec3(points[i + 1], points[i]);
+    const previousLength = lengthVec3(previous);
+    const nextLength = lengthVec3(next);
+    if (previousLength < 1e-6 || nextLength < 1e-6) continue;
+    const cosine = clamp(dotVec3(previous, next) / (previousLength * nextLength), -1, 1);
+    const turnAngleRad = Math.acos(cosine);
+    vertexCurvatures[i] = turnAngleRad / Math.max((previousLength + nextLength) * 0.5, 1e-6);
+  }
+  const segmentCurvatures = [];
+  for (let i = 0; i < points.length - 1; i += 1) {
+    segmentCurvatures.push(Math.max(vertexCurvatures[i], vertexCurvatures[i + 1]));
+  }
+  return segmentCurvatures;
+}
+
+function curvatureColor(curvature) {
+  const tightness = clamp(Number(curvature) / 0.55, 0, 1);
+  const stops = [
+    new THREE.Color(0x71e989),
+    new THREE.Color(0xffd45a),
+    new THREE.Color(0xff6048)
+  ];
+  const scaled = tightness * (stops.length - 1);
+  const index = Math.min(stops.length - 2, Math.floor(scaled));
+  const localT = scaled - index;
+  return stops[index].clone().lerp(stops[index + 1], localT).getHex();
 }
 
 function cameraOpticalToBodyFrd(vector) {
@@ -1765,9 +1898,12 @@ function installEvents() {
     [els.show3dGateMap, 'show3dGateMap'],
     [els.show3dTestPath, 'show3dTestPath'],
     [els.show3dPlannedPath, 'show3dPlannedPath'],
-    [els.show3dTrail, 'show3dTrail']
+    [els.show3dTrail, 'show3dTrail'],
+    [els.show3dVelocity, 'show3dVelocity'],
+    [els.show3dDesiredAcceleration, 'show3dDesiredAcceleration']
   ]) {
     element.addEventListener('change', () => {
+      if (key === 'show3dPlannedPath') state.plannedPathVisibilityUserSet = true;
       state.settings[key] = Boolean(element.checked);
       renderMap3d();
     });
