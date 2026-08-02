@@ -210,7 +210,8 @@ class LegacyInverseDensityReviewTests(unittest.TestCase):
             source = frames / "frame-00000001-1.jpg"
             self.assertTrue(cv2.imwrite(str(source), test_image()))
             output = root / "deterministic_v3" / "legacy_review_runs"
-            manifest = root / "deterministic_v3" / "frame-viewer" / "data" / "legacy-runs-manifest.json"
+            manifest = (root / "deterministic_v3" / "ui" / "frontend" /
+                        "data" / "legacy-runs-manifest.json")
 
             counts = generate_review(
                 [run], output, manifest, test_lut(), static_root=root)

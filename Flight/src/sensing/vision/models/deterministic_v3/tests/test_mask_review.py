@@ -354,7 +354,7 @@ class MaskReviewTests(unittest.TestCase):
             output_root.mkdir(parents=True)
             stale = output_root / "stale.txt"
             stale.write_text("old generated output")
-            manifest = (root / "deterministic_v3" / "frame-viewer" / "data" /
+            manifest = (root / "deterministic_v3" / "ui" / "frontend" / "data" /
                         "runs-manifest.json")
 
             counts = generate_review(

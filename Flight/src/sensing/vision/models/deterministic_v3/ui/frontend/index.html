@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Deterministic V3 Evidence Review</title>
+    <link rel="stylesheet" href="styles.css?v=topology-aspect-fit-v2" />
+  </head>
+  <body>
+    <main class="viewer-shell">
+      <nav class="viewer-tabs" aria-label="Review pipelines">
+        <a href="source.html">source</a>
+        <a class="active" href="index.html">DensityEvidence</a>
+        <a href="topology.html">TopologyDecision.topology_label</a>
+        <a href="pnp_scene.html">CameraPoseEstimate projection</a>
+      </nav>
+      <header class="viewer-header" aria-label="Frame navigation">
+        <section class="header-section controls-left">
+          <select id="run-select" aria-label="Run"></select>
+          <div id="profile-summary" class="profile-summary"></div>
+        </section>
+        <section class="header-section controls-center">
+          <div class="frame-slider-wrap">
+            <input id="frame-slider" type="range" min="0" max="0" value="0" disabled />
+            <div id="frame-meta">Frame 0 / 0</div>
+          </div>
+        </section>
+        <section class="header-section controls-right">
+          <button id="previous-frame" type="button" aria-label="Previous frame" disabled>◀</button>
+          <button id="next-frame" type="button" aria-label="Next frame" disabled>▶</button>
+        </section>
+      </header>
+      <section class="frame-container" aria-live="polite">
+        <div id="frame-message">Loading schema_records[DensityEvidence]…</div>
+        <div id="layer-grid" class="four-column-review" hidden></div>
+      </section>
+    </main>
+    <script type="module" src="app.js?v=c-shape-result-v1"></script>
+    <script type="module" src="schema_json_inspector.js?v=6"></script>
+    <script type="module" src="magnifier.js"></script>
+  </body>
+</html>

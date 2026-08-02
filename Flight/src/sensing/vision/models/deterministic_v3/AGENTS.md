@@ -19,8 +19,7 @@ Frame
   -> component-count gate,
   -> isolate connected components
   -> topology analysis
-  -> topology-aware density-profile selection
-  -> calibrated density fields
+  -> calibrated ten-profile density bank (`scale_01`-`scale_10`) cached for every eligible component; post-close component area supplies the provisional aggregate non-clipped decile recommendation calibrated from all `1,715` currently available frames across three runs
   -> fitter dispatch
        one aperture  -> standard P90 fitter
        zero aperture -> C-shape fitter
@@ -39,6 +38,7 @@ Topology routing must occur before specialized fitting. A fitter may reject its 
   deterministic_v3/src/
   ├── pipeline.py
   ├── schema.py
+  ├── configurations.py
   ├── preprocessing.py
   ├── density_bank.py
   ├── topology.py
@@ -61,6 +61,8 @@ Topology routing must occur before specialized fitting. A fitter may reject its 
       └── validation.py
 
  - schema.py: Data contracts only—no OpenCV processing.
+  - configurations.py: Single code-owned configuration document; its first
+    section, `Density profiles`, owns the complete ten-profile density deck.
   - pipeline.py: Orchestration, routing, cache lifecycle, and dispatch.
   - preprocessing.py: Shared masks, components, contours, and topology
     inputs.
@@ -244,6 +246,14 @@ This is an ingest-compute-publish path and must remain suitable for rapid per-fr
 
 ## Testing and UI support
 
-The `testing/` and `ui/` folders are support areas for this geometry package. `testing/` is intended for speed measurements, standard functional tests, regression tests, and normal code-quality validation. `ui/` is intended to generate visualizations that aid visual analysis of geometry procedures and their intermediate data.
+`tests/` and `ui/` are support areas: `ui/frontend/` owns the static browser viewer, while `ui/backend/` owns read-only serving, historic replay, schema serialization, validation, and diagnostics. Production `src/` must never import UI code or generate review artifacts; the UI consumes logged frames and structured runtime JSON externally. `ui/AGENTS.md` is authoritative for the current UI entry points, active-script inventory, and historical-script status.
 
-Production geometry procedures must not generate, annotate, render, save, or otherwise process review images internally. They must expose structured computational results and trace evidence. Testing and UI code may consume those results to perform measurements, assertions, and visualization without becoming a dependency of the production geometry pipeline.
+## UI terminology authority
+
+The serialized runtime JSON schema is authoritative for UI evidence labels and
+terminology. The UI must display upstream schema type names, field names, and
+enumerated values exactly; it must not invent a friendlier or legacy alias for
+an upstream process. “Calibrated density mask” is therefore not an approved UI
+replacement for `DensityEvidence`, `final_field`, or the percentile-mask field
+actually emitted upstream. If terminology needs refinement, change and approve
+the upstream schema first, then update the UI to match it.

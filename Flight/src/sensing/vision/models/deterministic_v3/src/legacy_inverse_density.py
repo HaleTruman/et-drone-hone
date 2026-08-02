@@ -17,7 +17,7 @@ MODELS_ROOT = ROOT.parent
 RUNS = MODELS_ROOT / "detection_v2" / "runs"
 LOG_RUNS = ROOT.parents[4] / "logs" / "runs"
 REVIEWS = ROOT / "legacy_review_runs"
-MANIFEST = ROOT / "frame-viewer" / "data" / "legacy-runs-manifest.json"
+MANIFEST = ROOT / "ui" / "frontend" / "data" / "legacy-runs-manifest.json"
 LUT_PATH = ROOT / "assets" / "color_lut_v1.npz"
 EXTENSIONS = {".png", ".jpg", ".jpeg"}
 

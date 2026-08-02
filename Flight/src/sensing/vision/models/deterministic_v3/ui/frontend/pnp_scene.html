@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CameraPoseEstimate Projection</title>
+    <link rel="stylesheet" href="styles.css?v=topology-aspect-fit-v2" />
+    <link rel="stylesheet" href="pnp_scene.css?v=1" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.165.0/build/three.module.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <main class="viewer-shell">
+      <nav class="viewer-tabs" aria-label="Review pipelines">
+        <a href="source.html">source</a>
+        <a href="index.html">DensityEvidence</a>
+        <a href="topology.html">TopologyDecision.topology_label</a>
+        <a class="active" href="pnp_scene.html">CameraPoseEstimate projection</a>
+      </nav>
+      <header class="viewer-header" aria-label="Frame navigation">
+        <section class="header-section controls-left">
+          <select id="run-select" aria-label="source.run_id"></select>
+        </section>
+        <section class="header-section controls-center">
+          <div class="frame-slider-wrap">
+            <input id="frame-slider" type="range" min="0" max="0" value="0" disabled />
+            <div id="frame-meta">UI frame 0 / 0</div>
+          </div>
+        </section>
+        <section class="header-section controls-right">
+          <button id="previous-frame" type="button" aria-label="Previous frame" disabled>◀</button>
+          <button id="next-frame" type="button" aria-label="Next frame" disabled>▶</button>
+        </section>
+      </header>
+      <section class="pnp-scene-workspace" aria-live="polite">
+        <div class="pnp-scene-stage">
+          <canvas id="pnp-scene-canvas" aria-label="Camera-aligned PnP projection scene"></canvas>
+          <div id="pnp-scene-status" class="pnp-scene-status">Loading source.relative_path…</div>
+          <div class="pnp-scene-reticle" aria-hidden="true"></div>
+        </div>
+        <aside class="pnp-scene-readout">
+          <h1>CameraPoseEstimate projection</h1>
+          <dl id="pnp-scene-metadata"></dl>
+          <p>
+            The fixed viewport consumes GeometryFrameResult.camera_calibration,
+            gate_model, and accepted camera_pose_estimates directly. It assesses
+            image-plane projection and orientation, not independent depth truth.
+          </p>
+        </aside>
+      </section>
+    </main>
+    <script type="module" src="pnp_scene_app.js?v=frame-navigation-v1"></script>
+  </body>
+</html>

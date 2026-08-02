@@ -9,7 +9,7 @@ from sensing.vision.models.deterministic_v3.src.c_shape_finite_extent import (
     CShapeExtentResult)
 from sensing.vision.models.deterministic_v3.src.c_shape_three_line_pose import (
     CShapeDensityInput)
-from sensing.vision.models.deterministic_v3.src.geometry.c_shape_tailored_shortfall_baseline import (
+from sensing.vision.models.deterministic_v3.src.c_shape.c_shape_tailored_shortfall_baseline import (
     CONTOUR_ANGULAR_INFLUENCE, LONGEST_GREEN_TARGET_SCALE,
     MAX_CONTOUR_CORRECTION_DEGREES, extend_by_scaled_green_shortfall,
     fit_c_shape_geometry_baseline)

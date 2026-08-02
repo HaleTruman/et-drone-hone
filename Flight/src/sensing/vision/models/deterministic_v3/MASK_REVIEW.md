@@ -74,10 +74,10 @@ cd Flight/src/sensing/vision/models
 python3 -m http.server 8765 --bind 127.0.0.1
 ```
 
-Open <http://127.0.0.1:8765/deterministic_v3/frame-viewer/>. Rerun the renderer
+Open <http://127.0.0.1:8765/deterministic_v3/ui/frontend/>. Rerun the renderer
 and refresh the page to inspect the latest detector output.
 
-## Calibrated legacy inverse-density tab
+## DensityEvidence review tab
 
 The independent full-resolution implementation is in
 `src/legacy_inverse_density.py`. It renders five preprocessing stages followed
@@ -91,8 +91,41 @@ PYTHONPATH=Flight/src /usr/local/bin/python3.13 \
 ```
 
 The newest valid `Flight/logs/runs` entry is appended automatically. Open
-<http://127.0.0.1:8765/deterministic_v3/frame-viewer/legacy.html> or select the
-`Calibrated legacy inverse density` tab in the viewer.
+<http://127.0.0.1:8765/deterministic_v3/ui/frontend/index.html> or select the
+`DensityEvidence` tab in the viewer.
+
+## TopologyDecision.topology_label review tab
+
+Open <http://127.0.0.1:8765/topology.html> with the current UI backend to
+filter the exact serialized values `standard`, `multi_void`, `c_shape`,
+`unknown`, and `clipped`, or select `all`. Each component uses its serialized
+`bbox_xywh` to aspect-fit the complete logged source crop into a fixed 250x250
+view with empty letterbox space and a label-specific outer border. The tab does
+not infer labels from route or rejection
+fields; older dumps without `TopologyDecision.topology_label` report that the
+review run must be regenerated.
+
+Run and frame selection persists across tabs in the current browser session
+when the destination tab supports the same run. Tabs without that run restore
+their own last valid run and exact frame filename rather than reusing an index
+against unrelated source data.
+
+## CameraPoseEstimate projection tab
+
+Open <http://127.0.0.1:8765/pnp_scene.html> to review the run-level production
+`GeometryFrameResult` JSON against its exact logged source frame. The backend
+matches `frame_id` and `sim_time_ns`; the frontend consumes
+`camera_calibration`, `gate_model`, and `camera_pose_estimates` without deriving
+a pose from another field. It builds the view projection from the serialized
+`camera_matrix`, builds the plane from `object_points_m`, and applies
+`rotation_vector_model_to_camera` and `position_camera_m` in the OpenCV optical
+camera frame. Only `CameraPoseEstimate.accepted=true` records are rendered;
+rejected records and their exact `rejection_reason` remain in the readout.
+
+Three.js is pinned to `0.165.0` only on this page. The current runtime
+calibration has zero `distortion_coefficients`. A future non-zero calibration
+fails closed in the adapter until the viewer has a distortion-aware projection,
+so the UI does not present an approximate overlay as exact runtime geometry.
 
 For production computation without review layers, heat maps, or manifest work,
 use `src/legacy_inverse_density_production.py`. It computes only the final
@@ -151,5 +184,5 @@ preparation, isolated square component computation with one calibrated radius
 profile, the optimized original inverse-density formula, and a convex P90
 quadrilateral fit. It performs no rendering or file output.
 
-The separate `scripts/validate_inverse_density_checkpoint.py` tool benchmarks a
+The separate `ui/backend/validate_inverse_density_checkpoint.py` tool benchmarks a
 run and creates the fixed five-gate report used to validate this checkpoint.

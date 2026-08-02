@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Deterministic V3 Geometry Review</title>
+    <link rel="stylesheet" href="styles.css?v=topology-aspect-fit-v2" />
+  </head>
+  <body>
+    <main class="viewer-shell">
+      <nav class="viewer-tabs" aria-label="Review pipelines">
+        <a class="active" href="source.html">source</a>
+        <a href="index.html">DensityEvidence</a>
+        <a href="topology.html">TopologyDecision.topology_label</a>
+        <a href="pnp_scene.html">CameraPoseEstimate projection</a>
+      </nav>
+      <header class="viewer-header" aria-label="Frame navigation">
+        <section class="header-section controls-left">
+          <select id="run-select" aria-label="Run"></select>
+        </section>
+        <section class="header-section controls-center">
+          <div class="frame-slider-wrap">
+            <input id="frame-slider" type="range" min="0" max="0" value="0" disabled />
+            <div id="frame-meta">Frame 0 / 0</div>
+          </div>
+        </section>
+        <section class="header-section controls-right">
+          <button id="previous-frame" type="button" aria-label="Previous frame" disabled>◀</button>
+          <button id="next-frame" type="button" aria-label="Next frame" disabled>▶</button>
+        </section>
+      </header>
+      <section class="frame-container" aria-live="polite">
+        <div id="frame-message">Loading source.relative_path…</div>
+        <div id="layer-grid" hidden></div>
+      </section>
+    </main>
+    <script type="module" src="source_app.js?v=frame-navigation-v1"></script>
+    <script type="module" src="schema_json_inspector.js?v=5"></script>
+    <script type="module" src="magnifier.js"></script>
+  </body>
+</html>

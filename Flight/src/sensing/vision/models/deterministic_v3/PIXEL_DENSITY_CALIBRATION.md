@@ -21,6 +21,12 @@ topologies:
 - Density neighborhood shape: square
 - Processing resolution: native mask resolution
 
+The active code-owned settings are centralized in
+`src/configurations.py` under its first section, **Density profiles**. Every
+profile explicitly records its area boundary, density radius, ridge radius,
+relative cap, inverse gamma, and ridge gamma so calibration changes remain
+reviewable in one file.
+
 ## Approved Radius Observations
 
 The following selections were approved from the fixed-gamma radius review:
@@ -36,10 +42,45 @@ The following selections were approved from the fixed-gamma radius review:
 
 Pixel sizes above refer to the component's maximum bounding-box dimension.
 
+## First Implementation Non-Clipped Recommendation Calibration — 2026-08-01
+
+The first ten-profile recommendation calibration uses all `3,852` eligible
+non-frame-clipped post-close components from the `1,715` frames currently
+available across `run-20260731T093159Z`, `run-20260731T093616Z`, and
+`run-20260731T093732Z`. Its reference factor is foreground area in pixels,
+`ComponentObservation.area_px`, rather than maximum bounding-box dimension.
+Discrete inclusive boundaries are the aggregate empirical P10 through P90
+values computed with `numpy.percentile(..., method="higher")`.
+
+Calibration version:
+`inverse-density-v3:runs-20260731T093159Z+093616Z+093732Z:nonclipped-area-deciles-higher:cap2.0:inverse2.10:ridge3.00`
+
+| Profile | Maximum component area | Density radius | Ridge radius |
+|---|---:|---:|---:|
+| `scale_01` | `146 px` | `2 px` | `2 px` |
+| `scale_02` | `190 px` | `3 px` | `2 px` |
+| `scale_03` | `242 px` | `4 px` | `3 px` |
+| `scale_04` | `260 px` | `5 px` | `4 px` |
+| `scale_05` | `372 px` | `6 px` | `5 px` |
+| `scale_06` | `827 px` | `7 px` | `6 px` |
+| `scale_07` | `1,370 px` | `9 px` | `7 px` |
+| `scale_08` | `3,113 px` | `12 px` | `10 px` |
+| `scale_09` | `4,671 px` | `16 px` | `13 px` |
+| `scale_10` | Unbounded | `20 px` | `16 px` |
+
+This is a first implementation of the ordinary recommendation buckets. All ten
+profiles remain cached for every density-eligible component, and a specialized
+topology path may select another named profile. The area analysis calibrates
+the bucket boundaries only; the retained radius ladder still requires visual
+and geometric validation by topology. The lookup exists in
+`DensityBank.recommended_standard_profile()` but is not yet connected to a live
+standard-gate fitter by the topology-first pipeline scaffold.
+
 ## Implementation Constraint
 
-These observations do not yet define complete production bucket boundaries.
-They demonstrate that maximum component size alone may be insufficient:
+The approved radius observations do not by themselves define selection rules
+and demonstrate that either area or maximum component size alone may be
+insufficient:
 
 - The `51 px` overlapping component and `59 px` regular component require
   different density radii.
@@ -48,9 +89,10 @@ They demonstrate that maximum component size alone may be insufficient:
 - Topology, including overlapping or multi-hole masks, may need to participate
   in profile selection.
 
-Do not infer unapproved thresholds or apply these values to unresolved component
-sizes or topologies. Additional radius rules must be reviewed and explicitly
-approved by the user before they are added here or promoted to production.
+Do not infer additional radius rules from the new area boundaries or apply one
+ordinary recommendation as a topology-specific guarantee. Additional radius
+rules must be reviewed and explicitly approved before being added here or
+promoted to topology-specific production selection.
 
 ## Specialized Gate Cases Requiring Separate Processing
 
@@ -245,7 +287,7 @@ The reproducible implementation evidence is:
 - estimator: `src/c_shape_finite_extent.py`;
 - line extraction: `src/c_shape_three_line_pose.py::fit_c_shape_lines`;
 - synthetic validation: `tests/test_c_shape_finite_extent.py`;
-- renderer: `scripts/render_c_shape_finite_extent_review.py`;
+- renderer: `ui/legacy/render_c_shape_finite_extent_review.py`;
 - rendered review and structured result:
 
 `production_samples/c-shape-finite-extent-v1/`
@@ -453,7 +495,7 @@ asymmetric-shape selection. Nothing in this experiment is promoted as the
 selected quadrilateral. Its renderer, synthetic validation, and review output
 are:
 
-- `scripts/render_c_shape_decoupled_extension_review.py`
+- `ui/legacy/render_c_shape_decoupled_extension_review.py`
 - `tests/test_c_shape_decoupled_extension.py`
 - `production_samples/c-shape-decoupled-contour-exit-sweep-50pct-15deg-v2/`
 
@@ -463,7 +505,7 @@ not select an extension scale and does not integrate the result into production.
 
 ##### Non-edge-clipped C-shape checkpoint sweep
 
-`scripts/render_c_shape_checkpoint_sweep.py` scans every available recorded
+`ui/backend/render_c_shape_checkpoint_sweep.py` scans every available recorded
 run and applies the checkpoint without changing its parameters. Discovery
 requires zero enclosed holes, a minimum `20 px` width and height, fill ratio at
 least `0.32`, solidity no greater than `0.80`, no contact with any of the four
@@ -650,7 +692,7 @@ The accepted 24-example, eight-run, non-edge-clipped review is:
 All 24 reviewed quadrilaterals are convex. A pinned geometry-local copy now
 lives at:
 
-`src/geometry/c_shape_tailored_shortfall_baseline.py`
+`src/c_shape/c_shape_tailored_shortfall_baseline.py`
 
 The pinned module explicitly fixes the accepted `0.50`, `15-degree`, and
 `0.75` settings and exposes `fit_c_shape_geometry_baseline()`. The working
@@ -659,7 +701,7 @@ experimentation. Future accepted C-shape geometry refinements should branch
 from the geometry-local baseline rather than mutating this pinned file.
 
 The corresponding renderer is
-`scripts/render_c_shape_bounded_angle_review.py`, and the correction-cap and
+`ui/legacy/render_c_shape_bounded_angle_review.py`, and the correction-cap and
 three-line behavior are covered by `tests/test_c_shape_bounded_angle.py`.
 This remains experimental and does not replace the approved finite-extent
 baseline until it is reviewed on additional isolated components.
@@ -976,8 +1018,8 @@ review evidence only and is not part of the approved standard.
 
 Pinned copies of the approved geometry baseline now live in:
 
-- `src/geometry/overlapping_gate_aperture_solver.py`
-- `src/geometry/overlapping_gate_contour_side_refinement.py`
+- `src/multi_gate/overlapping_gate_aperture_solver.py`
+- `src/multi_gate/overlapping_gate_contour_side_refinement.py`
 
 The first file preserves the P90/P70 aperture-seeded, larger-first residual
 solver. The second preserves the `0.50` raw outer-contour angular influence,
@@ -987,7 +1029,7 @@ geometry work can proceed within this package.
 
 The original source modules remain in place and unchanged for historical
 review reproducibility. Future multi-gate geometry refinements should branch
-from `src/geometry/`; review renderers, batch traversal, morphology side tracks,
+from `src/multi_gate/`; review renderers, batch traversal, morphology side tracks,
 and generated images remain outside the approved runtime baseline.
 
 ## Current Review Artifact
