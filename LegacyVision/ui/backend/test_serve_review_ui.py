@@ -12,6 +12,8 @@ from .serve_review_ui import (
     _confined,
     _is_supported_layer_id,
     discover_geometry_review_records,
+    discover_evaluation_runs,
+    evaluation_frame_catalog,
     frame_catalog,
     geometry_frame_history,
     geometry_frame_result,
@@ -195,6 +197,62 @@ class ReviewUiCatalogTests(unittest.TestCase):
             catalog = run_catalog(logs, root / "Logs" / "review" / "runs")
 
             self.assertEqual(catalog["runs"][0]["frame_count"], 1)
+
+    def test_evaluation_catalog_exposes_overlay_urls(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            evaluations = root / "Logs" / "evaluation" / "runs"
+            evaluation_id = "evaluation-20260802T173817Z-run-example"
+            output = evaluations / evaluation_id
+            overlay = (
+                output / "overlays" / "deterministic_v3" / "composite" /
+                "frame-00000017-123456789.png")
+            overlay.parent.mkdir(parents=True)
+            overlay.write_bytes(b"png")
+            (output / "metadata.json").write_text(json.dumps({
+                "created_utc": "20260802T173817Z",
+                "source_run": {
+                    "run_id": "run-example",
+                    "metadata": {"large": "omitted from API"},
+                },
+                "selection": {"selected_frame_count": 1},
+                "overlays": {
+                    "enabled": True,
+                    "layers": ["composite"],
+                },
+            }), encoding="utf-8")
+            (output / "summary.json").write_text(json.dumps({
+                "processed_frame_count": 1,
+                "frames_changed": 1,
+                "frames_with_errors": 0,
+                "frames_with_vehicle_state": 1,
+                "max_position_delta_m": 0.25,
+            }), encoding="utf-8")
+            (output / "frames.jsonl").write_text(json.dumps({
+                "source": {
+                    "run_id": "run-example",
+                    "frame_id": 17,
+                    "sim_time_ns": 123456789,
+                    "relative_path": "vision_frames/frame-00000017-123456789.jpg",
+                },
+                "comparison": {
+                    "changed": True,
+                    "gate_count_delta": 1,
+                },
+            }) + "\n", encoding="utf-8")
+
+            catalog = discover_evaluation_runs(evaluations)
+            frames = evaluation_frame_catalog(evaluation_id, evaluations)
+
+            self.assertEqual(catalog["evaluations"][0]["id"], evaluation_id)
+            self.assertTrue(catalog["evaluations"][0]["overlays_enabled"])
+            self.assertEqual(frames["frames"][0]["source_image_url"],
+                             "/frames/run-example/frame-00000017-123456789.jpg")
+            self.assertEqual(
+                frames["frames"][0]["overlays"]["deterministic_v3"]["composite"],
+                "/evaluation-overlays/evaluation-20260802T173817Z-run-example/"
+                "deterministic_v3/composite/frame-00000017-123456789.png")
+            self.assertNotIn("metadata", frames["metadata"]["source_run"])
 
     def test_run_level_geometry_results_match_exact_logged_frame_identity(self):
         with tempfile.TemporaryDirectory() as temporary:
