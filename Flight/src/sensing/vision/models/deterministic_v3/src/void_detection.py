@@ -30,7 +30,7 @@ from .void_geometry import (compute_geometry, draw_geometry, draw_inner_corners,
 ROOT = Path(__file__).resolve().parents[1]
 MODELS_ROOT = ROOT.parent
 RUNS = MODELS_ROOT / "detection_v2" / "runs"
-LOG_RUNS = ROOT.parents[4] / "logs" / "runs"
+LOG_RUNS = ROOT.parents[5] / "Logs" / "flight" / "runs"
 REVIEWS = ROOT / "review_runs"
 MANIFEST = ROOT / "ui" / "frontend" / "data" / "runs-manifest.json"
 LUT_PATH = ROOT / "assets" / "color_lut_v1.npz"
@@ -147,7 +147,7 @@ def frame_paths(folder):
 
 
 def include_latest_logged_run(runs, logs_root=LOG_RUNS):
-    """Append the newest valid Flight/logs run unless already selected."""
+    """Append the newest valid flight log run unless already selected."""
     if not logs_root.is_dir():
         return list(runs)
     candidates = [

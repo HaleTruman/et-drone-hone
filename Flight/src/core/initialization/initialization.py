@@ -152,7 +152,7 @@ HOVER_VERTICAL_VELOCITY_GAIN = 0.18  # damps vertical velocity when the finish h
 HOVER_VERTICAL_ACCELERATION_GAIN = 0.035  # scales vertical acceleration feedback in the finish hover controller.
 
 # Logging.
-RUNS_ROOT = Path(__file__).resolve().parents[3] / "logs" / "runs"  # is the root directory where timestamped run logs are created.
+RUNS_ROOT = Path(__file__).resolve().parents[4] / "Logs" / "flight" / "runs"  # is the root directory where timestamped run logs are created.
 
 
 def _initialization_constants() -> dict[str, object]:
