@@ -5,23 +5,38 @@ import random
 import unreal
 
 from src.dataset_generation.config import (
-    CAMERA_POSITIONS_PER_GATE, CAMERA_HOLD_SECONDS, SAVE_FRAMES, SAVE_FRAME_METADATA,
+    CAMERA_POSITIONS_PER_GATE, CAMERA_HOLD_SECONDS, SAVE_FRAMES, SAVE_FRAME_METADATA, SAVE_MASKS,
     CAMERA_LABEL, RUN_COUNT,
     ZERO_GATE_FRAME_PERCENT, ZERO_GATE_CAMERA_POSITIONS,
+    RENDER_TARGET_PATH, MASK_RENDER_TARGET_PATH,
 )
 from src.dataset_generation.dataset_collection.camera_poses import (
     CameraCoverageState,
-    coverage_camera_pose_for_gate_or_fallback,
+    continuous_spline_flight_poses,
+    flight_camera_pose_for_gate_or_fallback,
     random_background_camera_pose,
     set_camera_pose,
 )
-from src.dataset_generation.dataset_collection.capture import load_render_target, find_scene_capture_for_render_target, sync_scene_capture_to_camera, export_render_target_frame
+from src.dataset_generation.dataset_collection.capture import (
+    load_render_target,
+    load_mask_render_target,
+    find_scene_capture_for_render_target,
+    sync_scene_capture_to_camera,
+    export_render_target_frame,
+    export_render_target_mask,
+)
 from src.dataset_generation.dataset_collection.metadata import (
+    sanitize_gate_mask_file,
     write_dataset_camera_intrinsics,
     write_frame_metadata,
+    write_mask_stencil_legend,
 )
 import src.dataset_generation.dataset_collection.outputs as outputs
-from src.dataset_generation.dataset_collection.outputs import create_run_dir, reset_frame_metadata
+from src.dataset_generation.dataset_collection.outputs import (
+    create_run_dir,
+    mask_file_path,
+    reset_frame_metadata,
+)
 from src.dataset_generation.unreal_editor import (
     require_unreal_editor_python, load_level_if_needed, invalidate_viewports, editor_world,
     find_camera_actor, set_actor_visible,
@@ -30,7 +45,7 @@ from src.dataset_generation.unreal_editor import (
 CAMERA_SEQUENCE_STATE = None
 COMPLETION_CALLBACK = None
 
-def start(camera=None, gates=None, batch_number=1, on_complete=None):
+def start(camera=None, gates=None, track_layout=None, batch_number=1, on_complete=None):
     require_unreal_editor_python()
     load_level_if_needed()
 
@@ -42,7 +57,7 @@ def start(camera=None, gates=None, batch_number=1, on_complete=None):
     if not camera:
         raise RuntimeError(f"No camera actor found with label '{CAMERA_LABEL}'.")
 
-    start_camera_sequence(camera, gates, batch_number, on_complete)
+    start_camera_sequence(camera, gates, track_layout, batch_number, on_complete)
 
 def zero_gate_pose_count_for_normal_run(normal_pose_count):
     if ZERO_GATE_FRAME_PERCENT <= 0.0:
@@ -93,61 +108,88 @@ def make_background_pose(camera):
     )
 
 
-def start_camera_sequence(camera, gates, batch_number, on_complete=None):
+def start_camera_sequence(camera, gates, track_layout, batch_number, on_complete=None):
     global CAMERA_SEQUENCE_STATE, COMPLETION_CALLBACK
 
     COMPLETION_CALLBACK = on_complete
     outputs.CURRENT_RUN_DIR = create_run_dir()
     render_target = load_render_target() if SAVE_FRAMES else None
+    mask_render_target = load_mask_render_target() if SAVE_MASKS else None
     scene_capture_component = (
-        find_scene_capture_for_render_target(render_target) if SAVE_FRAMES else None
+        find_scene_capture_for_render_target(render_target, RENDER_TARGET_PATH) if SAVE_FRAMES else None
     )
-    world_context = (editor_world() or camera) if (SAVE_FRAMES or SAVE_FRAME_METADATA) else None
+    mask_scene_capture_component = (
+        find_scene_capture_for_render_target(mask_render_target, MASK_RENDER_TARGET_PATH)
+        if SAVE_MASKS
+        else None
+    )
+    world_context = (
+        (editor_world() or camera)
+        if (SAVE_FRAMES or SAVE_MASKS or SAVE_FRAME_METADATA)
+        else None
+    )
     if SAVE_FRAME_METADATA:
         write_dataset_camera_intrinsics(camera)
         reset_frame_metadata()
+        write_mask_stencil_legend(gates)
 
     poses = []
     coverage_state = CameraCoverageState()
     if gates:
-        normal_pose_count = len(gates) * CAMERA_POSITIONS_PER_GATE
-        if ZERO_GATE_FRAME_PERCENT < 100.0:
-            for gate in gates:
-                for _ in range(CAMERA_POSITIONS_PER_GATE):
-                    (
-                        camera_location,
-                        camera_rotation,
-                        look_target,
-                        yaw_offset,
-                        pitch_offset,
-                    ) = coverage_camera_pose_for_gate_or_fallback(
-                        camera,
-                        gate,
-                        coverage_state,
-                    )
-                    poses.append(
-                        make_pose(
-                            gate,
+        flight_poses = continuous_spline_flight_poses(camera, gates, track_layout)
+        if flight_poses:
+            poses.extend(flight_poses)
+            unreal.log(
+                f"Using continuous spline flight capture with {len(poses)} frame(s)."
+            )
+        else:
+            normal_pose_count = len(gates) * CAMERA_POSITIONS_PER_GATE
+            if ZERO_GATE_FRAME_PERCENT < 100.0:
+                for gate_index, gate in enumerate(gates):
+                    for pose_index in range(CAMERA_POSITIONS_PER_GATE):
+                        (
                             camera_location,
                             camera_rotation,
                             look_target,
                             yaw_offset,
                             pitch_offset,
-                            True,
+                        ) = flight_camera_pose_for_gate_or_fallback(
+                            camera,
+                            gate,
+                            track_layout,
+                            gate_index,
+                            pose_index,
+                            CAMERA_POSITIONS_PER_GATE,
+                            coverage_state,
                         )
-                    )
+                        poses.append(
+                            make_pose(
+                                gate,
+                                camera_location,
+                                camera_rotation,
+                                look_target,
+                                yaw_offset,
+                                pitch_offset,
+                                True,
+                            )
+                        )
 
-        zero_gate_pose_count = zero_gate_pose_count_for_normal_run(normal_pose_count)
-        for _ in range(zero_gate_pose_count):
-            poses.append(make_background_pose(camera))
+            zero_gate_pose_count = zero_gate_pose_count_for_normal_run(normal_pose_count)
+            for _ in range(zero_gate_pose_count):
+                poses.append(make_background_pose(camera))
 
-        if zero_gate_pose_count:
-            random.shuffle(poses)
-            unreal.log(
-                f"Added {zero_gate_pose_count} zero-gate frame(s) to this run batch "
-                f"for ZERO_GATE_FRAME_PERCENT={ZERO_GATE_FRAME_PERCENT:.1f}."
-            )
-        unreal.log(f"Camera coverage sampling summary: {coverage_state.compact_summary()}")
+            if zero_gate_pose_count and not track_layout:
+                random.shuffle(poses)
+                unreal.log(
+                    f"Added {zero_gate_pose_count} zero-gate frame(s) to this run batch "
+                    f"for ZERO_GATE_FRAME_PERCENT={ZERO_GATE_FRAME_PERCENT:.1f}."
+                )
+            elif zero_gate_pose_count:
+                unreal.log(
+                    f"Appended {zero_gate_pose_count} zero-gate frame(s) after spline-flight "
+                    f"poses for ZERO_GATE_FRAME_PERCENT={ZERO_GATE_FRAME_PERCENT:.1f}."
+                )
+            unreal.log(f"Camera coverage sampling summary: {coverage_state.compact_summary()}")
     else:
         for _ in range(ZERO_GATE_CAMERA_POSITIONS):
             poses.append(make_background_pose(camera))
@@ -166,10 +208,13 @@ def start_camera_sequence(camera, gates, batch_number, on_complete=None):
         "elapsed": 0.0,
         "callback": None,
         "render_target": render_target,
+        "mask_render_target": mask_render_target,
         "scene_capture_component": scene_capture_component,
+        "mask_scene_capture_component": mask_scene_capture_component,
         "world_context": world_context,
         "all_gate_actors": gates,
         "frame_number": 1,
+        "captured_frames": [],
         "save_pending": False,
         "batch_number": batch_number,
     }
@@ -183,6 +228,7 @@ def start_camera_sequence(camera, gates, batch_number, on_complete=None):
             "only the first camera position was applied."
         )
         save_pending_frame()
+        finalize_run_outputs(CAMERA_SEQUENCE_STATE)
         unregister_camera_sequence()
         finish_collection(batch_number)
         return
@@ -206,6 +252,7 @@ def camera_sequence_tick(delta_seconds):
     if CAMERA_SEQUENCE_STATE["index"] >= len(CAMERA_SEQUENCE_STATE["poses"]):
         completed_batch = CAMERA_SEQUENCE_STATE.get("batch_number", 1)
         unreal.log(f"Camera sequence complete for run batch {completed_batch}/{RUN_COUNT}")
+        finalize_run_outputs(CAMERA_SEQUENCE_STATE)
         for gate in CAMERA_SEQUENCE_STATE.get("all_gate_actors", []):
             set_actor_visible(gate, True)
         unregister_camera_sequence()
@@ -229,7 +276,7 @@ def apply_camera_sequence_pose():
         pose["pitch_offset"],
     )
     invalidate_viewports()
-    state["save_pending"] = SAVE_FRAMES or SAVE_FRAME_METADATA
+    state["save_pending"] = SAVE_FRAMES or SAVE_MASKS or SAVE_FRAME_METADATA
     unreal.log(
         f"Camera sequence position {state['index'] + 1}/{len(state['poses'])}; "
         f"holding for {CAMERA_HOLD_SECONDS:.1f}s; "
@@ -243,6 +290,7 @@ def save_pending_frame():
 
     pose = state["poses"][state["index"]]
     frame_saved = False
+    mask_saved = False
     if SAVE_FRAMES:
         sync_scene_capture_to_camera(
             state["scene_capture_component"],
@@ -255,18 +303,74 @@ def save_pending_frame():
             pose,
         )
         frame_saved = True
+    if SAVE_MASKS:
+        sync_scene_capture_to_camera(
+            state["mask_scene_capture_component"],
+            state["camera"],
+        )
+        export_render_target_mask(
+            state["world_context"],
+            state["mask_render_target"],
+            state["frame_number"],
+            pose,
+        )
+        mask_saved = True
 
-    metadata_gates = [] if pose.get("gate") is None else state["gates"]
-    write_frame_metadata(
-        state["world_context"],
-        state["camera"],
-        metadata_gates,
-        state["frame_number"],
-        pose,
-        frame_saved,
+    state["captured_frames"].append(
+        {
+            "frame_number": state["frame_number"],
+            "pose": pose,
+            "frame_saved": frame_saved,
+            "mask_saved": mask_saved,
+        }
     )
     state["frame_number"] += 1
     state["save_pending"] = False
+
+
+def finalize_run_outputs(state):
+    if not state:
+        return
+
+    captured_frames = state.get("captured_frames", [])
+    if not captured_frames:
+        return
+
+    if SAVE_MASKS:
+        unreal.log(f"Cleaning {len(captured_frames)} captured mask PNG(s).")
+        for frame in captured_frames:
+            if not frame.get("mask_saved"):
+                continue
+            pose = frame["pose"]
+            metadata_gates = state["gates"] if pose.get("show_gates", True) else []
+            sanitize_gate_mask_file(
+                mask_file_path(frame["frame_number"]),
+                metadata_gates,
+            )
+
+    if SAVE_FRAME_METADATA:
+        unreal.log(f"Writing metadata for {len(captured_frames)} captured frame(s).")
+        for frame in captured_frames:
+            pose = frame["pose"]
+            apply_metadata_pose(state, pose)
+            metadata_gates = state["gates"] if pose.get("show_gates", True) else []
+            write_frame_metadata(
+                state["world_context"],
+                state["camera"],
+                metadata_gates,
+                frame["frame_number"],
+                pose,
+                frame.get("frame_saved", False),
+                frame.get("mask_saved", False),
+            )
+
+
+def apply_metadata_pose(state, pose):
+    for gate in state["all_gate_actors"]:
+        set_actor_visible(gate, bool(pose.get("show_gates", True)))
+    camera = state["camera"]
+    camera.set_actor_location(pose["location"], False, False)
+    camera.set_actor_rotation(pose["rotation"], False)
 
 def unregister_camera_sequence():
     global CAMERA_SEQUENCE_STATE

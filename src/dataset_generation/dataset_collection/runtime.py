@@ -6,10 +6,11 @@ from src.dataset_generation.dataset_collection.capture import (
 )
 
 
-def start(camera=None, gates=None, batch_number=1, on_complete=None):
+def start(camera=None, gates=None, track_layout=None, batch_number=1, on_complete=None):
     pipeline.start(
         camera=camera,
         gates=gates,
+        track_layout=track_layout,
         batch_number=batch_number,
         on_complete=on_complete,
     )

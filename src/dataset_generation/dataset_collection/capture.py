@@ -3,16 +3,34 @@
 import unreal
 
 from src.dataset_generation.common import object_path_name, actor_label, component_owner, component_name
-from src.dataset_generation.config import RENDER_TARGET_PATH, FRAME_FILE_EXTENSION, SCENE_CAPTURE_WARMUP_CAPTURES
+from src.dataset_generation.config import (
+    RENDER_TARGET_PATH,
+    MASK_RENDER_TARGET_PATH,
+    FRAME_FILE_EXTENSION,
+    SCENE_CAPTURE_WARMUP_CAPTURES,
+)
 from src.dataset_generation.dataset_collection.camera_poses import camera_horizontal_fov_and_aspect
-from src.dataset_generation.dataset_collection.outputs import frame_output_dir, frame_file_name
+from src.dataset_generation.dataset_collection.outputs import (
+    frame_output_dir,
+    frame_file_name,
+    mask_output_dir,
+    mask_file_name,
+)
 from src.dataset_generation.unreal_editor import all_level_actors
 
 def load_render_target():
-    render_target = unreal.load_asset(RENDER_TARGET_PATH)
+    return load_render_target_asset(RENDER_TARGET_PATH, prefer_srgb=True)
+
+
+def load_mask_render_target():
+    return load_render_target_asset(MASK_RENDER_TARGET_PATH, prefer_srgb=False)
+
+
+def load_render_target_asset(render_target_path, prefer_srgb=True):
+    render_target = unreal.load_asset(render_target_path)
     if not render_target:
-        raise RuntimeError(f"Could not load render target '{RENDER_TARGET_PATH}'.")
-    prepare_render_target_for_png(render_target)
+        raise RuntimeError(f"Could not load render target '{render_target_path}'.")
+    prepare_render_target_for_png(render_target, render_target_path, prefer_srgb)
     return render_target
 
 def scene_capture_component_target(component):
@@ -49,8 +67,9 @@ def actor_scene_capture_components(actor):
             unique.append(component)
     return unique
 
-def find_scene_capture_for_render_target(render_target):
+def find_scene_capture_for_render_target(render_target, configured_path=None):
     render_target_path = object_path_name(render_target)
+    configured_path = configured_path or render_target_path
 
     for actor in all_level_actors():
         for component in actor_scene_capture_components(actor):
@@ -59,23 +78,29 @@ def find_scene_capture_for_render_target(render_target):
                 unreal.log(
                     "Using SceneCaptureComponent2D "
                     f"{component_name(component)} on actor {actor_label(actor)} "
-                    f"for render target {RENDER_TARGET_PATH}"
+                    f"for render target {configured_path}"
                 )
                 configure_scene_capture_for_manual_capture(component)
                 return component
 
     raise RuntimeError(
-        f"SAVE_FRAMES=True, but no SceneCaptureComponent2D in the level uses "
-        f"render target '{RENDER_TARGET_PATH}'. Assign this render target to a "
+        f"No SceneCaptureComponent2D in the level uses "
+        f"render target '{configured_path}'. Assign this render target to a "
         "SceneCaptureComponent2D, then rerun the script."
     )
 
 
 def restore_scene_capture_every_frame_for_render_target():
-    render_target = unreal.load_asset(RENDER_TARGET_PATH)
+    restored_frame = restore_scene_capture_every_frame_for_target_path(RENDER_TARGET_PATH)
+    restored_mask = restore_scene_capture_every_frame_for_target_path(MASK_RENDER_TARGET_PATH)
+    return restored_frame or restored_mask
+
+
+def restore_scene_capture_every_frame_for_target_path(render_target_path):
+    render_target = unreal.load_asset(render_target_path)
     if not render_target:
         unreal.log_warning(
-            f"Could not load render target '{RENDER_TARGET_PATH}' to restore "
+            f"Could not load render target '{render_target_path}' to restore "
             "SceneCaptureComponent2D Capture Every Frame."
         )
         return False
@@ -198,7 +223,7 @@ def sync_scene_capture_to_camera(scene_capture_component, camera):
         capture_scene()
     capture_scene()
 
-def prepare_render_target_for_png(render_target):
+def prepare_render_target_for_png(render_target, render_target_path, prefer_srgb=True):
     if FRAME_FILE_EXTENSION.lower() != "png":
         return
 
@@ -211,7 +236,12 @@ def prepare_render_target_for_png(render_target):
         return
 
     png_format = None
-    for enum_name in ("RTF_RGBA8_SRGB", "RTF_RGBA8"):
+    enum_names = (
+        ("RTF_RGBA8_SRGB", "RTF_RGBA8")
+        if prefer_srgb
+        else ("RTF_RGBA8", "RTF_RGBA8_SRGB")
+    )
+    for enum_name in enum_names:
         candidate = getattr(texture_render_target_format, enum_name, None)
         if candidate is not None:
             png_format = candidate
@@ -243,11 +273,33 @@ def prepare_render_target_for_png(render_target):
             update_resource()
 
     unreal.log(
-        f"Set render target '{RENDER_TARGET_PATH}' format to {png_format} "
+        f"Set render target '{render_target_path}' format to {png_format} "
         "so frame exports are real PNG files."
     )
 
 def export_render_target_frame(world_context, render_target, frame_number, pose):
+    return export_render_target_image(
+        world_context,
+        render_target,
+        frame_output_dir(),
+        frame_file_name(frame_number),
+        pose,
+        "frame",
+    )
+
+
+def export_render_target_mask(world_context, render_target, frame_number, pose):
+    return export_render_target_image(
+        world_context,
+        render_target,
+        mask_output_dir(),
+        mask_file_name(frame_number),
+        pose,
+        "mask",
+    )
+
+
+def export_render_target_image(world_context, render_target, output_dir, file_name, pose, label):
     rendering_library = getattr(unreal, "RenderingLibrary", None)
     if not rendering_library or not hasattr(rendering_library, "export_render_target"):
         raise RuntimeError(
@@ -255,8 +307,6 @@ def export_render_target_frame(world_context, render_target, frame_number, pose)
             "Enable the Python/Editor scripting support that exposes Kismet Rendering Library."
         )
 
-    output_dir = frame_output_dir()
-    file_name = frame_file_name(frame_number)
     rendering_library.export_render_target(
         world_context,
         render_target,
@@ -265,6 +315,7 @@ def export_render_target_frame(world_context, render_target, frame_number, pose)
     )
     gate_label = pose["gate"].get_actor_label() if pose.get("gate") else None
     unreal.log(
-        f"Saved render target frame {file_name} to {output_dir} "
+        f"Saved render target {label} {file_name} to {output_dir} "
         f"for gate={gate_label}"
     )
+    return True

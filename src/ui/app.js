@@ -11,6 +11,8 @@ const state = {
   frameIndex: 0,
   evaluationImageMode: "source",
   image: new Image(),
+  maskImage: new Image(),
+  maskLoaded: false,
 };
 
 const colors = [
@@ -44,6 +46,7 @@ const el = {
   frameSlider: document.getElementById("frameSlider"),
   frameLabel: document.getElementById("frameLabel"),
   canvas: document.getElementById("canvas"),
+  showGateMask: document.getElementById("showGateMask"),
   showBbox: document.getElementById("showBbox"),
   showCorners: document.getElementById("showCorners"),
   onlyVisibleGates: document.getElementById("onlyVisibleGates"),
@@ -71,6 +74,15 @@ function frameUrl(datasetRunName, frame) {
   const file = frame.frame_path.split(/[\\/]/).pop();
   const [datasetName, runName] = datasetRunName.split("/");
   return `/datasets/${encodeURIComponent(datasetName)}/runs/${encodeURIComponent(runName)}/frames/${encodeURIComponent(file)}`;
+}
+
+function maskUrl(datasetRunName, frame) {
+  const maskPath = frame.mask_path;
+  const sourcePath = maskPath || frame.frame_path;
+  if (!sourcePath) return null;
+  const file = sourcePath.split(/[\\/]/).pop();
+  const [datasetName, runName] = datasetRunName.split("/");
+  return `/datasets/${encodeURIComponent(datasetName)}/runs/${encodeURIComponent(runName)}/masks/${encodeURIComponent(file)}`;
 }
 
 function evaluationOverlayUrl(evaluationName, frame) {
@@ -241,6 +253,7 @@ async function loadFrame(index) {
     await loadValidationFrame(frame);
   } else {
     await loadImage(frameUrl(state.datasetRunName, frame));
+    await loadMaskImage(maskUrl(state.datasetRunName, frame));
     drawRunFrame();
   }
 }
@@ -294,6 +307,24 @@ function loadImage(src) {
   });
 }
 
+function loadMaskImage(src) {
+  state.maskLoaded = false;
+  state.maskImage.removeAttribute("src");
+  if (!src) return Promise.resolve(false);
+
+  return new Promise((resolve) => {
+    state.maskImage.onload = () => {
+      state.maskLoaded = true;
+      resolve(true);
+    };
+    state.maskImage.onerror = () => {
+      state.maskLoaded = false;
+      resolve(false);
+    };
+    state.maskImage.src = `${src}?t=${Date.now()}`;
+  });
+}
+
 function clearCanvas() {
   ctx.clearRect(0, 0, el.canvas.width, el.canvas.height);
 }
@@ -308,6 +339,10 @@ function drawRunFrame() {
   drawBaseImage();
 
   const gates = frame.gates || [];
+  if (el.showGateMask.checked) {
+    drawGateMaskOverlay(gates);
+  }
+
   gates.forEach((gate, index) => {
     if (el.onlyVisibleGates.checked && !gate.visible_in_frame) return;
     const color = colors[index % colors.length];
@@ -323,6 +358,65 @@ function drawRunFrame() {
 
   updateRunFrameInfo(frame);
   updateRunGateList(gates);
+}
+
+function drawGateMaskOverlay(gates) {
+  if (!state.maskLoaded || !state.maskImage.naturalWidth || !state.maskImage.naturalHeight) {
+    return;
+  }
+
+  const gateStyles = gateMaskStyles(gates);
+  if (!gateStyles.size) return;
+
+  const maskCanvas = document.createElement("canvas");
+  maskCanvas.width = state.maskImage.naturalWidth;
+  maskCanvas.height = state.maskImage.naturalHeight;
+  const maskCtx = maskCanvas.getContext("2d", { willReadFrequently: true });
+  maskCtx.drawImage(state.maskImage, 0, 0);
+
+  const source = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+  const overlay = maskCtx.createImageData(maskCanvas.width, maskCanvas.height);
+
+  for (let offset = 0; offset < source.data.length; offset += 4) {
+    const value = source.data[offset];
+    const style = gateStyles.get(value);
+    if (!style) continue;
+
+    overlay.data[offset] = style.r;
+    overlay.data[offset + 1] = style.g;
+    overlay.data[offset + 2] = style.b;
+    overlay.data[offset + 3] = 115;
+  }
+
+  maskCtx.putImageData(overlay, 0, 0);
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(maskCanvas, 0, 0, el.canvas.width, el.canvas.height);
+  ctx.restore();
+}
+
+function gateMaskStyles(gates) {
+  const styles = new Map();
+  gates.forEach((gate, index) => {
+    if (el.onlyVisibleGates.checked && !gate.visible_in_frame) return;
+    const stencilValue =
+      gate.custom_depth_stencil_value ??
+      (gate.visible_mask_pixels && gate.visible_mask_pixels.stencil_value);
+    const pixelCount = gate.visible_mask_pixels && gate.visible_mask_pixels.pixel_count;
+    if (!stencilValue || pixelCount === 0) return;
+
+    styles.set(Number(stencilValue), hexToRgb(colors[index % colors.length]));
+  });
+  return styles;
+}
+
+function hexToRgb(hex) {
+  const normalized = hex.replace("#", "");
+  return {
+    r: parseInt(normalized.slice(0, 2), 16),
+    g: parseInt(normalized.slice(2, 4), 16),
+    b: parseInt(normalized.slice(4, 6), 16),
+  };
 }
 
 function drawEvaluationFrame() {
@@ -918,6 +1012,7 @@ function evaluationLayerCheckboxes() {
 }
 
 for (const checkbox of [
+  el.showGateMask,
   el.showBbox,
   el.showCorners,
   el.onlyVisibleGates,

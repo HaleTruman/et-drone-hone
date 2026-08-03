@@ -53,10 +53,11 @@ def start_batch(batch_number):
     )
 
 
-def start_collection(camera, gates, batch_number):
+def start_collection(camera, gates, batch_number, track_layout=None):
     dataset_collection_runtime.start(
         camera=camera,
         gates=gates,
+        track_layout=track_layout,
         batch_number=batch_number,
         on_complete=finish_batch,
     )

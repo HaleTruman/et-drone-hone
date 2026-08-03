@@ -14,7 +14,7 @@ DATASETS_DIR = ROOT / "datasets"
 ARTIFACTS_DIR = ROOT / "artifacts"
 VALIDATION_DIR = ROOT / "validation"
 HOST = "127.0.0.1"
-PORT = int(os.environ.get("ML_VIEWER_PORT", "8765"))
+PORT = int(os.environ.get("ML_VIEWER_PORT", "8564"))
 
 
 def safe_child(base, *parts):
