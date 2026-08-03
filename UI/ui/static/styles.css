@@ -452,6 +452,15 @@ button.active, .modeButton.active, .plotTab.active {
 .legendSwatch.down { background: var(--green); }
 .legendSwatch.drone { background: var(--yellow); }
 .legendSwatch.gate { background: var(--violet); }
+.legendSwatch.targetGate {
+  background: var(--yellow);
+  box-shadow: inset 0 0 0 2px #5cf2ff;
+}
+.legendSwatch.targetLine {
+  height: 0;
+  border-top: 2px dashed var(--yellow);
+  background: transparent;
+}
 .legendSwatch.path {
   background: linear-gradient(90deg, var(--green), var(--yellow), var(--red));
 }
@@ -464,6 +473,7 @@ button.active, .modeButton.active, .plotTab.active {
 .legendSwatch.plannedPath { background: #ff2f2f; }
 .legendSwatch.velocity { background: #5cf2ff; }
 .legendSwatch.desiredAcceleration { background: #ff8a3d; }
+.legendSwatch.autopilotAcceleration { background: #c084fc; }
 .legendSwatch.telemetryFourth { background: var(--yellow); }
 .legendSwatch.telemetryActual { background: #d8e3ea; }
 .legendSwatch.telemetryTruth {
@@ -904,6 +914,18 @@ button.active, .modeButton.active, .plotTab.active {
 .gateCard:hover strong,
 .gateCard.hovered strong { color: var(--yellow); }
 .gateCard span { color: var(--muted); }
+
+.gateCard.selectedGate {
+  border-color: rgba(255, 212, 90, .45);
+  background: rgba(255, 212, 90, .08);
+}
+
+.gateCard.selectedGate.next {
+  border-color: rgba(92, 242, 255, .42);
+  background: rgba(92, 242, 255, .07);
+}
+
+.gateCard.selectedGate.next strong { color: #5cf2ff; }
 
 #statusbar {
   display: flex;

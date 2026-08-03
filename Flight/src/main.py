@@ -24,7 +24,32 @@ from core.initialization import initialize
 from core.logging import generate_mp4
 from core.schema import MavlinkHighresImu, StateRecord, VioCorrection
 from core.utils import time_since
-from core.coordinates import quaternion_from_roll_pitch_yaw_deg
+from core.coordinates import normalize_quaternion, quaternion_from_roll_pitch_yaw_deg
+
+
+def _mavlink_error_quaternion_command(
+    control_target: dict,
+    *,
+    error_quaternion_scales: np.ndarray,
+) -> dict:
+    error_quaternion = normalize_quaternion(
+        control_target.get("error_quaternion", (1.0, 0.0, 0.0, 0.0))
+    )
+    converted = (
+        float(error_quaternion[0]),
+        -float(error_quaternion[1]),
+        float(error_quaternion[2]),
+        -float(error_quaternion[3]),
+    )
+    scaled = np.asarray(converted, dtype=float)
+    scaled[1:4] *= np.asarray(error_quaternion_scales, dtype=float)
+    scaled = normalize_quaternion(scaled)
+    return {
+        **control_target,
+        "quaternion_command_mode": "error_quaternion",
+        "error_quaternion_target_converted": converted,
+        "error_quaternion_target_scaled": tuple(float(value) for value in scaled),
+    }
 
 def main() -> int:
     (
@@ -42,6 +67,7 @@ def main() -> int:
         path_manager,
         attitude_controller,
         geometric_path_follower,
+        autipilot,
         hover_controller,
     ) = initialize()
 
@@ -57,6 +83,8 @@ def main() -> int:
     observation = None
     planned_path = None
     control_target = None
+    autipilot_target = None
+    autipilot_command = None
     vision_pending = None
     pending_vio_correction: VioCorrection | None = None
 
@@ -200,6 +228,10 @@ def main() -> int:
                     gate_map.gates,
                     candidates=gate_map.candidates,
                     candidate_count=len(gate_map.candidates),
+                    target_gate=gate_map.target_gate,
+                    next_gate=gate_map.next_gate,
+                    candidate_target=gate_map.candidate_target,
+                    candidate_next=gate_map.candidate_next,
                     time_since_startup_s=time_since(started_s),
                     cycle=inner_cycle,
                     outer_cycle=outer_cycle,
@@ -288,6 +320,9 @@ def main() -> int:
                 vio_measurement=vio_measurement_for_update,
             )
             pending_vio_correction = None
+            gate_map.update(
+                observer_position_local_ned_m=vehicle_state.position_local_ned_m,
+            )
 
             outer_loop_ran = inner_loop_started_s >= next_outer_cycle_s
 
@@ -334,6 +369,10 @@ def main() -> int:
                             gate_map.gates,
                             candidates=gate_map.candidates,
                             candidate_count=len(gate_map.candidates),
+                            target_gate=gate_map.target_gate,
+                            next_gate=gate_map.next_gate,
+                            candidate_target=gate_map.candidate_target,
+                            candidate_next=gate_map.candidate_next,
                             time_since_startup_s=time_since(started_s),
                             cycle=inner_cycle,
                             outer_cycle=frame_outer_cycle,
@@ -433,6 +472,33 @@ def main() -> int:
                 outer_cycle += 1
             # ======================== OUTER LOOP END ========================
 
+            autipilot_target = None
+            autipilot_command = None
+            autipilot_target_gate = gate_map.target_gate
+            autipilot_next_gate = gate_map.next_gate
+            if (
+                vehicle_state is not None
+                and autipilot_target_gate is not None
+            ):
+                try:
+                    autipilot_target = autipilot.compute_control(
+                        vehicle_state,
+                        target_gate=autipilot_target_gate,
+                        next_gate=autipilot_next_gate,
+                        time_since_takeoff_s=time_since(takeoff_started_s),
+                    )
+                    autipilot_command = _mavlink_error_quaternion_command(
+                        autipilot_target,
+                        error_quaternion_scales=attitude_controller.error_quaternion_scales,
+                    )
+                except Exception as error:  # noqa: BLE001
+                    autipilot_target = {
+                        "source": "autipilot",
+                        "error": str(error),
+                        "target_gate": autipilot_target_gate,
+                        "next_gate": autipilot_next_gate,
+                    }
+
 
             if imu_data_t is None:
                 command_result = {
@@ -446,25 +512,19 @@ def main() -> int:
 
                 if settings.allow_flight:
                     if system_mode_manager.is_racing():
-                        if control_target is not None:
-                            control_target = attitude_controller.compute_control(
-                                vehicle_state,
-                                desired_attitude_quaternion=control_target["quaternion"],
-                                thrust=control_target["thrust"]
-                            )
-
-                            # using quaternion error now rather than attitude controller body rates - praying heavily.
-                            mavlink_client.send_attitude_target(control_target)
+                        if autipilot_command is not None:
+                            mavlink_client.send_attitude_target(autipilot_command)
 
                         command_result = {
-                            "emitted": control_target is not None,
+                            "emitted": autipilot_command is not None,
                             "sim_time_ns": telemetry.sim_time_ns,
                             "reason": (
-                                control_target.get("source", "path_following")
-                                if control_target is not None
-                                else "missing_path_following_target"
+                                "autipilot"
+                                if autipilot_command is not None
+                                else "missing_autipilot_target"
                             ),
-                            "control_target": control_target,
+                            "control_target": autipilot_command,
+                            "geometric_control_target": control_target,
                             "inner_loop_cycle": inner_cycle,
                             "outer_loop_cycle": outer_cycle,
                         }
@@ -539,6 +599,8 @@ def main() -> int:
                 modes={
                     "system": system_mode_manager.system_mode.value,
                 },
+                target_gate=gate_map.target_gate,
+                next_gate=gate_map.next_gate,
                 vision_frame_id=latest_frame.frame_id if latest_frame else None,
                 bridge=mavlink_client.snapshot(),
                 command=command_result,
@@ -552,6 +614,8 @@ def main() -> int:
                     "ran": outer_loop_ran,
                 },
                 geometric_path_follower=geometric_path_follower.last_payload,
+                autipilot=autipilot_target,
+                autipilot_command=autipilot_command,
                 vision={
                     **vision_rx.snapshot(),
                     "perception": vision_perception.snapshot()

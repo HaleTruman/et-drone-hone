@@ -11,6 +11,7 @@ import time
 
 from autonomy.pathing import PathManager
 from core.control.attitude import AttitudeController
+from core.control.autipilot import AutiPilot, AutiPilotGains
 from core.control.hover.controller import HoverController
 from core.control.path_follower import GeometricPathFollower
 from core.logging import Logger
@@ -18,6 +19,7 @@ from core.logging.obs import OBSRecorder
 from core.modes.system_mode import SystemModeManager
 from mapping.gates import GateMap
 from sensing.odometry import (
+    GyroSpikeFilterConfig,
     KalmanFilterConfig,
     OpenCvMonocularVioProvider,
     VehicleStateEstimator,
@@ -55,9 +57,13 @@ GATE_MERGE_DISTANCE_M = 5.0  # merges repeated gate observations within this loc
 REQUIRED_MINIMUM_OBSERVATION_COUNT = 5  # requires this many merged observations before a gate is published.
 GATE_LOCKOUT_COUNT = 500  # locks a gate pose after this many merged observations.
 GATE_MAX_OBSERVATION_DISTANCE_M = 40.0  # ignores gate observations farther than this from the vehicle.
+GATE_TARGET_CANDIDATE_MIN_OBSERVATION_COUNT = 2  # allows tentative target use before full gate-map publication.
+GATE_TARGET_CANDIDATE_MIN_POSITION_CONFIDENCE = 0.35  # rejects weak candidate targets from noisy detections.
+GATE_TARGET_CANDIDATE_MAX_AVERAGE_RESIDUAL_M = 2.5  # rejects candidate targets whose merged positions are unstable.
+GATE_TARGET_CANDIDATE_MAX_DISTANCE_M = 40.0  # ignores tentative target candidates too far from the vehicle.
 
 # Path planning.
-PLANNING_MODE = "gate"  # chooses the PathManager strategy: test or gate.
+PLANNING_MODE = "test"  # chooses the PathManager strategy: test or gate.
 PATH_UPDATE_MODE = "persist_crossed"  # chooses how new plans replace the active path: original, projected, persist_crossed, or splice.
 PATH_UPDATE_OBSERVATION_INTERVAL = 50  # updates the planned path after this many processed vision observations; 1 updates every observation.
 GATE_PASSED_DISTANCE_M = 1.5  # treats gates closer than this as already passed for planning purposes.
@@ -82,15 +88,21 @@ FAILSAFE_DISTANCE = 10  # is the maximum allowed cross-track path error before e
 ALLOW_FLIGHT = True  # enables sending flight commands when the system mode allows it.
 
 # Attitude inner-loop response.
-ATTITUDE_ERROR_QUATERNION_ROLL_SCALE = 2.0  # Test-only sim command boost; increase to bank faster when sending quaternion error targets.
-ATTITUDE_ERROR_QUATERNION_PITCH_SCALE = 2.0  # Test-only sim command boost for pitch error quaternion vector component.
-ATTITUDE_ERROR_QUATERNION_YAW_SCALE = 2.0  # Test-only sim command boost for yaw error quaternion vector component.
+ATTITUDE_ERROR_QUATERNION_ROLL_SCALE = 1.7  # Test-only sim command boost; increase to bank faster when sending quaternion error targets.
+ATTITUDE_ERROR_QUATERNION_PITCH_SCALE = 1.7  # Test-only sim command boost for pitch error quaternion vector component.
+ATTITUDE_ERROR_QUATERNION_YAW_SCALE = 1.7  # Test-only sim command boost for yaw error quaternion vector component.
 ATTITUDE_ROLL_GAIN = 1.5  # Roll attitude P gain; increase for faster banking, decrease if roll oscillates.
 ATTITUDE_PITCH_GAIN = 1.5  # Pitch attitude P gain; increase for faster pitch response, decrease if pitch oscillates.
 ATTITUDE_YAW_GAIN = 1.5  # Yaw attitude P gain; increase for faster heading alignment, decrease if yaw hunts.
 ATTITUDE_DAMPING = 0.2  # Body-rate damping; increase to reduce attitude overshoot, decrease if response feels sluggish.
 ATTITUDE_RATE_FILTER_ALPHA = 0.8  # Body-rate filter alpha; higher follows gyro faster, lower smooths noisy damping.
 ATTITUDE_MAX_BODY_RATE_RPS = 7.0  # Body-rate command cap; increase for faster attitude changes, decrease for gentler motion.
+
+# IMU gyro spike rejection.
+GYRO_SPIKE_FILTER_ENABLED = False  # Rejects isolated angular-rate spikes before attitude integration and control use.
+GYRO_SPIKE_MAX_RATE_RPS = 20.0  # Rejects a single gyro sample above this body-rate norm unless it persists.
+GYRO_SPIKE_MAX_DELTA_RPS = 10.0  # Rejects a single gyro sample whose rate jump from the previous accepted rate exceeds this norm.
+GYRO_SPIKE_MAX_REJECTIONS = 1  # Accepts the sample after this many consecutive rejections so real sustained motion is not hidden.
 
 # Path lookahead and preview.
 CARROT_LOOKAHEAD_M = 4.0 # Carrot-point preview distance; increase to turn earlier/smoother, decrease to track nearby path more tightly.
@@ -116,14 +128,14 @@ GEOMETRIC_ACCELERATION_FILTER_ALPHA = 0.2  # Desired-acceleration filter alpha; 
 # Along-track speed loop and curve speed planning.
 GEOMETRIC_SPEED_GAIN = 0.65  # Along-track speed P gain; increase to reach target speed faster, decrease if it surges.
 GEOMETRIC_SPEED_DAMPING = 0.6  # Along-track speed D gain on acceleration; increase to reduce speed overshoot, decrease for quicker response.
-GEOMETRIC_MAX_SPEED_MPS = 15  # Straight-path target speed cap; increase for faster runs, decrease if tracking cannot keep up.
+GEOMETRIC_MAX_SPEED_MPS = 10  # Straight-path target speed cap; increase for faster runs, decrease if tracking cannot keep up.
 GEOMETRIC_MAX_LATERAL_ACCELERATION_MPS2 = 50.0  # Curve-speed lateral accel budget; increase to carry more speed through turns.
 GEOMETRIC_CURVATURE_SPEED_DEADBAND = 0.25  # Curvature below this commands max speed; raise to ignore mild curves, lower to slow sooner.
 GEOMETRIC_CURVATURE_SPEED_RAMP = 0.1  # Curvature softening ramp for speed reduction; reduce for a lower speed in tight corners.
 GEOMETRIC_CROSS_TRACK_SPEED_DERATE_START_M = 0.5  # Cross-track error where speed derating starts; raise to ignore small tracking errors.
 GEOMETRIC_CROSS_TRACK_SPEED_DERATE_FULL_M = 2.0  # Cross-track error where derating reaches full strength; lower to slow harder sooner.
 GEOMETRIC_CROSS_TRACK_SPEED_DERATE_MIN_SCALE = 0.7  # Minimum speed scale at full derate; lower to slow more while far off path.
-GEOMETRIC_LAUNCH_SPEED_RAMP_S = 0.35  # Seconds to ramp path-following speed from zero after takeoff; increase to soften launch.
+GEOMETRIC_LAUNCH_SPEED_RAMP_S = 0.75  # Seconds to ramp path-following speed from zero after takeoff; increase to soften launch.
 
 # Curvature turn feed-forward.
 GEOMETRIC_CURVATURE_FEEDFORWARD_GAIN = 0.7  # Turn feed-forward gain; increase to bank into turns earlier, decrease if it over-turns.
@@ -137,6 +149,28 @@ GEOMETRIC_MAX_UPWARD_ACCELERATION_MPS2 = 15.0  # Upward accel cap in NED (-Z); i
 GEOMETRIC_MAX_DOWNWARD_ACCELERATION_MPS2 = 9.0  # Downward accel cap in NED (+Z); increase to descend faster, keep below gravity for margin.
 GEOMETRIC_MAX_TILT_DEG = 90  # Desired tilt cap; increase for more aggressive banking/inversion, decrease for upright flight.
 GEOMETRIC_TILT_THRUST_ALIGNMENT_MIN = 0.0 # Minimum thrust scale while actual tilt catches desired tilt; raise to preserve thrust, lower to suppress climb-before-bank.
+
+# Gate-aware acceleration controller.
+AUTIPILOT_MAX_SPEED_MPS = 15  # Straight segment target speed cap for discrete-gate guidance.
+AUTIPILOT_MIN_SPEED_MPS = 2.0  # Minimum target speed retained when curvature scheduling slows for turns.
+AUTIPILOT_MAX_LATERAL_ACCELERATION_MPS2 = 18.0  # Lateral acceleration budget used for gate-to-gate speed scheduling.
+AUTIPILOT_SPEED_GAIN = 1.5  # Along-aim speed P gain.
+AUTIPILOT_DIRECTION_GAIN = 0.9  # Velocity-direction alignment P gain.
+AUTIPILOT_DIRECTION_DAMPING = 0.0  # Velocity-direction damping gain on measured acceleration.
+AUTIPILOT_LATERAL_POSITION_GAIN = 1.2  # Light cross-track P gain relative to the current gate aim line.
+AUTIPILOT_LATERAL_DAMPING = 1.5  # Cross-track velocity damping gain.
+AUTIPILOT_VERTICAL_POSITION_GAIN = 3.5  # Target-gate center vertical P gain using NED sign convention.
+AUTIPILOT_VERTICAL_DAMPING = 2.0  # Target-gate center vertical velocity damping gain.
+AUTIPILOT_LOOKAHEAD_NEAR_M = 0.0  # Distance where gate-to-next-gate aim blending reaches full look-ahead.
+AUTIPILOT_LOOKAHEAD_FAR_M = GATE_PASSED_DISTANCE_M  # Distance where gate-to-next-gate aim blending begins.
+AUTIPILOT_APPROACH_GAIN_MIN_SCALE = 1.0  # Minimum lateral gain scale near gate crossing.
+AUTIPILOT_POST_CROSS_TURN_SCALE = 0.35  # Turn-severity multiplier for post-crossing lateral gain recovery.
+AUTIPILOT_POST_CROSS_RAMP_DISTANCE_M = 6.0  # Distance after a crossed gate used to ramp corner setup gain.
+AUTIPILOT_LAUNCH_SPEED_RAMP_S = GEOMETRIC_LAUNCH_SPEED_RAMP_S  # Seconds to ramp gate-aware speed from zero after takeoff.
+AUTIPILOT_MAX_SPECIFIC_THRUST_MPS2 = 9.80665 / GEOMETRIC_HOVER_THRUST  # Specific thrust represented by normalized thrust 1.0.
+AUTIPILOT_MIN_NORMALIZED_THRUST = 0.05  # Lower normalized thrust clamp.
+AUTIPILOT_MAX_NORMALIZED_THRUST = 0.95  # Upper normalized thrust clamp.
+AUTIPILOT_MAX_COMMANDED_ACCELERATION_MPS2 = 20.0  # Total desired acceleration magnitude cap.
 
 # Output and recording.
 CREATE_VIDEO = False  # enables post-run MP4 generation from logged visual outputs.
@@ -243,6 +277,7 @@ def initialize() -> tuple[
     PathManager,
     AttitudeController,
     GeometricPathFollower,
+    AutiPilot,
     HoverController,
 ]:
     run_dir = Logger.timestamped_dir(RUNS_ROOT)
@@ -299,7 +334,13 @@ def initialize() -> tuple[
             vio_position_measurement_variance_m2=KALMAN_VIO_POSITION_MEASUREMENT_VARIANCE_M2,
             vio_velocity_measurement_variance_m2ps2=KALMAN_VIO_VELOCITY_MEASUREMENT_VARIANCE_M2PS2,
             min_measurement_confidence=KALMAN_MIN_MEASUREMENT_CONFIDENCE,
-        )
+        ),
+        gyro_spike_filter_config=GyroSpikeFilterConfig(
+            enabled=GYRO_SPIKE_FILTER_ENABLED,
+            max_rate_rps=GYRO_SPIKE_MAX_RATE_RPS,
+            max_delta_rps=GYRO_SPIKE_MAX_DELTA_RPS,
+            max_rejections=GYRO_SPIKE_MAX_REJECTIONS,
+        ),
     )
 
     vio_provider = OpenCvMonocularVioProvider(
@@ -329,6 +370,16 @@ def initialize() -> tuple[
         lock_observation_count=GATE_LOCKOUT_COUNT,
         gate_passed_distance_m=GATE_PASSED_DISTANCE_M,
         max_observation_distance_m=GATE_MAX_OBSERVATION_DISTANCE_M,
+        candidate_target_min_observation_count=(
+            GATE_TARGET_CANDIDATE_MIN_OBSERVATION_COUNT
+        ),
+        candidate_target_min_position_confidence=(
+            GATE_TARGET_CANDIDATE_MIN_POSITION_CONFIDENCE
+        ),
+        candidate_target_max_average_residual_m=(
+            GATE_TARGET_CANDIDATE_MAX_AVERAGE_RESIDUAL_M
+        ),
+        candidate_target_max_distance_m=GATE_TARGET_CANDIDATE_MAX_DISTANCE_M,
     )
 
     path_manager = PathManager(
@@ -404,6 +455,31 @@ def initialize() -> tuple[
         tilt_thrust_alignment_min=GEOMETRIC_TILT_THRUST_ALIGNMENT_MIN,
     )
 
+    autipilot = AutiPilot(
+        AutiPilotGains(
+            v_max_mps=AUTIPILOT_MAX_SPEED_MPS,
+            v_min_mps=AUTIPILOT_MIN_SPEED_MPS,
+            a_lat_max_mps2=AUTIPILOT_MAX_LATERAL_ACCELERATION_MPS2,
+            kp_speed=AUTIPILOT_SPEED_GAIN,
+            kp_dir=AUTIPILOT_DIRECTION_GAIN,
+            kd_dir=AUTIPILOT_DIRECTION_DAMPING,
+            kp_lat=AUTIPILOT_LATERAL_POSITION_GAIN,
+            kd_lat=AUTIPILOT_LATERAL_DAMPING,
+            kp_z=AUTIPILOT_VERTICAL_POSITION_GAIN,
+            kd_z=AUTIPILOT_VERTICAL_DAMPING,
+            lookahead_near_m=AUTIPILOT_LOOKAHEAD_NEAR_M,
+            lookahead_far_m=AUTIPILOT_LOOKAHEAD_FAR_M,
+            approach_gain_min_scale=AUTIPILOT_APPROACH_GAIN_MIN_SCALE,
+            post_cross_turn_scale=AUTIPILOT_POST_CROSS_TURN_SCALE,
+            post_cross_ramp_distance_m=AUTIPILOT_POST_CROSS_RAMP_DISTANCE_M,
+            launch_speed_ramp_s=AUTIPILOT_LAUNCH_SPEED_RAMP_S,
+            max_specific_thrust_mps2=AUTIPILOT_MAX_SPECIFIC_THRUST_MPS2,
+            min_normalized_thrust=AUTIPILOT_MIN_NORMALIZED_THRUST,
+            max_normalized_thrust=AUTIPILOT_MAX_NORMALIZED_THRUST,
+            max_commanded_acceleration_mps2=AUTIPILOT_MAX_COMMANDED_ACCELERATION_MPS2,
+        )
+    )
+
     hover_controller = HoverController(
         lateral_velocity_gain=HOVER_LATERAL_VELOCITY_GAIN,
         vertical_velocity_gain=HOVER_VERTICAL_VELOCITY_GAIN,
@@ -425,5 +501,6 @@ def initialize() -> tuple[
         path_manager,
         attitude_controller,
         geometric_path_follower,
+        autipilot,
         hover_controller,
     )
