@@ -441,11 +441,9 @@ def main() -> int:
                     path_projection = path_manager.project(vehicle_state.position_local_ned_m)
                     path_error_m = float(path_projection.cross_track_error_m)
 
-                    # If failsafe triggered
                     if path_error_m > settings.failsafe_distance_m:
-                        system_mode_manager.update_mode("finish")
                         logger.log_event(
-                            "path_failsafe_finished",
+                            "path_failsafe_exceeded",
                             reason="path_deviation_exceeded",
                             cross_track_error_m=path_error_m,
                             failsafe_distance_m=settings.failsafe_distance_m,
@@ -455,17 +453,16 @@ def main() -> int:
                             outer_cycle=outer_cycle,
                             sim_time_ns=vehicle_state.sim_time_ns,
                         )
-                    else:
-                        path_carrot = path_manager.carrot(
-                            vehicle_state.position_local_ned_m,
-                            geometric_path_follower.lookahead_m,
-                            geometric_path_follower.speed_lookahead_m,
-                        )
-                        control_target = geometric_path_follower.compute_control(
-                            vehicle_state,
-                            carrot=path_carrot,
-                            time_since_takeoff_s=time_since(takeoff_started_s),
-                        )
+                    path_carrot = path_manager.carrot(
+                        vehicle_state.position_local_ned_m,
+                        geometric_path_follower.lookahead_m,
+                        geometric_path_follower.speed_lookahead_m,
+                    )
+                    control_target = geometric_path_follower.compute_control(
+                        vehicle_state,
+                        carrot=path_carrot,
+                        time_since_takeoff_s=time_since(takeoff_started_s),
+                    )
                 else:
                     control_target = None
 

@@ -135,7 +135,7 @@ GEOMETRIC_CURVATURE_SPEED_RAMP = 0.1  # Curvature softening ramp for speed reduc
 GEOMETRIC_CROSS_TRACK_SPEED_DERATE_START_M = 0.5  # Cross-track error where speed derating starts; raise to ignore small tracking errors.
 GEOMETRIC_CROSS_TRACK_SPEED_DERATE_FULL_M = 2.0  # Cross-track error where derating reaches full strength; lower to slow harder sooner.
 GEOMETRIC_CROSS_TRACK_SPEED_DERATE_MIN_SCALE = 0.7  # Minimum speed scale at full derate; lower to slow more while far off path.
-GEOMETRIC_LAUNCH_SPEED_RAMP_S = 0.75  # Seconds to ramp path-following speed from zero after takeoff; increase to soften launch.
+GEOMETRIC_LAUNCH_SPEED_RAMP_S = 0.5  # Seconds to ramp path-following speed from zero after takeoff; increase to soften launch.
 
 # Curvature turn feed-forward.
 GEOMETRIC_CURVATURE_FEEDFORWARD_GAIN = 0.7  # Turn feed-forward gain; increase to bank into turns earlier, decrease if it over-turns.
@@ -151,21 +151,21 @@ GEOMETRIC_MAX_TILT_DEG = 90  # Desired tilt cap; increase for more aggressive ba
 GEOMETRIC_TILT_THRUST_ALIGNMENT_MIN = 0.0 # Minimum thrust scale while actual tilt catches desired tilt; raise to preserve thrust, lower to suppress climb-before-bank.
 
 # Gate-aware acceleration controller.
-AUTIPILOT_MAX_SPEED_MPS = 15  # Straight segment target speed cap for discrete-gate guidance.
+AUTIPILOT_MAX_SPEED_MPS = 9  # Straight segment target speed cap for discrete-gate guidance.
 AUTIPILOT_MIN_SPEED_MPS = 2.0  # Minimum target speed retained when curvature scheduling slows for turns.
 AUTIPILOT_MAX_LATERAL_ACCELERATION_MPS2 = 18.0  # Lateral acceleration budget used for gate-to-gate speed scheduling.
-AUTIPILOT_SPEED_GAIN = 1.5  # Along-aim speed P gain.
-AUTIPILOT_DIRECTION_GAIN = 0.9  # Velocity-direction alignment P gain.
-AUTIPILOT_DIRECTION_DAMPING = 0.0  # Velocity-direction damping gain on measured acceleration.
-AUTIPILOT_LATERAL_POSITION_GAIN = 1.2  # Light cross-track P gain relative to the current gate aim line.
-AUTIPILOT_LATERAL_DAMPING = 1.5  # Cross-track velocity damping gain.
-AUTIPILOT_VERTICAL_POSITION_GAIN = 3.5  # Target-gate center vertical P gain using NED sign convention.
+AUTIPILOT_SPEED_GAIN = 1.2  # Along-aim speed P gain.
+AUTIPILOT_DIRECTION_GAIN = 1.2  # Velocity-direction alignment P gain.
+AUTIPILOT_DIRECTION_DAMPING = 0.4  # Velocity-direction damping gain on measured acceleration.
+AUTIPILOT_LATERAL_POSITION_GAIN = 1.5  # Light cross-track P gain relative to the current gate aim line.
+AUTIPILOT_LATERAL_DAMPING = 2.2  # Cross-track velocity damping gain.
+AUTIPILOT_VERTICAL_POSITION_GAIN = 3.2  # Target-gate center vertical P gain using NED sign convention.
 AUTIPILOT_VERTICAL_DAMPING = 2.0  # Target-gate center vertical velocity damping gain.
-AUTIPILOT_LOOKAHEAD_NEAR_M = 0.0  # Distance where gate-to-next-gate aim blending reaches full look-ahead.
+AUTIPILOT_LOOKAHEAD_NEAR_M = 0.5  # Distance where gate-to-next-gate aim blending reaches full look-ahead.
 AUTIPILOT_LOOKAHEAD_FAR_M = GATE_PASSED_DISTANCE_M  # Distance where gate-to-next-gate aim blending begins.
 AUTIPILOT_APPROACH_GAIN_MIN_SCALE = 1.0  # Minimum lateral gain scale near gate crossing.
-AUTIPILOT_POST_CROSS_TURN_SCALE = 0.35  # Turn-severity multiplier for post-crossing lateral gain recovery.
-AUTIPILOT_POST_CROSS_RAMP_DISTANCE_M = 6.0  # Distance after a crossed gate used to ramp corner setup gain.
+AUTIPILOT_POST_CROSS_TURN_SCALE = 0.15  # Turn-severity multiplier for post-crossing lateral gain recovery.
+AUTIPILOT_POST_CROSS_RAMP_DISTANCE_M = 7.0  # Distance after a crossed gate used to ramp corner setup gain.
 AUTIPILOT_LAUNCH_SPEED_RAMP_S = GEOMETRIC_LAUNCH_SPEED_RAMP_S  # Seconds to ramp gate-aware speed from zero after takeoff.
 AUTIPILOT_MAX_SPECIFIC_THRUST_MPS2 = 9.80665 / GEOMETRIC_HOVER_THRUST  # Specific thrust represented by normalized thrust 1.0.
 AUTIPILOT_MIN_NORMALIZED_THRUST = 0.05  # Lower normalized thrust clamp.
