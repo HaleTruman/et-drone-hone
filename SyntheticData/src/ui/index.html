@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Gate Frame Viewer</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Gate Frame Viewer</h1>
+        <p id="status">Loading datasets...</p>
+      </div>
+      <div class="controls">
+        <label>
+          Source
+          <select id="sourceSelect">
+            <option value="datasets">Datasets</option>
+            <option value="evaluations">Evaluations</option>
+            <option value="validations">Validations</option>
+          </select>
+        </label>
+        <label>
+          Dataset Run
+          <select id="runSelect"></select>
+        </label>
+        <label>
+          Evaluation
+          <select id="evaluationSelect"></select>
+        </label>
+        <label>
+          Validation
+          <select id="validationSelect"></select>
+        </label>
+        <label>
+          Frame
+          <input id="frameSlider" type="range" min="1" max="1" value="1" />
+        </label>
+        <span id="frameLabel">0 / 0</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="viewer">
+        <canvas id="canvas" width="1920" height="1080"></canvas>
+      </section>
+
+      <aside>
+        <div class="panel">
+          <h2>Overlays</h2>
+          <div class="run-layers">
+            <label><input id="showGateMask" type="checkbox" /> Gate mask</label>
+            <label><input id="showBbox" type="checkbox" checked /> Bbox</label>
+            <label><input id="showCorners" type="checkbox" checked /> Corner points</label>
+            <label><input id="onlyVisibleGates" type="checkbox" /> Only visible gates</label>
+          </div>
+          <div class="evaluation-layers">
+            <label><input id="showEvalTruthBbox" type="checkbox" checked /> Truth bbox</label>
+            <label><input id="showEvalTruthCorners" type="checkbox" checked /> Truth corners</label>
+            <label><input id="showEvalPredBbox" type="checkbox" checked /> Prediction bbox</label>
+            <label><input id="showEvalPredCorners" type="checkbox" checked /> Prediction corners</label>
+            <label><input id="showEvalLabels" type="checkbox" checked /> Labels</label>
+          </div>
+          <div id="cornerLegend" class="legend"></div>
+        </div>
+
+        <div id="evaluationPanel" class="panel">
+          <h2>Evaluation</h2>
+          <dl id="evaluationInfo"></dl>
+        </div>
+
+        <div class="panel">
+          <h2>Frame</h2>
+          <dl id="frameInfo"></dl>
+        </div>
+
+        <div class="panel gate-list">
+          <h2>Gates</h2>
+          <div id="gateList"></div>
+        </div>
+      </aside>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
