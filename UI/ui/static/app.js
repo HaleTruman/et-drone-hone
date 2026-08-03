@@ -47,13 +47,21 @@ const state = {
     gateSizeM: 2.7,
     verticalFovDeg: verticalFovFromCamera(),
     zoom: 1,
+    show3dGrid: true,
+    show3dAxes: true,
+    show3dDrone: true,
     show3dObservations: true,
     show3dGateMap: true,
+    show3dTargets: true,
+    show3dTargetLine: true,
     show3dTestPath: true,
     show3dPlannedPath: true,
     show3dTrail: true,
+    show3dLookahead: true,
     show3dVelocity: true,
-    show3dDesiredAcceleration: true,
+    show3dCurrentDesiredAcceleration: true,
+    show3dAutipilotDesiredAcceleration: true,
+    show3dLabels: true,
     showTelemetryActual: true,
     showTelemetryTruth: true
   }
@@ -132,13 +140,21 @@ const els = {
   map3dResetButton: document.getElementById('map3dResetButton'),
   map3dReadout: document.getElementById('map3dReadout'),
   map3dCounts: document.getElementById('map3dCounts'),
+  show3dGrid: document.getElementById('show3dGrid'),
+  show3dAxes: document.getElementById('show3dAxes'),
+  show3dDrone: document.getElementById('show3dDrone'),
   show3dObservations: document.getElementById('show3dObservations'),
   show3dGateMap: document.getElementById('show3dGateMap'),
+  show3dTargets: document.getElementById('show3dTargets'),
+  show3dTargetLine: document.getElementById('show3dTargetLine'),
   show3dTestPath: document.getElementById('show3dTestPath'),
   show3dPlannedPath: document.getElementById('show3dPlannedPath'),
   show3dTrail: document.getElementById('show3dTrail'),
+  show3dLookahead: document.getElementById('show3dLookahead'),
   show3dVelocity: document.getElementById('show3dVelocity'),
-  show3dDesiredAcceleration: document.getElementById('show3dDesiredAcceleration'),
+  show3dCurrentDesiredAcceleration: document.getElementById('show3dCurrentDesiredAcceleration'),
+  show3dAutipilotDesiredAcceleration: document.getElementById('show3dAutipilotDesiredAcceleration'),
+  show3dLabels: document.getElementById('show3dLabels'),
   showTelemetryActual: document.getElementById('showTelemetryActual'),
   showTelemetryTruth: document.getElementById('showTelemetryTruth'),
   telemetryMeta: document.getElementById('telemetryMeta'),
@@ -332,14 +348,15 @@ function renderTelemetryCards() {
 
 function renderGateList() {
   const gates = state.frame?.observation_gates || [];
-  els.gateCount.textContent = String(gates.length);
-  els.overlayStatus.textContent = `${gates.length} gates`;
+  const selectedGates = selectedGateEntries();
+  els.gateCount.textContent = String(gates.length + selectedGates.length);
+  els.overlayStatus.textContent = `${gates.length} gates | ${selectedGates.length} selected`;
   state.hoveredGateIndex = null;
-  if (!gates.length) {
+  if (!gates.length && !selectedGates.length) {
     els.gateList.innerHTML = '<div class="gateCard"><span>No observation matched this frame.</span></div>';
     return;
   }
-  els.gateList.replaceChildren(...gates.map((gate, index) => {
+  const observationCards = gates.map((gate, index) => {
     const position = gate.position_xyz
       ? `${formatVec(gate.position_xyz, 'm')} camera`
       : `${formatVec(gate.position_local_ned_m || gate.position_local_ned || gate.position_relative_ned_m, 'm')} local NED`;
@@ -369,7 +386,19 @@ function renderGateList() {
       renderMap3d();
     });
     return card;
-  }));
+  });
+  const selectedCards = selectedGates.map(({ role, gate }) => {
+    const position = `${formatVec(gate.position_local_ned_m || gate.position_local_ned || gate.position_relative_ned_m, 'm')} local NED`;
+    const card = document.createElement('div');
+    card.className = `gateCard selectedGate ${role}`;
+    card.innerHTML = `
+      <strong>${escapeHtml(role === 'target' ? 'Target Gate' : 'Next Gate')} · ${escapeHtml(gate.id || 'n/a')}</strong>
+      <span>pos ${escapeHtml(position)} | conf ${formatNumber(gate.confidence)}</span>
+      <span>sequence ${escapeHtml(String(gate.sequence ?? 'n/a'))} | crossed ${gate.crossed ? 'yes' : 'no'}</span>
+    `;
+    return card;
+  });
+  els.gateList.replaceChildren(...selectedCards, ...observationCards);
 }
 
 function renderInspector() {
@@ -1034,9 +1063,11 @@ function renderOverlay() {
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   const gates = state.frame?.observation_gates || [];
-  if (!state.settings.showObservations || !gates.length) return;
+  const selectedGates = selectedGateEntries();
+  if (!state.settings.showObservations || (!gates.length && !selectedGates.length)) return;
   const alpha = state.settings.overlayOpacity;
   gates.forEach((gate, index) => drawGateObservation(ctx, canvas, gate, index, alpha));
+  selectedGates.forEach((entry) => drawSelectedGateOverlay(ctx, canvas, entry, alpha));
 }
 
 function initMap3d() {
@@ -1057,11 +1088,6 @@ function initMap3d() {
   const sun = new THREE.DirectionalLight(0xffffff, 1.1);
   sun.position.set(-8, 12, 5);
   map3d.scene.add(sun);
-  const grid = new THREE.GridHelper(80, 40, 0x3a4650, 0x1b232a);
-  grid.material.transparent = true;
-  grid.material.opacity = 0.42;
-  map3d.scene.add(grid);
-  addWorldAxes(map3d.scene);
   map3d.initialized = true;
   animateMap3d();
   resizeMap3d();
@@ -1095,6 +1121,8 @@ function renderMap3d({ resetCamera = false } = {}) {
   const dronePosition = point3(drone.position_local_ned_m) || [0, 0, 0];
   const droneQuaternion = quat4(drone.attitude_quaternion) || [1, 0, 0, 0];
   const points = [dronePosition];
+  addGridLayer();
+  addWorldAxes();
   addTrail(scene, points);
   if (!scene.planned_path_is_test_path) {
     addPathLayer(scene.planned_path, points, {
@@ -1110,23 +1138,26 @@ function renderMap3d({ resetCamera = false } = {}) {
     colorByCurvature: true
   });
   addGateMap(scene.gate_map || [], dronePosition, points);
+  addTargetLine(scene, dronePosition, points);
+  addTargetGates(scene, dronePosition, points);
   addObservationGates(scene, dronePosition, droneQuaternion, points);
   addDrone(dronePosition, droneQuaternion);
   addLookaheadVector(dronePosition, points);
   addVelocityVector(dronePosition, points);
-  addDesiredAccelerationVector(dronePosition, points);
+  addDesiredAccelerationVectors(dronePosition, points);
   fitCameraToPoints(points, resetCamera);
   const obsCount = Array.isArray(scene.observation_gates) ? scene.observation_gates.length : 0;
   const mapCount = Array.isArray(scene.gate_map) ? scene.gate_map.length : 0;
+  const targetCount = selectedGateEntries(scene).length;
   const testPathCount = scene.test_path?.points_local_ned_m?.length || 0;
   const plannedPathCount = scene.planned_path_is_test_path ? 0 : (scene.planned_path?.points_local_ned_m?.length || 0);
-  const hasSceneContent = Boolean(point3(drone.position_local_ned_m) || obsCount || mapCount || testPathCount || plannedPathCount);
+  const hasSceneContent = Boolean(point3(drone.position_local_ned_m) || obsCount || mapCount || targetCount || testPathCount || plannedPathCount);
   els.map3dEmpty.hidden = Boolean(state.frame);
   els.map3dEmpty.textContent = hasSceneContent
     ? ''
     : 'No aligned telemetry, gates, or path data for this frame.';
   els.map3dMeta.textContent = `frame ${state.frame.index + 1}/${state.frame.count} | cycle ${scene.cycle ?? 'n/a'} | local NED / body FRD`;
-  els.map3dCounts.textContent = `${obsCount} observation gates | ${mapCount} mapped gates | ${testPathCount} test path points | ${plannedPathCount} planned path points`;
+  els.map3dCounts.textContent = `${obsCount} observation gates | ${mapCount} mapped gates | ${targetCount} selected gates | ${testPathCount} test path points | ${plannedPathCount} planned path points`;
   resizeMap3d();
 }
 
@@ -1145,6 +1176,14 @@ function addTrail(scene, points) {
   if (positions.length < 2) return;
   points.push(...positions);
   map3d.root.add(makeLine(positions, 0x64748b, 0.55));
+}
+
+function addGridLayer() {
+  if (!state.settings.show3dGrid) return;
+  const grid = new THREE.GridHelper(80, 40, 0x3a4650, 0x1b232a);
+  grid.material.transparent = true;
+  grid.material.opacity = 0.42;
+  map3d.root.add(grid);
 }
 
 function addPathLayer(plannedPath, points, { enabled, color, tubeRadius, colorByCurvature = false }) {
@@ -1175,6 +1214,7 @@ function addCurvatureColoredPath(pathPoints, tubeRadius) {
 }
 
 function addLookaheadVector(dronePosition, points) {
+  if (!state.settings.show3dLookahead) return;
   const lookahead = lookaheadPoint();
   if (!lookahead) return;
   const offset = subVec3(lookahead, dronePosition);
@@ -1190,6 +1230,17 @@ function addLookaheadVector(dronePosition, points) {
   addLabel('lookahead', addVec3(lookahead, [0, 0, -0.35]), 0xffd45a);
 }
 
+function addTargetLine(scene, dronePosition, points) {
+  if (!state.settings.show3dTargetLine) return;
+  const targetPosition = selectedGatePosition(scene?.target_gate, dronePosition);
+  if (!targetPosition) return;
+  const offset = subVec3(targetPosition, dronePosition);
+  if (lengthVec3(offset) < 1e-6) return;
+  points.push(targetPosition);
+  map3d.root.add(makeDashedLine([dronePosition, targetPosition], 0xffd45a, 0.9));
+  addLabel('target', midpointVec3(dronePosition, targetPosition), 0xffd45a);
+}
+
 function lookaheadPoint() {
   const follower = state.frame?.telemetry?.geometric_path_follower || {};
   return point3(follower.path_follower?.preview_position_local_ned_m)
@@ -1197,11 +1248,31 @@ function lookaheadPoint() {
     || point3(state.frame?.telemetry?.carrot?.position_local_ned_m);
 }
 
-function addDesiredAccelerationVector(dronePosition, points) {
-  if (!state.settings.show3dDesiredAcceleration) return;
-  const desiredAcceleration = point3(
-    state.frame?.telemetry?.geometric_path_follower?.desired_acceleration_local_ned_mps2
+function addDesiredAccelerationVectors(dronePosition, points) {
+  addDesiredAccelerationVector(
+    dronePosition,
+    points,
+    currentControllerDesiredAccelerationVector(),
+    {
+      enabled: state.settings.show3dCurrentDesiredAcceleration,
+      color: 0xff8a3d,
+      label: 'a_cur',
+    },
   );
+  addDesiredAccelerationVector(
+    dronePosition,
+    points,
+    autipilotDesiredAccelerationVector(),
+    {
+      enabled: state.settings.show3dAutipilotDesiredAcceleration,
+      color: 0xc084fc,
+      label: 'a_auti',
+    },
+  );
+}
+
+function addDesiredAccelerationVector(dronePosition, points, desiredAcceleration, options) {
+  if (!options.enabled) return;
   if (!desiredAcceleration) return;
   const accelerationNorm = lengthVec3(desiredAcceleration);
   if (accelerationNorm < 1e-6) return;
@@ -1209,7 +1280,15 @@ function addDesiredAccelerationVector(dronePosition, points) {
   const length = clamp(accelerationNorm * 0.14, 0.35, 4.0);
   const tip = addVec3(dronePosition, scaleVec3(direction, length));
   points.push(tip);
-  map3d.root.add(makeArrowFromLocal(dronePosition, direction, length, 0xff8a3d, 'a_cmd'));
+  map3d.root.add(makeArrowFromLocal(dronePosition, direction, length, options.color, options.label));
+}
+
+function currentControllerDesiredAccelerationVector() {
+  return point3(state.frame?.telemetry?.geometric_path_follower?.desired_acceleration_local_ned_mps2);
+}
+
+function autipilotDesiredAccelerationVector() {
+  return point3(state.frame?.telemetry?.autipilot?.desired_acceleration_local_ned_mps2);
 }
 
 function addVelocityVector(dronePosition, points) {
@@ -1283,7 +1362,37 @@ function addGateMap(gates, dronePosition, points) {
   });
 }
 
+function addTargetGates(scene, dronePosition, points) {
+  if (!state.settings.show3dTargets) return;
+  selectedGateEntries(scene).forEach(({ role, gate }) => {
+    let position = selectedGatePosition(gate, dronePosition);
+    if (!position) return;
+    points.push(position);
+    const color = role === 'target' ? '#ffd45a' : '#5cf2ff';
+    const label = `${role}:${gate.id || gate.sequence || 'gate'}`;
+    const quaternion = quat4(gate.quaternion);
+    if (!quaternion) {
+      addGateCenter(position, color, label, { highlighted: true, ring: true });
+      return;
+    }
+    const rotation = rotationMatrixFromQuaternion(quaternion);
+    const normal = normalizeVec3(column3(rotation, 0));
+    const horizontal = normalizeVec3(column3(rotation, 1));
+    const vertical = normalizeVec3(scaleVec3(column3(rotation, 2), -1));
+    addGateFrame(position, normal, color, label, gate.outer_width_m || 2.7, gate.inner_width_m || 1.5, horizontal, vertical, { highlighted: true });
+  });
+}
+
+function selectedGatePosition(gate, dronePosition) {
+  if (!gate) return null;
+  const position = point3(gate.position_local_ned_m);
+  if (position) return position;
+  const relative = point3(gate.position_relative_ned_m);
+  return relative ? addVec3(dronePosition, relative) : null;
+}
+
 function addDrone(position, quaternion) {
+  if (!state.settings.show3dDrone) return;
   const color = 0xffd45a;
   const bodyToLocal = rotationMatrixFromQuaternion(quaternion);
   const center = nedToThree(position);
@@ -1337,14 +1446,23 @@ function addGateCenter(center, colorCss, label, options = {}) {
   );
   marker.position.copy(nedToThree(center));
   map3d.root.add(marker);
+  if (options.ring) {
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.18, 0.24, 24),
+      new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity: 0.88 })
+    );
+    ring.position.copy(nedToThree(center));
+    map3d.root.add(ring);
+  }
   addLabel(label, addVec3(center, [0, 0, -0.35]), options.highlighted ? 0xffd45a : color.getHex());
 }
 
-function addWorldAxes(scene) {
+function addWorldAxes() {
+  if (!state.settings.show3dAxes) return;
   const origin = [0, 0, 0];
-  scene.add(makeArrowFromLocal(origin, [1, 0, 0], 4, 0x5cf2ff, 'N'));
-  scene.add(makeArrowFromLocal(origin, [0, 1, 0], 4, 0xff6048, 'E'));
-  scene.add(makeArrowFromLocal(origin, [0, 0, 1], 4, 0x71e989, 'D'));
+  map3d.root.add(makeArrowFromLocal(origin, [1, 0, 0], 4, 0x5cf2ff, 'N'));
+  map3d.root.add(makeArrowFromLocal(origin, [0, 1, 0], 4, 0xff6048, 'E'));
+  map3d.root.add(makeArrowFromLocal(origin, [0, 0, 1], 4, 0x71e989, 'D'));
 }
 
 function makeLine(points, color, opacity = 1) {
@@ -1392,6 +1510,7 @@ function makeArrowFromLocal(origin, direction, length, color, label) {
 }
 
 function addLabel(text, position, color) {
+  if (!state.settings.show3dLabels) return;
   if (!map3d.scene) return;
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d');
@@ -1713,6 +1832,61 @@ function drawGateObservation(ctx, canvas, gate, index, alpha) {
   ctx.restore();
 }
 
+function drawSelectedGateOverlay(ctx, canvas, entry, alpha) {
+  const cameraPosition = observationGateCameraPosition(entry.gate);
+  const projected = projectPoint(cameraPosition, canvas.width, canvas.height);
+  if (!projected) return;
+  const color = entry.role === 'target' ? '#ffd45a' : '#5cf2ff';
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.lineWidth = entry.role === 'target' ? 3 : 2;
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(projected.x, projected.y, 5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(projected.x - 14, projected.y);
+  ctx.lineTo(projected.x + 14, projected.y);
+  ctx.moveTo(projected.x, projected.y - 14);
+  ctx.lineTo(projected.x, projected.y + 14);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(projected.x, projected.y, entry.role === 'target' ? 22 : 18, 0, Math.PI * 2);
+  ctx.stroke();
+  if (state.settings.showLabels) {
+    const text = `${entry.role} ${entry.gate.id || entry.gate.sequence || ''}`.trim();
+    ctx.font = '13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+    const metrics = ctx.measureText(text);
+    const labelX = Math.min(Math.max(projected.x + 12, 4), canvas.width - metrics.width - 12);
+    const labelY = Math.max(projected.y - 24, 18);
+    ctx.fillStyle = 'rgba(0,0,0,.72)';
+    ctx.fillRect(labelX - 4, labelY - 14, metrics.width + 8, 19);
+    ctx.fillStyle = color;
+    ctx.fillText(text, labelX, labelY);
+  }
+  ctx.restore();
+}
+
+function selectedGateEntries(scene = state.frame?.scene) {
+  const source = scene || {};
+  const frame = state.frame || {};
+  const entries = [];
+  const targetGate = source.target_gate || frame.target_gate;
+  const nextGate = source.next_gate || frame.next_gate;
+  if (targetGate) entries.push({ role: 'target', gate: targetGate });
+  if (nextGate) entries.push({ role: 'next', gate: nextGate });
+  return entries;
+}
+
+function midpointVec3(a, b) {
+  return [
+    (a[0] + b[0]) / 2,
+    (a[1] + b[1]) / 2,
+    (a[2] + b[2]) / 2
+  ];
+}
+
 function gateHasOrientation(gate) {
   return Boolean(point3(gate?.orientation_xyz) || quat4(gate?.orientation_local_ned_quat || gate?.orientation_quat));
 }
@@ -1894,13 +2068,21 @@ function installEvents() {
     renderMap3d({ resetCamera: true });
   });
   for (const [element, key] of [
+    [els.show3dGrid, 'show3dGrid'],
+    [els.show3dAxes, 'show3dAxes'],
+    [els.show3dDrone, 'show3dDrone'],
     [els.show3dObservations, 'show3dObservations'],
     [els.show3dGateMap, 'show3dGateMap'],
+    [els.show3dTargets, 'show3dTargets'],
+    [els.show3dTargetLine, 'show3dTargetLine'],
     [els.show3dTestPath, 'show3dTestPath'],
     [els.show3dPlannedPath, 'show3dPlannedPath'],
     [els.show3dTrail, 'show3dTrail'],
+    [els.show3dLookahead, 'show3dLookahead'],
     [els.show3dVelocity, 'show3dVelocity'],
-    [els.show3dDesiredAcceleration, 'show3dDesiredAcceleration']
+    [els.show3dCurrentDesiredAcceleration, 'show3dCurrentDesiredAcceleration'],
+    [els.show3dAutipilotDesiredAcceleration, 'show3dAutipilotDesiredAcceleration'],
+    [els.show3dLabels, 'show3dLabels']
   ]) {
     element.addEventListener('change', () => {
       if (key === 'show3dPlannedPath') state.plannedPathVisibilityUserSet = true;

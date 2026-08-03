@@ -86,13 +86,21 @@
         <div id="map3dToolbar">
           <div id="map3dMeta">No 3D scene loaded.</div>
           <div class="map3dToggles" role="group" aria-label="3D map layers">
+            <label class="compactToggle"><span>Grid</span><input id="show3dGrid" type="checkbox" checked></label>
+            <label class="compactToggle"><span>Axes</span><input id="show3dAxes" type="checkbox" checked></label>
+            <label class="compactToggle"><span>Drone</span><input id="show3dDrone" type="checkbox" checked></label>
             <label class="compactToggle"><span>Observations</span><input id="show3dObservations" type="checkbox" checked></label>
             <label class="compactToggle"><span>Gate map</span><input id="show3dGateMap" type="checkbox" checked></label>
+            <label class="compactToggle"><span>Targets</span><input id="show3dTargets" type="checkbox" checked></label>
+            <label class="compactToggle"><span>Target line</span><input id="show3dTargetLine" type="checkbox" checked></label>
             <label class="compactToggle"><span>Test path</span><input id="show3dTestPath" type="checkbox" checked></label>
             <label class="compactToggle"><span>Planned path</span><input id="show3dPlannedPath" type="checkbox" checked></label>
             <label class="compactToggle"><span>Trail</span><input id="show3dTrail" type="checkbox" checked></label>
+            <label class="compactToggle"><span>Lookahead</span><input id="show3dLookahead" type="checkbox" checked></label>
             <label class="compactToggle"><span>Velocity</span><input id="show3dVelocity" type="checkbox" checked></label>
-            <label class="compactToggle"><span>Desired accel</span><input id="show3dDesiredAcceleration" type="checkbox" checked></label>
+            <label class="compactToggle"><span>Current accel</span><input id="show3dCurrentDesiredAcceleration" type="checkbox" checked></label>
+            <label class="compactToggle"><span>Auti accel</span><input id="show3dAutipilotDesiredAcceleration" type="checkbox" checked></label>
+            <label class="compactToggle"><span>Labels</span><input id="show3dLabels" type="checkbox" checked></label>
           </div>
           <div class="zoomControls compact" role="group" aria-label="3D camera">
             <button id="map3dResetButton" type="button" title="Reset 3D camera">Fit</button>
@@ -107,12 +115,15 @@
             <span><i class="legendSwatch down"></i>D</span>
             <span><i class="legendSwatch drone"></i>drone FRD</span>
             <span><i class="legendSwatch gate"></i>gate frame</span>
+            <span><i class="legendSwatch targetGate"></i>target/next</span>
+            <span><i class="legendSwatch targetLine"></i>target line</span>
             <span><i class="legendSwatch path"></i>test path</span>
             <span><i class="legendSwatch tightPath"></i>tight curve</span>
             <span><i class="legendSwatch lookahead"></i>lookahead</span>
             <span><i class="legendSwatch plannedPath"></i>planned path</span>
             <span><i class="legendSwatch velocity"></i>velocity</span>
-            <span><i class="legendSwatch desiredAcceleration"></i>desired accel</span>
+            <span><i class="legendSwatch desiredAcceleration"></i>current accel</span>
+            <span><i class="legendSwatch autopilotAcceleration"></i>auti accel</span>
           </div>
         </div>
         <div id="map3dFooter">

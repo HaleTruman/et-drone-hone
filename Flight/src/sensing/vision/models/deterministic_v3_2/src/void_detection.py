@@ -44,6 +44,7 @@ OPEN_APERTURE_MAX_FILL_RATIO = 0.38
 OPEN_APERTURE_MIN_EXTENT_RATIO = 0.18
 OPEN_APERTURE_INNER_AXIS_SCALE = 0.35
 OPEN_APERTURE_MAX_CANDIDATES = 8
+MAX_FRAME_CANDIDATES = 6
 C_SHAPE_MIN_SIDE_COVERAGE = 0.18
 C_SHAPE_VISIBLE_SIDE_COUNT = 3
 C_SHAPE_MIN_QUAD_AREA = 120.0
@@ -77,6 +78,10 @@ LEGACY_INVERSE_DENSITY_SWEEP = tuple(
     for radius in (3, 5, 7)
     for gamma in (1.0, 1.5, 3.0)
 )
+WARM_GATE_HUE_MAX = 18
+WARM_GATE_HUE_MIN_WRAP = 173
+WARM_GATE_SATURATION_MIN = 140
+WARM_GATE_VALUE_MIN = 160
 REVIEW_LAYERS = (
     ("base_mask", "LUT base mask", "void_detection.py::image_to_mask"),
     ("small_components", "Rejected small components",
@@ -183,10 +188,29 @@ def load_lut(path=LUT_PATH):
     return lut
 
 
+def warm_gate_mask(image):
+    """Return conservative red/orange gate evidence missed by the LUT.
+
+    Hue wraps at red in OpenCV HSV, so both ends of the hue interval are
+    required. Saturation and value floors exclude the grey structure and dark
+    floor that dominate the Unreal reference clips. The shared component-size
+    filter removes isolated warm pixels after this bounded per-pixel pass.
+    """
+    hue, saturation, value = cv2.split(
+        cv2.cvtColor(image, cv2.COLOR_BGR2HSV))
+    selected = (
+        ((hue <= WARM_GATE_HUE_MAX) | (hue >= WARM_GATE_HUE_MIN_WRAP))
+        & (saturation >= WARM_GATE_SATURATION_MIN)
+        & (value >= WARM_GATE_VALUE_MIN)
+    )
+    return selected.astype(np.uint8) * 255
+
+
 def image_to_mask(image, lut):
     bgr = image.astype(np.uint32)
     key = (bgr[:, :, 2] << 16) | (bgr[:, :, 1] << 8) | bgr[:, :, 0]
-    return (lut[key] != 0).astype(np.uint8) * 255
+    calibrated = (lut[key] != 0).astype(np.uint8) * 255
+    return cv2.bitwise_or(calibrated, warm_gate_mask(image))
 
 
 def compute_mask_stages(image, lut):
@@ -289,7 +313,8 @@ def analyze_ellipses(contours, hierarchy, context, frame_shape, contour_mask=Non
         ellipses.extend(open_aperture_candidates(
             contours, children_by_parent, depths, blank, contour_mask, rng, used))
     estimates, groups = [], []
-    ordered = sorted(ellipses, key=lambda item: item[0], reverse=True)
+    ordered = sorted(
+        ellipses, key=lambda item: item[0], reverse=True)[:MAX_FRAME_CANDIDATES]
     for area, center, axes, angle, color, parent, _ in ordered:
         groups.append((parent, center, axes, color))
         estimates.append(EllipseEstimate(
