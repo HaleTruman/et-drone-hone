@@ -37,6 +37,16 @@ class KalmanFilterConfig:
     min_measurement_confidence: float = 0.05
 
 
+@dataclass(frozen=True)
+class GyroSpikeFilterConfig:
+    """Reject isolated gyro samples that are implausible for vehicle control."""
+
+    enabled: bool = False
+    max_rate_rps: float = 12.0
+    max_delta_rps: float = 8.0
+    max_rejections: int = 2
+
+
 class VehicleStateEstimator:
     """Mutable owner for the latest estimated vehicle state."""
 
@@ -46,6 +56,7 @@ class VehicleStateEstimator:
         *,
         vio_config: VioCorrectionConfig | None = None,
         kalman_config: KalmanFilterConfig | None = None,
+        gyro_spike_filter_config: GyroSpikeFilterConfig | None = None,
     ):
         self.sim_time_ns = 0
         self.initialized = False
@@ -64,12 +75,17 @@ class VehicleStateEstimator:
         self.last_imu_elapsed_time_ns: int | None = None
         self.vio_config = vio_config or VioCorrectionConfig()
         self.kalman_config = kalman_config or KalmanFilterConfig()
+        self.gyro_spike_filter_config = (
+            gyro_spike_filter_config or GyroSpikeFilterConfig()
+        )
         self.kalman_enabled = bool(self.kalman_config.enabled)
         self._kalman_covariance = self._initial_kalman_covariance()
         self.last_kalman_status: str | None = None
         self.last_vio_measurement: VioMeasurement | None = None
         self.last_vio_residual: dict[str, object] | None = None
         self.last_vio_status: str | None = None
+        self.last_gyro_filter_status: dict[str, object] | None = None
+        self._consecutive_gyro_rejections = 0
         if vehicle_state is not None:
             self.update_state(vehicle_state)
 
@@ -111,6 +127,8 @@ class VehicleStateEstimator:
         self.last_vio_measurement = None
         self.last_vio_residual = None
         self.last_vio_status = None
+        self.last_gyro_filter_status = None
+        self._consecutive_gyro_rejections = 0
         self._kalman_covariance = self._initial_kalman_covariance()
         self.last_kalman_status = None
         self.initialized = False
@@ -168,6 +186,7 @@ class VehicleStateEstimator:
                 "vio_status": self.last_vio_status,
                 "vio_residual": self.last_vio_residual,
                 "kalman_status": self.last_kalman_status,
+                "gyro_filter": self.last_gyro_filter_status,
             },
             elapsed_time_ns=telemetry.elapsed_time_ns,
         )
@@ -226,7 +245,11 @@ class VehicleStateEstimator:
         self.last_imu_time_boot_us = int(imu_data_t.time_boot_us)
         self.last_imu_elapsed_time_ns = imu_data_t.elapsed_time_ns
         self.acceleration_body_frd_mps2 = vec3(imu_data_t.acceleration_body_frd_mps2)
-        self.angular_velocity_body_frd_rps = self._adjusted_gyro(imu_data_t.gyro_body_frd_rps)
+        adjusted_gyro = self._adjusted_gyro(imu_data_t.gyro_body_frd_rps)
+        self.angular_velocity_body_frd_rps = self._filter_gyro_sample(
+            adjusted_gyro,
+            self.angular_velocity_body_frd_rps,
+        )
         self.attitude_quaternion = _attitude_from_accelerometer(self.acceleration_body_frd_mps2)
 
         self.acceleration_local_ned_mps2 = vec3(
@@ -292,7 +315,11 @@ class VehicleStateEstimator:
 
         # Correct body-frame specific force before rotating it with the updated attitude.
         self.acceleration_body_frd_mps2 = self._ajusted_accel(imu_data_t.acceleration_body_frd_mps2)
-        self.angular_velocity_body_frd_rps = self._adjusted_gyro(imu_data_t.gyro_body_frd_rps)
+        adjusted_gyro = self._adjusted_gyro(imu_data_t.gyro_body_frd_rps)
+        self.angular_velocity_body_frd_rps = self._filter_gyro_sample(
+            adjusted_gyro,
+            previous_angular_velocity,
+        )
 
         angular_velocity = np.asarray(self.angular_velocity_body_frd_rps, dtype=float)
         previous_rates = np.asarray(previous_angular_velocity, dtype=float)
@@ -471,6 +498,56 @@ class VehicleStateEstimator:
         - Yaw right - positive
         """
         return vec3(-(np.asarray(gyro_body_frd_rps, dtype=float) - np.asarray(self.gyro_bias_body_frd_rps, dtype=float)))
+
+    def _filter_gyro_sample(self, gyro_body_frd_rps: Vec3, previous_gyro_body_frd_rps: Vec3) -> Vec3:
+        config = self.gyro_spike_filter_config
+        gyro = np.asarray(gyro_body_frd_rps, dtype=float)
+        previous = np.asarray(previous_gyro_body_frd_rps, dtype=float)
+        rate_norm = float(np.linalg.norm(gyro))
+        delta_norm = float(np.linalg.norm(gyro - previous))
+
+        status: dict[str, object] = {
+            "enabled": bool(config.enabled),
+            "accepted": True,
+            "rate_norm_rps": rate_norm,
+            "delta_norm_rps": delta_norm,
+            "rejection_reason": None,
+            "consecutive_rejections": int(self._consecutive_gyro_rejections),
+        }
+        if not config.enabled:
+            self.last_gyro_filter_status = status
+            return vec3(gyro)
+
+        reason = None
+        if rate_norm > float(config.max_rate_rps):
+            reason = "max_rate"
+        elif delta_norm > float(config.max_delta_rps):
+            reason = "max_delta"
+
+        if reason is None:
+            self._consecutive_gyro_rejections = 0
+            self.last_gyro_filter_status = status
+            return vec3(gyro)
+
+        max_rejections = max(0, int(config.max_rejections))
+        if self._consecutive_gyro_rejections >= max_rejections:
+            self._consecutive_gyro_rejections = 0
+            status["rejection_reason"] = f"{reason}_recovery_accept"
+            self.last_gyro_filter_status = status
+            return vec3(gyro)
+
+        self._consecutive_gyro_rejections += 1
+        status.update(
+            {
+                "accepted": False,
+                "rejection_reason": reason,
+                "consecutive_rejections": int(self._consecutive_gyro_rejections),
+                "held_rate_frd_rps": [float(value) for value in previous],
+                "rejected_rate_frd_rps": [float(value) for value in gyro],
+            }
+        )
+        self.last_gyro_filter_status = status
+        return vec3(previous)
 
     def _ajusted_accel(self, acceleration_body_frd_mps2: Vec3) -> Vec3:
         """

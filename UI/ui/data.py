@@ -130,6 +130,8 @@ def frame_payload(run: RunBundle, frame_index: int) -> dict[str, Any]:
     sync = nearest_cycle_for_frame(run, frame)
     observation = observation_for_frame(run, frame)
     gates = _observation_gates(observation)
+    target_gate = _selected_gate_for_frame(run, frame, sync.get("cycle"), "target_gate")
+    next_gate = _selected_gate_for_frame(run, frame, sync.get("cycle"), "next_gate")
     return {
         "index": index,
         "count": len(run.frames),
@@ -144,6 +146,8 @@ def frame_payload(run: RunBundle, frame_index: int) -> dict[str, Any]:
         "telemetry": sync.get("cycle"),
         "observation": observation,
         "observation_gates": gates,
+        "target_gate": target_gate,
+        "next_gate": next_gate,
         "nearby": nearby_frame_rows(run, index),
         "telemetry_series": telemetry_series(run, sync.get("cycle_index")),
         "scene": scene_payload(run, frame, sync.get("cycle")),
@@ -169,6 +173,8 @@ def scene_payload(run: RunBundle, frame: FrameRecord, cycle: dict[str, Any] | No
         planned_path_payload_source = test_path
         planned_path_is_test_path = True
     gate_map = _gate_map_for_frame(run, frame, cycle_number)
+    target_gate = _selected_gate_for_frame(run, frame, cycle, "target_gate")
+    next_gate = _selected_gate_for_frame(run, frame, cycle, "next_gate")
     return {
         "coordinate_system": {
             "world": "local_ned",
@@ -179,6 +185,8 @@ def scene_payload(run: RunBundle, frame: FrameRecord, cycle: dict[str, Any] | No
         "drone": drone,
         "observation_gates": _observation_gates(observation_for_frame(run, frame)),
         "gate_map": gate_map,
+        "target_gate": target_gate,
+        "next_gate": next_gate,
         "test_path": _planned_path_payload(test_path),
         "planned_path": _planned_path_payload(planned_path_payload_source),
         "planned_path_is_test_path": planned_path_is_test_path,
@@ -638,6 +646,54 @@ def _gate_map_for_cycle(run: RunBundle, cycle_number: int | None) -> list[dict[s
         selected = run.gate_map_cycles[-1]
     gates = selected.get("gate_map") if isinstance(selected, dict) else None
     return [_gate_payload(gate) for gate in gates if isinstance(gate, dict)] if isinstance(gates, list) else []
+
+
+def _selected_gate_for_frame(
+    run: RunBundle,
+    frame: FrameRecord,
+    cycle: dict[str, Any] | None,
+    key: str,
+) -> dict[str, Any] | None:
+    if isinstance(cycle, dict):
+        gate = cycle.get(key)
+        if isinstance(gate, dict):
+            return _gate_payload(gate)
+
+    sidecar_record = _gate_map_record_for_frame(run, frame)
+    if sidecar_record is None:
+        sidecar_record = _gate_map_record_for_cycle(run, _cycle_number(frame, cycle))
+    gate = sidecar_record.get(key) if isinstance(sidecar_record, dict) else None
+    return _gate_payload(gate) if isinstance(gate, dict) else None
+
+
+def _gate_map_record_for_frame(
+    run: RunBundle,
+    frame: FrameRecord,
+) -> dict[str, Any] | None:
+    selected: dict[str, Any] | None = None
+    for record in run.gate_map_cycles:
+        try:
+            frame_id = int(record.get("frame_id"))
+        except (TypeError, ValueError):
+            continue
+        if frame_id == frame.frame_id:
+            selected = record
+    return selected
+
+
+def _gate_map_record_for_cycle(
+    run: RunBundle,
+    cycle_number: int | None,
+) -> dict[str, Any] | None:
+    selected: dict[str, Any] | None = None
+    if cycle_number is not None:
+        for record in run.gate_map_cycles:
+            value = record.get("cycle")
+            if isinstance(value, int) and value <= cycle_number:
+                selected = record
+    if selected is None and run.gate_map_cycles:
+        selected = run.gate_map_cycles[-1]
+    return selected
 
 
 def _planned_path_for_cycle(run: RunBundle, cycle_number: int | None) -> dict[str, Any] | None:
