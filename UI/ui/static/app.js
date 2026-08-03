@@ -51,15 +51,15 @@ const state = {
     show3dAxes: true,
     show3dDrone: true,
     show3dObservations: true,
-    show3dGateMap: true,
+    show3dGateMap: false,
     show3dTargets: true,
     show3dTargetLine: true,
-    show3dTestPath: true,
-    show3dPlannedPath: true,
+    show3dTestPath: false,
+    show3dPlannedPath: false,
     show3dTrail: true,
-    show3dLookahead: true,
+    show3dLookahead: false,
     show3dVelocity: true,
-    show3dCurrentDesiredAcceleration: true,
+    show3dCurrentDesiredAcceleration: false,
     show3dAutipilotDesiredAcceleration: true,
     show3dLabels: true,
     showTelemetryActual: true,
@@ -1167,10 +1167,7 @@ function renderMap3d({ resetCamera = false } = {}) {
 }
 
 function applyDefault3dPathVisibility() {
-  if (state.plannedPathVisibilityUserSet || !els.show3dPlannedPath) return;
-  const testPathPoints = state.frame?.scene?.test_path?.points_local_ned_m;
-  const hasTestPath = Array.isArray(testPathPoints) && testPathPoints.map(point3).filter(Boolean).length >= 2;
-  state.settings.show3dPlannedPath = !hasTestPath;
+  if (!els.show3dPlannedPath) return;
   els.show3dPlannedPath.checked = state.settings.show3dPlannedPath;
 }
 
@@ -1522,8 +1519,6 @@ function addLabel(text, position, color) {
   canvas.width = 256;
   canvas.height = 64;
   context.font = '24px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
-  context.fillStyle = 'rgba(8, 11, 14, .78)';
-  context.fillRect(0, 0, canvas.width, canvas.height);
   context.fillStyle = `#${new THREE.Color(color).getHexString()}`;
   context.fillText(String(text).slice(0, 18), 12, 40);
   const texture = new THREE.CanvasTexture(canvas);
@@ -1855,8 +1850,6 @@ function drawGateObservation(ctx, canvas, gate, index, alpha) {
     const metrics = ctx.measureText(text);
     const labelX = Math.min(Math.max(projected.x + 9, 4), canvas.width - metrics.width - 12);
     const labelY = Math.max(projected.y - halfY - 10, 18);
-    ctx.fillStyle = 'rgba(0,0,0,.72)';
-    ctx.fillRect(labelX - 4, labelY - 14, metrics.width + 8, 19);
     ctx.fillStyle = color;
     ctx.fillText(text, labelX, labelY);
   }
@@ -1891,8 +1884,6 @@ function drawSelectedGateOverlay(ctx, canvas, entry, alpha) {
     const metrics = ctx.measureText(text);
     const labelX = Math.min(Math.max(projected.x + 12, 4), canvas.width - metrics.width - 12);
     const labelY = Math.max(projected.y - 24, 18);
-    ctx.fillStyle = 'rgba(0,0,0,.72)';
-    ctx.fillRect(labelX - 4, labelY - 14, metrics.width + 8, 19);
     ctx.fillStyle = color;
     ctx.fillText(text, labelX, labelY);
   }

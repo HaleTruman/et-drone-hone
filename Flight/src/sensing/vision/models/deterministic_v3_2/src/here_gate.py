@@ -23,6 +23,8 @@ ASSOCIATION_FLOOR_PX, MIN_PUBLISH_CONFIDENCE, MIN_PUBLISH_VIEWS = 18.0, 0.05, 3
 POSTERIOR_REPLACE_MIN_VIEW_ADVANTAGE = 3
 POSTERIOR_REPLACE_MAX_RANGE_FRACTION = 0.16
 CURRENT_BEARING_MAX_STEP_FRACTION = 0.05
+REJECTED_BINDING_ESCAPE_FRAMES = 3
+REJECTED_BINDING_MIN_TRACK_FRAMES = 5
 TEMPORAL_EVIDENCE_MIN_VIEWS = 5
 TEMPORAL_EVIDENCE_SCORE_FRACTION = 1.0
 PNP_PRIOR_DEPTH_TIEBREAK_PX = 2.0
@@ -725,6 +727,7 @@ class GatePublisher:
         self.source = str(source)
         self._states: dict[str, _Landmark] = {}
         self._bindings: dict[str, str] = {}
+        self._binding_rejections: dict[str, int] = {}
         self._tick = 0
         self._last_frame_key = None
         self._last_observation = None
@@ -736,7 +739,34 @@ class GatePublisher:
         state = _Landmark(gate_id, last_seen=self._tick)
         self._states[gate_id] = state
         self._bindings[track_id] = gate_id
+        self._binding_rejections.pop(track_id, None)
         return state
+
+    def _reset_binding(self, track_id):
+        self._bindings.pop(track_id, None)
+        self._binding_rejections.pop(track_id, None)
+
+    def _maybe_escape_rejected_binding(self, state, detection, origin, world_from_camera):
+        track_id = detection.track.track_id
+        if "rejected_current" not in (state.solution.groups if state.solution else ()):
+            self._binding_rejections.pop(track_id, None)
+            return state
+        if self._observation(state, detection, origin, world_from_camera) is not None:
+            self._binding_rejections.pop(track_id, None)
+            return state
+        if (detection.track.consecutive_frame_count
+                < REJECTED_BINDING_MIN_TRACK_FRAMES):
+            return state
+        count = self._binding_rejections.get(track_id, 0) + 1
+        self._binding_rejections[track_id] = count
+        if count < REJECTED_BINDING_ESCAPE_FRAMES:
+            return state
+        self._reset_binding(track_id)
+        fresh = self._fresh(track_id)
+        self._update_state(
+            fresh, detection, self._last_frame_key, state.anchor_origin,
+            state.anchor_rotation)
+        return fresh
 
     @staticmethod
     def _association(state, pixels, origin, world_from_camera, ellipse_scale):
@@ -781,7 +811,7 @@ class GatePublisher:
                 assigned.add(state.gate_id)
             else:
                 if gate_id:
-                    self._bindings.pop(track_id, None)
+                    self._reset_binding(track_id)
                 pending.append((detection, pixels, scale))
 
         choices = []
@@ -901,6 +931,10 @@ class GatePublisher:
             self._states.pop(gate_id, None)
         self._bindings = {track: gate for track, gate in self._bindings.items()
                           if gate in self._states}
+        self._binding_rejections = {
+            track: count for track, count in self._binding_rejections.items()
+            if track in self._bindings
+        }
 
         gates = []
         if vehicle_state is not None and detection_frame.detections:
@@ -910,6 +944,8 @@ class GatePublisher:
             for detection in detection_frame.detections:
                 state = assignments[id(detection)]
                 self._update_state(state, detection, frame_key, origin, world_from_camera)
+                state = self._maybe_escape_rejected_binding(
+                    state, detection, origin, world_from_camera)
                 observation = self._observation(
                     state, detection, origin, world_from_camera)
                 if observation is not None:
