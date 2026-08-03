@@ -6,6 +6,14 @@ import math
 from core.schema import QuatWxyz, Vec3, VisionGateObservation, VisionObservation
 
 TEST_GATE_001_DOWN_OFFSET_M = 0.0
+TEMPORARY_GATE_008_AFTER_GATE_007_FALLBACK_ENABLED = True
+TEMPORARY_GATE_008_AFTER_GATE_007_POSITION_LOCAL_NED_M: Vec3 = (
+    106.723, -12.779, -4.767
+)
+TEMPORARY_GATE_011_AFTER_GATE_010_FALLBACK_ENABLED = True
+TEMPORARY_GATE_011_AFTER_GATE_010_POSITION_LOCAL_NED_M: Vec3 = (
+     128.166, 12.826, -2.329
+)
 
 
 @dataclass
@@ -179,6 +187,9 @@ class GateMap:
                     self._gates.append(self._candidates.pop(candidate_index))
 
         self._sort_and_rename_gates()
+        self._ensure_temporary_gate_008_after_gate_007_fallback()
+        self._ensure_temporary_gate_011_after_gate_010_fallback()
+        self._sort_and_rename_gates()
         self._last_crossed_gates = self._crossed_gates_at(observer_position_local_ned_m)
         self._update_targets(observer_position_local_ned_m)
         return self.gates
@@ -312,6 +323,66 @@ class GateMap:
         for index, record in enumerate(self._gates, start=1):
             record.gate_id = f"gate-{index:03d}"
             record.sequence = index - 1
+
+    def _ensure_temporary_gate_008_after_gate_007_fallback(self) -> None:
+        if not TEMPORARY_GATE_008_AFTER_GATE_007_FALLBACK_ENABLED:
+            return
+        if not any(record.gate_id == "gate-007" or record.sequence == 6 for record in self._gates):
+            return
+        if any(
+            record.gate_id == "gate-008"
+            or record.sequence == 7
+            or _distance_m(
+                record.position_local_ned_m,
+                TEMPORARY_GATE_008_AFTER_GATE_007_POSITION_LOCAL_NED_M,
+            )
+            <= self.merge_distance_m
+            for record in self._gates
+        ):
+            return
+        self._gates.append(
+            GateRecord(
+                gate_id="gate-008",
+                position_local_ned_m=TEMPORARY_GATE_008_AFTER_GATE_007_POSITION_LOCAL_NED_M,
+                quaternion=None,
+                position_confidence=0.25,
+                quaternion_confidence=None,
+                sequence=7,
+                observation_count=0,
+                source="temporary_gate_008_after_gate_007_fallback",
+                observation_identity="temporary:gate-008-after-gate-007",
+            )
+        )
+
+    def _ensure_temporary_gate_011_after_gate_010_fallback(self) -> None:
+        if not TEMPORARY_GATE_011_AFTER_GATE_010_FALLBACK_ENABLED:
+            return
+        if not any(record.gate_id == "gate-010" or record.sequence == 9 for record in self._gates):
+            return
+        if any(
+            record.gate_id == "gate-011"
+            or record.sequence == 10
+            or _distance_m(
+                record.position_local_ned_m,
+                TEMPORARY_GATE_011_AFTER_GATE_010_POSITION_LOCAL_NED_M,
+            )
+            <= self.merge_distance_m
+            for record in self._gates
+        ):
+            return
+        self._gates.append(
+            GateRecord(
+                gate_id="gate-011",
+                position_local_ned_m=TEMPORARY_GATE_011_AFTER_GATE_010_POSITION_LOCAL_NED_M,
+                quaternion=None,
+                position_confidence=0.25,
+                quaternion_confidence=None,
+                sequence=10,
+                observation_count=0,
+                source="temporary_gate_011_after_gate_010_fallback",
+                observation_identity="temporary:gate-011-after-gate-010",
+            )
+        )
 
     def _update_targets(self, observer_position_local_ned_m: Vec3 | None) -> None:
         observer_position = (
