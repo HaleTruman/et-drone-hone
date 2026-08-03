@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TopologyDecision.topology_label Review</title>
+    <link rel="stylesheet" href="styles.css?v=standard-gate-review-v1" />
+  </head>
+  <body>
+    <main class="viewer-shell">
+      <nav class="viewer-tabs" aria-label="Review pipelines">
+        <a href="source.html">source</a>
+        <a href="index.html">DensityEvidence</a>
+        <a class="active" href="topology.html">TopologyDecision.topology_label</a>
+        <a href="standard_gate.html">StandardGateResult</a>
+        <a href="pnp_scene.html">PnP / final pose replay</a>
+        <a href="evaluation.html">backend evaluation overlays</a>
+      </nav>
+      <header class="viewer-header topology-header" aria-label="TopologyDecision filters">
+        <section class="header-section controls-left">
+          <select id="run-select" aria-label="source.run_id"></select>
+        </section>
+        <section class="header-section controls-center topology-filter">
+          <label for="topology-label-select">TopologyDecision.topology_label</label>
+          <select id="topology-label-select">
+            <option value="all">all</option>
+            <option value="standard">standard</option>
+            <option value="multi_void">multi_void</option>
+            <option value="c_shape">c_shape</option>
+            <option value="unknown">unknown</option>
+            <option value="clipped">clipped</option>
+          </select>
+        </section>
+        <section id="topology-summary" class="header-section controls-right topology-summary"></section>
+      </header>
+      <section class="frame-container" aria-live="polite">
+        <div id="frame-message">Loading TopologyDecision.topology_label…</div>
+        <div id="topology-grid" class="topology-grid" hidden></div>
+      </section>
+    </main>
+    <script type="module" src="topology_app.js?v=frame-navigation-v1"></script>
+  </body>
+</html>

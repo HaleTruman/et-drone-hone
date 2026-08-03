@@ -1,0 +1,297 @@
+================================================================================
+GATE-AWARE ACCELERATION CONTROLLER
+Specification & Implementation Outline
+for high-speed quadrotor gate racing
+================================================================================
+
+PURPOSE
+-------
+Produce an attitude error quaternion + normalized thrust command that:
+  - Points the velocity vector toward a look-ahead aim point derived from the
+    current target gate Gi and the next gate Gi+1
+  - Tracks a scheduled speed
+  - Applies light, distance- and turn-scheduled lateral corrections
+  - Maintains height primarily with thrust
+  - Respects vehicle under-actuation via dynamic inversion
+
+This controller replaces (or can sit alongside) the pure geometric path follower.
+It consumes the ordered gate list already maintained by the robust gate-mapping
+layer and does not require a dense pre-computed path.
+
+
+COORDINATE CONVENTIONS (PROJECT STANDARD – DO NOT DEVIATE)
+----------------------------------------------------------
+- Inertial frame: NED (x North, y East, z Down). Gravity g = [0, 0, +g]
+- Body frame: FRD (x Forward, y Right, z Down). Thrust acts along -z_body
+- Quaternion: scalar-first (w, x, y, z)
+- Rotation matrix R maps body → inertial: v_I = R @ v_B
+- Output attitude error uses the convention:
+      q_err = q_current^{-1} ⊗ q_des
+  (rotation that takes the current body frame onto the desired body frame)
+
+
+1. INPUTS (every control cycle)
+------------------------------
+VehicleState:
+  - position_local_ned_m          p = [x, y, z]
+  - velocity_local_ned_mps        v = [vx, vy, vz]
+  - attitude_quaternion           q_current = (w, x, y, z)   # scalar-first
+
+From the gate map (or a thin wrapper around it):
+  - Gi                            position of current target gate (NED)
+  - Gi+1                          position of the subsequent gate (NED)
+  - crossed_Gi                    boolean or small hysteresis flag indicating
+                                  that the vehicle has already passed the
+                                  plane of Gi
+  - (optional) sequential index or gate id for logging / progress
+
+Controller parameters (tunable, loaded once):
+  - v_max, v_min
+  - a_lat_max                     used both for speed scheduling and as a
+                                  soft limit on lateral acceleration
+  - height_setpoint or height profile
+  - gains: kp_speed, kp_dir, kd_dir, kp_lat, kd_lat, kp_z, kd_z
+  - scheduling breakpoints and scales (see Section 4)
+  - max_specific_thrust           for normalizing thrust
+  - min/max normalized thrust clamps
+
+
+2. OUTPUTS
+----------
+Exactly two values:
+
+  1. error_quaternion   q_err = (w, x, y, z)
+     Attitude error that the inner attitude / rate loop should drive to zero.
+
+  2. normalized_thrust  scalar in [min_thrust, max_thrust]  (typically 0.05–0.95)
+     Collective throttle command.
+
+
+3. PROCESSING PIPELINE (plain language + key calculations)
+----------------------------------------------------------
+
+Step A – Aim direction (look-ahead that strengthens near the gate)
+  Compute two vectors:
+    los      = Gi - p                  # line-of-sight to current gate centre
+    exit_dir = Gi+1 - Gi               # direction from current gate toward next
+
+  Normalize both (protect against zero length).
+
+  Compute a blend factor α ∈ [0, 1] that increases as the vehicle approaches Gi.
+  Simple usable form:
+    dist = ||los||
+    α = smoothstep(dist, d_near, d_far)   # 0 when far, →1 when close
+    # or a simple exponential / linear ramp; exact shape is a tuning choice
+
+  Desired aim direction (horizontal component used for heading):
+    d_aim = normalize( (1-α) * los + α * exit_dir )
+    # keep the z-component for 3-D aiming if gates change height; for pure
+    # horizontal heading later, project d_aim onto the horizontal plane.
+
+  This is the “yaw look-ahead that strengthens near the gate”.
+
+
+Step B – Desired speed
+  Estimate turn severity from consecutive gates (angle between entry and exit
+  vectors, or discrete curvature).  
+  v_des = f(dist_to_Gi, turn_severity, v_max, v_min, a_lat_max)
+  Classic form:
+    v_curv = sqrt(a_lat_max / max(kappa_est, ε))
+    v_des  = clip( min(v_max, v_curv), v_min, v_max )
+
+
+Step C – Desired velocity vector
+  v_des_vec = v_des * d_aim
+
+
+Step D – Desired acceleration (four additive pieces)
+
+  D.1 Speed / longitudinal
+    speed_err = v_des - dot(v, d_aim)
+    a_long = (kp_speed * speed_err) * d_aim
+
+  D.2 Velocity-direction alignment
+    # Rotate current velocity toward v_des_vec
+    v_dir_err = v_des_vec - v          # or a pure perpendicular component
+    # Project out the component already along d_aim if you want pure lateral
+    a_dir = kp_dir * v_dir_err         # can also include a damping term on
+                                       # the rate of change of direction
+
+  D.3 Lateral position correction (light)
+    # Lateral error relative to the current aim line
+    # One clean definition: component of (p - Gi) perpendicular to d_aim,
+    # or cross-track error to the infinite line through Gi in direction d_aim.
+    e_lat = lateral_position_error(p, Gi, d_aim)
+    v_lat = lateral_velocity(v, d_aim)
+    a_lat_pos = -kp_lat * e_lat - kd_lat * v_lat
+
+  D.4 Vertical
+    e_z = (height_setpoint - (-p.z))   # careful with NED sign
+    # or simply e_z = z_des - p.z if z_des is already in NED
+    a_z = -kp_z * e_z - kd_z * v.z
+    a_z_vec = [0, 0, a_z]
+
+  Sum:
+    a_des = a_long + a_dir + a_lat_pos + a_z_vec
+    # (+ optional drag compensation or other feed-forward)
+
+  IMPORTANT: Apply the scheduled lateral gain (Section 4) to a_dir and
+  a_lat_pos before summing. The longitudinal and vertical channels usually
+  keep constant gains.
+
+
+Step E – Dynamic inversion (thrust direction + magnitude)
+  specific_force = a_des - g           # g = [0, 0, +gravity]
+  thrust_mag     = ||specific_force||
+
+  if thrust_mag very small:
+    thrust_dir = [0, 0, 1]             # body z points down (safe fallback)
+  else:
+    thrust_dir = specific_force / thrust_mag   # this is the required R * e3
+
+  normalized_thrust = clip( thrust_mag / max_specific_thrust,
+                            min_normalized_thrust,
+                            max_normalized_thrust )
+
+
+Step F – Desired attitude quaternion
+  We have:
+    - required body-z direction in NED  = thrust_dir
+    - required heading                  = horizontal projection of d_aim
+                                          (or of v_des_vec)
+
+  Build the full rotation matrix (body → NED) that has:
+    z_body = thrust_dir
+    x_body = projected heading, orthogonalized against z_body
+    y_body = z_body × x_body
+  Convert that rotation matrix to a scalar-first quaternion q_des.
+
+  (Reuse the existing helper build_attitude_from_thrust_and_heading
+   from geometric_path_follower.py – it already does exactly this.)
+
+
+Step G – Error quaternion
+  q_err = quat_multiply( quat_conjugate(q_current), q_des )
+  # i.e. q_err = q_current^{-1} ⊗ q_des
+  # Ensure the resulting quaternion has positive scalar part for uniqueness
+  # if the downstream attitude controller expects it.
+
+
+4. GAIN SCHEDULING (the three classic behaviours)
+-------------------------------------------------
+Lateral channels (a_dir and a_lat_pos) are multiplied by a scalar schedule s:
+
+  s = s_approach * s_post_cross
+
+  s_approach:
+    High when far from Gi, smoothly reduced as dist → 0.
+    Classic “don’t disturb the gate crossing”.
+    Example: s_approach = 0.3 + 0.7 * smoothstep(dist, d_near, d_far)
+
+  s_post_cross:
+    After the vehicle has crossed the gate plane, ramp the gain back up.
+    The final value of the ramp is scaled by the turn angle (or the lateral
+    offset required to set up for Gi+1).
+    Classic “start the next corner early”.
+    Example:
+      turn_angle = angle between -entry_dir and exit_dir
+      s_post = 1.0 + k_turn * (turn_angle / π)   # or a measured lateral offset
+      then apply a short time- or distance-based ramp after the crossing flag
+
+Yaw / aim look-ahead (the blend factor α in Step A) already strengthens
+automatically as dist decreases; no extra schedule is required beyond the
+definition of α.
+
+
+5. HOW TO BUILD THE CONTROLLER (implementation outline)
+-------------------------------------------------------
+Recommended structure (mirrors the existing GeometricPathFollower style):
+
+  @dataclass
+  class GateAwareGains:
+      # speed, direction, lateral, vertical gains
+      # scheduling distances / scales
+      # thrust limits
+      ...
+
+  @dataclass
+  class GateInfo:
+      Gi: Vec3
+      Gi_next: Vec3
+      crossed: bool
+      # optional: turn_angle, sequential_id, ...
+
+  class GateAwareAccelerationController:
+      def __init__(self, gains: GateAwareGains, gravity: float = 9.81):
+          ...
+
+      def compute(self, state: VehicleState, gates: GateInfo) -> tuple[QuatWxyz, float]:
+          """
+          Returns (error_quaternion, normalized_thrust)
+          """
+          # 1. extract p, v, q_current
+          # 2. Steps A–G exactly as written above
+          # 3. return q_err, normalized_thrust
+
+Reuse from geometric_path_follower.py wherever possible:
+  - _normalize, quat_to_rotation_matrix, rotation_matrix_to_quat
+  - build_attitude_from_thrust_and_heading
+  - the VehicleState and AttitudeThrustCommand dataclasses
+    (you can keep AttitudeThrustCommand internally if useful, then convert
+     to error quaternion at the very end)
+
+New small helpers you will need:
+  - smoothstep or similar blend function
+  - lateral_position_error / lateral_velocity (simple cross-product or
+    projection onto the plane perpendicular to d_aim)
+  - quat_conjugate, quat_multiply (scalar-first)
+  - a clean “has_crossed_gate” test (dot product of (p - Gi) with the
+    gate normal, or a simple progress threshold with hysteresis)
+
+
+6. SUGGESTED STARTING GAINS (very rough – tune on the real vehicle)
+--------------------------------------------------------------------
+  kp_speed          1.5 – 3.0
+  kp_dir            1.0 – 2.5
+  kp_lat            0.8 – 2.0
+  kd_lat            1.0 – 2.5
+  kp_z              2.0 – 4.0
+  kd_z              1.5 – 3.0
+  a_lat_max         6 – 10 m/s²
+  v_max             10 – 18 m/s (vehicle dependent)
+  approach schedule: begin reducing lateral gain around 4–6 m before the gate,
+                     reach minimum ~0.5–1.5 m before the gate plane
+  post-cross ramp:   0.3–1.0 s or 2–4 m after crossing, scale 1.0–2.5× according
+                     to turn severity
+
+
+7. RELATION TO THE EXISTIC GEOMETRIC PATH FOLLOWER
+--------------------------------------------------
+- The dynamic-inversion block (Step E) and the attitude construction (Step F)
+  are identical in spirit to the existing GeometricPathFollower.
+- The big difference is the source of a_des: here it is generated from the
+  discrete gate sequence + velocity-direction + scheduled lateral terms
+  instead of from path projection + cross-track PD on a dense polyline.
+- You can keep both controllers and switch between them, or generate a short
+  local geometric path from (Gi, Gi+1) and fall back to the path follower
+  for the final 1–2 m if tighter geometric tracking is desired.
+
+
+8. IMPLEMENTATION ORDER (practical)
+-----------------------------------
+1. Skeleton class that returns a safe hover command (level attitude error = 0,
+   thrust ≈ gravity / max_specific_thrust).
+2. Add Step A (aim direction) and Step F/G so that the vehicle simply points
+   its nose at the gate and holds altitude. Verify heading behaviour.
+3. Add speed loop (D.1) and vertical loop (D.4). Confirm forward acceleration
+   and height tracking.
+4. Add velocity-direction term (D.2) with constant gains. Confirm the flight
+   path straightens toward the gate.
+5. Add light lateral position term (D.3).
+6. Introduce the approach and post-crossing schedules. Tune the blend factor α
+   and the lateral gain curves on the real track.
+7. Only then add more sophisticated speed scheduling or feed-forwards.
+
+
+END OF SPECIFICATION
+================================================================================

@@ -3,14 +3,14 @@
 
 import time
 
-def time_since(start_time_s: float) -> float:
+def time_since(start_time_s: float | None) -> float | None:
     """
     Calculates the time since a given start time. Uses and expects a time.perf_counter() as an input. 
-    Returns time in seconds as a float. 
+    Returns time in seconds as a float, or None when no start time is available.
     """
 
     if start_time_s is None:
-        raise TypeError("start_time_s cannot be None type")
+        return None
     
     return time.perf_counter() - start_time_s
 

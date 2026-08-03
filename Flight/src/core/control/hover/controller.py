@@ -76,11 +76,16 @@ class HoverController:
             else float(yaw_rad)
         )
 
+        dt_s = self._sample_dt_s(vehicle_state.sim_time_ns)
+        vertical_acceleration_correction = -(
+            self.vertical_velocity_gain * float(velocity_ned[2])
+            + self.vertical_acceleration_gain * float(acceleration_ned[2])
+        )
         desired_acceleration_ned = np.array(
             (
                 -self.lateral_velocity_gain * float(velocity_ned[0]),
                 -self.lateral_velocity_gain * float(velocity_ned[1]),
-                0.0,
+                vertical_acceleration_correction,
             ),
             dtype=float,
         )
@@ -91,12 +96,6 @@ class HoverController:
         if thrust_acceleration_norm <= 1e-9:
             raise ValueError("thrust acceleration vector cannot be zero")
 
-        dt_s = self._sample_dt_s(vehicle_state.sim_time_ns)
-        vertical_feedback = (
-            self.vertical_velocity_gain * float(velocity_ned[2])
-            + self.vertical_acceleration_gain * float(acceleration_ned[2])
-        )
-        self._adapt_hover_thrust_estimate(vertical_feedback, dt_s)
         tilt_compensation = thrust_acceleration_norm / self.gravity_mps2
 
         quaternion = np.asarray(
@@ -105,7 +104,7 @@ class HoverController:
         )
         thrust = float(
             np.clip(
-                self.hover_thrust_estimate * tilt_compensation + vertical_feedback,
+                self.hover_thrust_estimate * tilt_compensation,
                 self.min_thrust,
                 self.max_thrust,
             )
@@ -115,16 +114,19 @@ class HoverController:
         payload["velocity_error_local_ned_mps"] = [
             -float(velocity_ned[0]),
             -float(velocity_ned[1]),
-            0.0,
+            -float(velocity_ned[2]),
         ]
         payload["acceleration_correction_local_ned_mps2"] = [
             float(value) for value in desired_acceleration_ned
         ]
         payload["thrust_control"] = {
             "hover_thrust_estimate": float(self.hover_thrust_estimate),
-            "vertical_feedback": float(vertical_feedback),
+            "vertical_feedback": 0.0,
+            "vertical_acceleration_correction_mps2": float(vertical_acceleration_correction),
             "tilt_compensation": float(tilt_compensation),
             "dt_s": float(dt_s),
+            "mode": "velocity_damping_acceleration",
+            "ned_z_note": "positive z is down; falling/downward velocity commands upward acceleration before thrust scaling",
         }
         self.last_payload = payload
         return payload

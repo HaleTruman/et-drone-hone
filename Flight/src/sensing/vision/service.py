@@ -17,11 +17,17 @@ from sensing.vision.models.deterministic_v2 import DeterministicVisionV2Config
 
 
 DETERMINISTIC_V3_BACKEND_DIR = Path(__file__).resolve().parent / "models" / "deterministic_v3"
+DETERMINISTIC_V3_2_BACKEND_DIR = Path(__file__).resolve().parent / "models" / "deterministic_v3_2"
 
 
 @dataclass(frozen=True)
 class DeterministicVisionV3Config:
     lut_path: Path = DETERMINISTIC_V3_BACKEND_DIR / "assets" / "color_lut_v1.npz"
+
+
+@dataclass(frozen=True)
+class DeterministicVisionV3_2Config:
+    lut_path: Path = DETERMINISTIC_V3_2_BACKEND_DIR / "assets" / "color_lut_v1.npz"
 
 
 @dataclass(frozen=True)
@@ -40,6 +46,7 @@ class VisionPerceptionConfig:
     deterministic: DeterministicVisionConfig = DeterministicVisionConfig()
     deterministic_v2: DeterministicVisionV2Config = DeterministicVisionV2Config()
     deterministic_v3: DeterministicVisionV3Config = DeterministicVisionV3Config()
+    deterministic_v3_2: DeterministicVisionV3_2Config = DeterministicVisionV3_2Config()
 
 
 class VisionPerceptionService:
@@ -55,6 +62,7 @@ class VisionPerceptionService:
         deterministic: Any | None = None,
         deterministic_v2: Any | None = None,
         deterministic_v3: Any | None = None,
+        deterministic_v3_2: Any | None = None,
     ) -> None:
         self.config = config or VisionPerceptionConfig()
         if self.config.backend not in {
@@ -62,10 +70,11 @@ class VisionPerceptionService:
             "deterministic_0721",
             "deterministic_0721_v2",
             "deterministic_v3",
+            "deterministic_v3_2",
         }:
             raise ValueError(
                 "VisionPerceptionConfig.backend must be 'cnn_regressor', 'deterministic_0721', "
-                "'deterministic_0721_v2', or 'deterministic_v3'."
+                "'deterministic_0721_v2', 'deterministic_v3', or 'deterministic_v3_2'."
             )
         self._cnn = cnn
         self._regressor = regressor
@@ -73,6 +82,7 @@ class VisionPerceptionService:
         self._deterministic = deterministic
         self._deterministic_v2 = deterministic_v2
         self._deterministic_v3 = deterministic_v3
+        self._deterministic_v3_2 = deterministic_v3_2
 
     def process_frame(
         self,
@@ -89,6 +99,9 @@ class VisionPerceptionService:
         if self.config.backend == "deterministic_v3":
             frame = VisionFrame(frame_id=int(frame_id), sim_time_ns=int(sim_time_ns), jpeg_bytes=jpeg_bytes)
             return self.deterministic_v3.process_frame(frame, vehicle_state)
+        if self.config.backend == "deterministic_v3_2":
+            frame = VisionFrame(frame_id=int(frame_id), sim_time_ns=int(sim_time_ns), jpeg_bytes=jpeg_bytes)
+            return self.deterministic_v3_2.process_frame(frame, vehicle_state)
         return self._process_cnn_frame(frame_id=frame_id, sim_time_ns=sim_time_ns, jpeg_bytes=jpeg_bytes)
 
     def _process_cnn_frame(self, *, frame_id: int, sim_time_ns: int, jpeg_bytes: bytes) -> VisionObservation:
@@ -143,6 +156,8 @@ class VisionPerceptionService:
     ) -> VisionObservation:
         if self.config.backend == "deterministic_v3":
             return self.deterministic_v3.process_frame(frame, vehicle_state)
+        if self.config.backend == "deterministic_v3_2":
+            return self.deterministic_v3_2.process_frame(frame, vehicle_state)
         return self.process_frame(
             frame_id=frame.frame_id,
             sim_time_ns=frame.sim_time_ns,
@@ -207,6 +222,14 @@ class VisionPerceptionService:
             self._deterministic_v3 = DeterministicVision(lut_path=str(self.config.deterministic_v3.lut_path))
         return self._deterministic_v3
 
+    @property
+    def deterministic_v3_2(self) -> Any:
+        if self._deterministic_v3_2 is None:
+            from sensing.vision.models.deterministic_v3_2 import DeterministicVision
+
+            self._deterministic_v3_2 = DeterministicVision(lut_path=str(self.config.deterministic_v3_2.lut_path))
+        return self._deterministic_v3_2
+
     def shutdown(self) -> None:
         if self._deterministic is not None:
             self._deterministic.shutdown()
@@ -232,5 +255,10 @@ class VisionPerceptionService:
             snapshot["deterministic_v3"] = {
                 "backend": "deterministic_v3",
                 "lut_path": str(self.config.deterministic_v3.lut_path),
+            }
+        if self._deterministic_v3_2 is not None:
+            snapshot["deterministic_v3_2"] = {
+                "backend": "deterministic_v3_2",
+                "lut_path": str(self.config.deterministic_v3_2.lut_path),
             }
         return snapshot
