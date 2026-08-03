@@ -60,13 +60,13 @@ GATE_MAX_OBSERVATION_DISTANCE_M = 40.0  # ignores gate observations farther than
 GATE_TARGET_CANDIDATE_MIN_OBSERVATION_COUNT = 2  # allows tentative target use before full gate-map publication.
 GATE_TARGET_CANDIDATE_MIN_POSITION_CONFIDENCE = 0.35  # rejects weak candidate targets from noisy detections.
 GATE_TARGET_CANDIDATE_MAX_AVERAGE_RESIDUAL_M = 2.5  # rejects candidate targets whose merged positions are unstable.
-GATE_TARGET_CANDIDATE_MAX_DISTANCE_M = 40.0  # ignores tentative target candidates too far from the vehicle.
+GATE_TARGET_CANDIDATE_MAX_DISTANCE_M = 45.0  # ignores tentative target candidates too far from the vehicle.
 
 # Path planning.
 PLANNING_MODE = "test"  # chooses the PathManager strategy: test or gate.
 PATH_UPDATE_MODE = "persist_crossed"  # chooses how new plans replace the active path: original, projected, persist_crossed, or splice.
 PATH_UPDATE_OBSERVATION_INTERVAL = 50  # updates the planned path after this many processed vision observations; 1 updates every observation.
-GATE_PASSED_DISTANCE_M = 1.5  # treats gates closer than this as already passed for planning purposes.
+GATE_PASSED_DISTANCE_M = 1.7  # treats gates closer than this as already passed for planning purposes.
 PATH_CROSSED_GATE_PERSIST_DISTANCE_M = 15.0  # keeps a crossed gate as the path start anchor while the drone is near it.
 PATH_CROSSED_GATE_CURVATURE_PRESERVE_M = 3.0  # preserves this much active-path curvature after a persisted crossed gate.
 SPLINE_CORNER_TIGHTNESS = 0.03  # controls how tightly generated splines follow corner anchor points.
@@ -88,9 +88,9 @@ FAILSAFE_DISTANCE = 10  # is the maximum allowed cross-track path error before e
 ALLOW_FLIGHT = True  # enables sending flight commands when the system mode allows it.
 
 # Attitude inner-loop response.
-ATTITUDE_ERROR_QUATERNION_ROLL_SCALE = 1.7  # Test-only sim command boost; increase to bank faster when sending quaternion error targets.
-ATTITUDE_ERROR_QUATERNION_PITCH_SCALE = 1.7  # Test-only sim command boost for pitch error quaternion vector component.
-ATTITUDE_ERROR_QUATERNION_YAW_SCALE = 1.7  # Test-only sim command boost for yaw error quaternion vector component.
+ATTITUDE_ERROR_QUATERNION_ROLL_SCALE = 1.65  # Test-only sim command boost; increase to bank faster when sending quaternion error targets.
+ATTITUDE_ERROR_QUATERNION_PITCH_SCALE = 1.65  # Test-only sim command boost for pitch error quaternion vector component.
+ATTITUDE_ERROR_QUATERNION_YAW_SCALE = 1.65  # Test-only sim command boost for yaw error quaternion vector component.
 ATTITUDE_ROLL_GAIN = 1.5  # Roll attitude P gain; increase for faster banking, decrease if roll oscillates.
 ATTITUDE_PITCH_GAIN = 1.5  # Pitch attitude P gain; increase for faster pitch response, decrease if pitch oscillates.
 ATTITUDE_YAW_GAIN = 1.5  # Yaw attitude P gain; increase for faster heading alignment, decrease if yaw hunts.
@@ -135,7 +135,7 @@ GEOMETRIC_CURVATURE_SPEED_RAMP = 0.1  # Curvature softening ramp for speed reduc
 GEOMETRIC_CROSS_TRACK_SPEED_DERATE_START_M = 0.5  # Cross-track error where speed derating starts; raise to ignore small tracking errors.
 GEOMETRIC_CROSS_TRACK_SPEED_DERATE_FULL_M = 2.0  # Cross-track error where derating reaches full strength; lower to slow harder sooner.
 GEOMETRIC_CROSS_TRACK_SPEED_DERATE_MIN_SCALE = 0.7  # Minimum speed scale at full derate; lower to slow more while far off path.
-GEOMETRIC_LAUNCH_SPEED_RAMP_S = 0.5  # Seconds to ramp path-following speed from zero after takeoff; increase to soften launch.
+GEOMETRIC_LAUNCH_SPEED_RAMP_S = 1.7  # Seconds to ramp path-following speed from zero after takeoff; increase to soften launch.
 
 # Curvature turn feed-forward.
 GEOMETRIC_CURVATURE_FEEDFORWARD_GAIN = 0.7  # Turn feed-forward gain; increase to bank into turns earlier, decrease if it over-turns.
@@ -151,26 +151,57 @@ GEOMETRIC_MAX_TILT_DEG = 90  # Desired tilt cap; increase for more aggressive ba
 GEOMETRIC_TILT_THRUST_ALIGNMENT_MIN = 0.0 # Minimum thrust scale while actual tilt catches desired tilt; raise to preserve thrust, lower to suppress climb-before-bank.
 
 # Gate-aware acceleration controller.
-AUTIPILOT_MAX_SPEED_MPS = 9  # Straight segment target speed cap for discrete-gate guidance.
-AUTIPILOT_MIN_SPEED_MPS = 2.0  # Minimum target speed retained when curvature scheduling slows for turns.
-AUTIPILOT_MAX_LATERAL_ACCELERATION_MPS2 = 18.0  # Lateral acceleration budget used for gate-to-gate speed scheduling.
-AUTIPILOT_SPEED_GAIN = 1.2  # Along-aim speed P gain.
-AUTIPILOT_DIRECTION_GAIN = 1.2  # Velocity-direction alignment P gain.
-AUTIPILOT_DIRECTION_DAMPING = 0.4  # Velocity-direction damping gain on measured acceleration.
-AUTIPILOT_LATERAL_POSITION_GAIN = 1.5  # Light cross-track P gain relative to the current gate aim line.
-AUTIPILOT_LATERAL_DAMPING = 2.2  # Cross-track velocity damping gain.
-AUTIPILOT_VERTICAL_POSITION_GAIN = 3.2  # Target-gate center vertical P gain using NED sign convention.
-AUTIPILOT_VERTICAL_DAMPING = 2.0  # Target-gate center vertical velocity damping gain.
-AUTIPILOT_LOOKAHEAD_NEAR_M = 0.5  # Distance where gate-to-next-gate aim blending reaches full look-ahead.
-AUTIPILOT_LOOKAHEAD_FAR_M = GATE_PASSED_DISTANCE_M  # Distance where gate-to-next-gate aim blending begins.
-AUTIPILOT_APPROACH_GAIN_MIN_SCALE = 1.0  # Minimum lateral gain scale near gate crossing.
-AUTIPILOT_POST_CROSS_TURN_SCALE = 0.15  # Turn-severity multiplier for post-crossing lateral gain recovery.
-AUTIPILOT_POST_CROSS_RAMP_DISTANCE_M = 7.0  # Distance after a crossed gate used to ramp corner setup gain.
-AUTIPILOT_LAUNCH_SPEED_RAMP_S = GEOMETRIC_LAUNCH_SPEED_RAMP_S  # Seconds to ramp gate-aware speed from zero after takeoff.
-AUTIPILOT_MAX_SPECIFIC_THRUST_MPS2 = 9.80665 / GEOMETRIC_HOVER_THRUST  # Specific thrust represented by normalized thrust 1.0.
-AUTIPILOT_MIN_NORMALIZED_THRUST = 0.05  # Lower normalized thrust clamp.
-AUTIPILOT_MAX_NORMALIZED_THRUST = 0.95  # Upper normalized thrust clamp.
-AUTIPILOT_MAX_COMMANDED_ACCELERATION_MPS2 = 20.0  # Total desired acceleration magnitude cap.
+
+# Speed limits and turn-speed shaping.
+AUTIPILOT_MAX_SPEED_MPS = 25  # Straight speed cap; raise for faster straights, lower if braking into turns is too abrupt.
+AUTIPILOT_MIN_SPEED_MPS = 2.0  # Minimum curvature-limited speed; raise to avoid crawling, lower to permit very slow tight turns.
+AUTIPILOT_MAX_LATERAL_ACCELERATION_MPS2 = 36.0  # Default turn-speed accel budget; raise to carry more speed, lower to slow earlier.
+AUTIPILOT_MEDIUM_TURN_ANGLE_DEG = 40.0  # Angle where medium-turn speed shaping starts; lower to affect gentler turns sooner.
+AUTIPILOT_TIGHT_TURN_ANGLE_DEG = 95.0  # Angle where tight-turn speed shaping is full; lower to treat more turns as tight.
+AUTIPILOT_MEDIUM_TURN_LATERAL_ACCELERATION_MPS2 = 24.0  # Medium-turn speed budget; raise to fly through medium turns faster, lower to slow them more.
+AUTIPILOT_TIGHT_TURN_LATERAL_ACCELERATION_MPS2 = 15.0  # Tight-turn speed budget; raise to carry speed through sharp turns, lower to stay tighter/slower.
+
+# Speed control near gates.
+AUTIPILOT_SPEED_GAIN = 0.7  # Along-aim speed P gain; raise for harder accel/braking, lower to reduce pitch-up/pitch-down snaps.
+AUTIPILOT_NEAR_GATE_SPEED_GAIN_NEAR_M = 1.0  # Distance where speed gain reaches minimum; raise to soften speed control earlier.
+AUTIPILOT_NEAR_GATE_SPEED_GAIN_FAR_M = 5.0  # Distance where speed gain starts reducing; raise to begin pitch/brake suppression farther out.
+AUTIPILOT_NEAR_GATE_SPEED_GAIN_MIN_SCALE = 1.0  # Minimum speed-gain multiplier near gates; lower to reduce pitch from accel/braking more.
+AUTIPILOT_NEAR_GATE_SPEED_GAIN_RAMP_S = 0.5  # Time to slew speed-gain scale up/down; raise for smoother changes, lower for faster response.
+
+# Direction, lateral, and vertical gains.
+AUTIPILOT_DIRECTION_GAIN = 1.5  # Velocity alignment P gain; raise to point velocity toward aim faster, lower if lateral commands are twitchy.
+AUTIPILOT_DIRECTION_DAMPING = 0.6  # Measured lateral-accel damping; raise to resist oscillation, lower if response feels sluggish.
+AUTIPILOT_LATERAL_POSITION_GAIN = 1.7  # Gate-line position correction; raise to pull harder to the aim line, lower to allow more drift/fly-through.
+AUTIPILOT_LATERAL_DAMPING = 2.1  # Lateral velocity damping; raise to kill sideways drift sooner, lower if it over-corrects near gates.
+AUTIPILOT_VERTICAL_POSITION_GAIN = 2.6  # Gate altitude P gain; raise to hit gate height harder, lower to reduce pop-up/drop-through behavior.
+AUTIPILOT_VERTICAL_DAMPING = 1.8  # Vertical velocity damping; raise to suppress climb/descent rate, lower if altitude response is too lazy.
+
+# Next-gate lookahead and fly-through behavior.
+AUTIPILOT_LOOKAHEAD_NEAR_M = 0.6  # Distance where next-gate lookahead reaches full blend; raise to delay full turn-in closer to gate.
+AUTIPILOT_LOOKAHEAD_FAR_M = 2.6  # Distance where next-gate lookahead begins; raise to start turning earlier, lower to stay aimed at current gate longer.
+AUTIPILOT_FLY_THROUGH_ENABLED = True  # Temporarily disables fly-through lookahead scaling; set True to restore this group.
+AUTIPILOT_FLY_THROUGH_TURN_ANGLE_START_DEG = 70.0  # Turn angle where long-exit fly-through starts; lower to enable it on milder turns.
+AUTIPILOT_FLY_THROUGH_TURN_ANGLE_FULL_DEG = 120.0  # Turn angle for maximum fly-through; lower for stronger effect on less severe turns.
+AUTIPILOT_FLY_THROUGH_NEXT_GATE_DISTANCE_START_M = 12.0  # Next-gate distance where fly-through starts; lower to enable it on shorter exits.
+AUTIPILOT_FLY_THROUGH_NEXT_GATE_DISTANCE_FULL_M = 30.0  # Next-gate distance for maximum fly-through; lower to reach full effect sooner.
+AUTIPILOT_FLY_THROUGH_LOOKAHEAD_MIN_SCALE = 0.25  # Minimum next-gate lookahead scale; lower to fly straighter through gates, raise for earlier turn-in.
+
+# Gate crossing and post-cross recovery.
+AUTIPILOT_GATE_CROSS_VELOCITY_DAMPING = 2.0  # Near-gate cross-velocity cancel gain; raise to stop lateral gate drift, lower if it spikes a_des.
+AUTIPILOT_GATE_CROSS_VELOCITY_CANCEL_NEAR_M = 2.0  # Distance for full cross-velocity cancel; raise to apply full damping earlier.
+AUTIPILOT_GATE_CROSS_VELOCITY_CANCEL_FAR_M = 8.0  # Distance where cross-velocity cancel starts; raise to start drift cancellation earlier.
+AUTIPILOT_APPROACH_GAIN_MIN_SCALE = 0.8  # Minimum lateral gain near crossing; lower to relax through gates, raise to hold the aim line.
+AUTIPILOT_POST_CROSS_TURN_SCALE = 0.12  # Post-cross turn gain boost; raise to turn harder after crossing, lower to soften gate-exit snaps.
+AUTIPILOT_POST_CROSS_RAMP_DISTANCE_M = 8.0  # Distance to ramp post-cross gain; raise for slower recovery, lower for faster turn commitment.
+
+# Launch, thrust, and command limiting.
+AUTIPILOT_LAUNCH_SPEED_RAMP_S = 0.25  # Launch speed ramp time; raise to soften launch, lower to reach speed sooner.
+AUTIPILOT_MAX_SPECIFIC_THRUST_MPS2 = 37.090204236006045  # Thrust scaling reference; adjust only when hover thrust calibration changes.
+AUTIPILOT_MIN_NORMALIZED_THRUST = 0.05  # Lower thrust clamp; raise to prevent low-thrust drops, lower to allow stronger unloading.
+AUTIPILOT_MAX_NORMALIZED_THRUST = 0.95  # Upper thrust clamp; raise for more authority, lower to cap climb/accel spikes.
+AUTIPILOT_MAX_COMMANDED_ACCELERATION_MPS2 = 28.0  # Total a_des magnitude cap; lower to soften all commands, raise for more aggressive control.
+AUTIPILOT_GATE_SWITCH_ACCELERATION_RAMP_S = 0.35  # Gate-switch a_des blend time; raise to soften target changes, lower for faster response.
+AUTIPILOT_MAX_COMMANDED_JERK_MPS3 = 40.0  # Desired-accel slew cap; lower to smooth command jumps, raise for sharper response.
 
 # Output and recording.
 CREATE_VIDEO = False  # enables post-run MP4 generation from logged visual outputs.
@@ -457,26 +488,71 @@ def initialize() -> tuple[
 
     autipilot = AutiPilot(
         AutiPilotGains(
+            # Speed limits and turn-speed shaping.
             v_max_mps=AUTIPILOT_MAX_SPEED_MPS,
             v_min_mps=AUTIPILOT_MIN_SPEED_MPS,
             a_lat_max_mps2=AUTIPILOT_MAX_LATERAL_ACCELERATION_MPS2,
+            medium_turn_angle_deg=AUTIPILOT_MEDIUM_TURN_ANGLE_DEG,
+            tight_turn_angle_deg=AUTIPILOT_TIGHT_TURN_ANGLE_DEG,
+            medium_turn_a_lat_mps2=AUTIPILOT_MEDIUM_TURN_LATERAL_ACCELERATION_MPS2,
+            tight_turn_a_lat_mps2=AUTIPILOT_TIGHT_TURN_LATERAL_ACCELERATION_MPS2,
+
+            # Speed control near gates.
             kp_speed=AUTIPILOT_SPEED_GAIN,
+            near_gate_speed_gain_near_m=AUTIPILOT_NEAR_GATE_SPEED_GAIN_NEAR_M,
+            near_gate_speed_gain_far_m=AUTIPILOT_NEAR_GATE_SPEED_GAIN_FAR_M,
+            near_gate_speed_gain_min_scale=AUTIPILOT_NEAR_GATE_SPEED_GAIN_MIN_SCALE,
+            near_gate_speed_gain_ramp_s=AUTIPILOT_NEAR_GATE_SPEED_GAIN_RAMP_S,
+
+            # Direction, lateral, and vertical gains.
             kp_dir=AUTIPILOT_DIRECTION_GAIN,
             kd_dir=AUTIPILOT_DIRECTION_DAMPING,
             kp_lat=AUTIPILOT_LATERAL_POSITION_GAIN,
             kd_lat=AUTIPILOT_LATERAL_DAMPING,
             kp_z=AUTIPILOT_VERTICAL_POSITION_GAIN,
             kd_z=AUTIPILOT_VERTICAL_DAMPING,
+
+            # Next-gate lookahead and fly-through behavior.
             lookahead_near_m=AUTIPILOT_LOOKAHEAD_NEAR_M,
             lookahead_far_m=AUTIPILOT_LOOKAHEAD_FAR_M,
+            fly_through_turn_angle_start_deg=(
+                AUTIPILOT_FLY_THROUGH_TURN_ANGLE_START_DEG
+            ),
+            fly_through_turn_angle_full_deg=(
+                AUTIPILOT_FLY_THROUGH_TURN_ANGLE_FULL_DEG
+            ),
+            fly_through_next_gate_distance_start_m=(
+                AUTIPILOT_FLY_THROUGH_NEXT_GATE_DISTANCE_START_M
+            ),
+            fly_through_next_gate_distance_full_m=(
+                AUTIPILOT_FLY_THROUGH_NEXT_GATE_DISTANCE_FULL_M
+            ),
+            fly_through_lookahead_min_scale=(
+                AUTIPILOT_FLY_THROUGH_LOOKAHEAD_MIN_SCALE
+                if AUTIPILOT_FLY_THROUGH_ENABLED
+                else 1.0
+            ),
+            gate_cross_velocity_damping=AUTIPILOT_GATE_CROSS_VELOCITY_DAMPING,
+            gate_cross_velocity_cancel_near_m=(
+                AUTIPILOT_GATE_CROSS_VELOCITY_CANCEL_NEAR_M
+            ),
+            gate_cross_velocity_cancel_far_m=(
+                AUTIPILOT_GATE_CROSS_VELOCITY_CANCEL_FAR_M
+            ),
+
+            # Gate crossing and post-cross recovery.
             approach_gain_min_scale=AUTIPILOT_APPROACH_GAIN_MIN_SCALE,
             post_cross_turn_scale=AUTIPILOT_POST_CROSS_TURN_SCALE,
             post_cross_ramp_distance_m=AUTIPILOT_POST_CROSS_RAMP_DISTANCE_M,
+
+            # Launch, thrust, and command limiting.
             launch_speed_ramp_s=AUTIPILOT_LAUNCH_SPEED_RAMP_S,
             max_specific_thrust_mps2=AUTIPILOT_MAX_SPECIFIC_THRUST_MPS2,
             min_normalized_thrust=AUTIPILOT_MIN_NORMALIZED_THRUST,
             max_normalized_thrust=AUTIPILOT_MAX_NORMALIZED_THRUST,
             max_commanded_acceleration_mps2=AUTIPILOT_MAX_COMMANDED_ACCELERATION_MPS2,
+            gate_switch_acceleration_ramp_s=AUTIPILOT_GATE_SWITCH_ACCELERATION_RAMP_S,
+            max_commanded_jerk_mps3=AUTIPILOT_MAX_COMMANDED_JERK_MPS3,
         )
     )
 
