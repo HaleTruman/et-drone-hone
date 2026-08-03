@@ -75,7 +75,9 @@ const map3d = {
   controls: null,
   root: null,
   animationFrame: 0,
-  labels: []
+  labels: [],
+  originNed: [0, 0, 0],
+  referenceDistance: 20
 };
 
 const els = {
@@ -1081,6 +1083,7 @@ function initMap3d() {
   map3d.controls = new OrbitControls(map3d.camera, els.map3dCanvas);
   map3d.controls.enableDamping = true;
   map3d.controls.screenSpacePanning = true;
+  configureMap3dControls();
   map3d.controls.userData = { fitted: false };
   map3d.root = new THREE.Group();
   map3d.scene.add(map3d.root);
@@ -1096,6 +1099,7 @@ function initMap3d() {
 function animateMap3d() {
   if (!map3d.initialized) return;
   map3d.animationFrame = requestAnimationFrame(animateMap3d);
+  updateMap3dControlSensitivity();
   map3d.controls.update();
   map3d.renderer.render(map3d.scene, map3d.camera);
 }
@@ -1120,6 +1124,7 @@ function renderMap3d({ resetCamera = false } = {}) {
   const drone = scene.drone || {};
   const dronePosition = point3(drone.position_local_ned_m) || [0, 0, 0];
   const droneQuaternion = quat4(drone.attitude_quaternion) || [1, 0, 0, 0];
+  map3d.originNed = dronePosition;
   const points = [dronePosition];
   addGridLayer();
   addWorldAxes();
@@ -1546,8 +1551,32 @@ function fitCameraToPoints(points, force = false) {
   map3d.camera.near = Math.max(0.01, radius / 1000);
   map3d.camera.far = Math.max(1000, radius * 120);
   map3d.camera.updateProjectionMatrix();
+  map3d.referenceDistance = Math.max(1, map3d.camera.position.distanceTo(map3d.controls.target));
+  configureMap3dControls();
   map3d.controls.userData.fitted = true;
   map3d.controls.update();
+}
+
+function configureMap3dControls() {
+  if (!map3d.controls) return;
+  map3d.controls.rotateSpeed = 0.85;
+  map3d.controls.panSpeed = 1.0;
+  map3d.controls.zoomSpeed = 0.9;
+  map3d.controls.minDistance = 1.0;
+  map3d.controls.maxDistance = 350.0;
+  if ('zoomToCursor' in map3d.controls) {
+    map3d.controls.zoomToCursor = true;
+  }
+  updateMap3dControlSensitivity();
+}
+
+function updateMap3dControlSensitivity() {
+  if (!map3d.controls || !map3d.camera) return;
+  const currentDistance = Math.max(0.001, map3d.camera.position.distanceTo(map3d.controls.target));
+  const referenceDistance = Math.max(1, map3d.referenceDistance || 20);
+  const speedScale = clamp(referenceDistance / currentDistance, 0.12, 8.0);
+  map3d.controls.panSpeed = speedScale;
+  map3d.controls.zoomSpeed = clamp(speedScale, 0.35, 3.0);
 }
 
 function clearGroup(group) {
@@ -1561,7 +1590,9 @@ function clearGroup(group) {
 }
 
 function nedToThree(point) {
-  return new THREE.Vector3(point[0], -point[2], point[1]);
+  const origin = point3(map3d.originNed) || [0, 0, 0];
+  const local = subVec3(point, origin);
+  return new THREE.Vector3(local[0], -local[2], local[1]);
 }
 
 function nedVectorToThree(vector) {
