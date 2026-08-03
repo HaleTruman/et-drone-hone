@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "dataset_id": "dataset_001",
+  "orientation_convention": {
+    "relative_orientation_euler_deg": "Gate model axes expressed in the camera frame. Yaw/pitch describe the gate forward/plane-normal direction in camera right/up/forward axes; roll is rotation of the gate up axis around that forward direction.",
+    "relative_orientation_axes_camera_frame": "Gate local forward, right, and up unit axes represented in camera right/up/forward coordinates.",
+    "relative_orientation_quat": "Quaternion equivalent of relative_orientation_euler_deg, identity when the gate forward axis points along camera forward and gate up aligns with camera up.",
+    "relative_position_axes": [
+      "right_m",
+      "up_m",
+      "forward_m"
+    ]
+  },
+  "mask_layers": {
+    "gate_mask": {
+      "available": true,
+      "encoding": "8-bit grayscale cleaned PNG; 0=background, gate pixels equal each gate custom_depth_stencil_value."
+    },
+    "obstacle_mask": {
+      "available": false,
+      "reason": "No separate obstacle segmentation capture pass is configured yet."
+    }
+  },
+  "camera": {
+    "label": "AI_Hangar_Wide_Long_Interior_Camera",
+    "intrinsics": {
+      "frame_width_px": 640,
+      "frame_height_px": 360,
+      "focal_x_px": 320.00000000000006,
+      "focal_y_px": 320.0,
+      "principal_x_px": 320.0,
+      "principal_y_px": 180.0,
+      "horizontal_fov_deg": 90.0,
+      "vertical_fov_deg": 58.71550708558255
+    },
+    "coordinate_frame": {
+      "relative_position_axes": [
+        "right",
+        "up",
+        "forward"
+      ],
+      "relative_orientation_euler_order": "yaw_deg, pitch_deg, roll_deg",
+      "relative_orientation_quat_identity": {
+        "w": 1.0,
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      }
+    }
+  }
+}
