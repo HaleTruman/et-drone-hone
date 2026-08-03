@@ -12,7 +12,7 @@ import numpy as np
 from core.schema import VisionGateObservation, VisionObservation
 from .void_ned import camera_position_ned, rotation_world_from_camera
 from .void_position import FOCAL_PX, INNER_WIDTH_M, OUTER_WIDTH_M, PRINCIPAL_PX
-SOURCE, MAX_VIEWS = "detection_v3_projective_bundle", 30
+SOURCE, MAX_VIEWS = "detection_v3_projective_bundle", 5
 MAX_MISSED_FRAMES = 15         # short occlusion bridge, not a global map
 KEYFRAME_BASELINE_M, STATIONARY_BASELINE_M = 0.10, 0.01
 MIN_BASELINE_M, MIN_TRANSVERSE_BASELINE_M, MIN_PARALLAX_DEG = 0.50, 0.15, 0.50
@@ -26,6 +26,9 @@ CURRENT_BEARING_MAX_STEP_FRACTION = 0.05
 TEMPORAL_EVIDENCE_MIN_VIEWS = 5
 TEMPORAL_EVIDENCE_SCORE_FRACTION = 1.0
 PNP_PRIOR_DEPTH_TIEBREAK_PX = 2.0
+METRIC_FAST_PATH_MIN_QUALITY = 0.20
+SLENDER_PUBLICATION_MAX_ASPECT_RATIO = 3.0
+SLENDER_PUBLICATION_MIN_CONSECUTIVE_FRAMES = 4
 _ROLES = ("upper_left", "upper_right", "lower_left", "lower_right")
 @dataclass(slots=True)
 class _View:
@@ -63,6 +66,16 @@ class _PlaneMatch:
 def _unit(vector):
     norm = float(np.linalg.norm(vector))
     return vector / norm if norm > 1e-12 else vector
+
+def _finite_solution(solution):
+    return (
+        solution is not None
+        and np.all(np.isfinite(solution.position))
+        and np.all(np.isfinite(solution.covariance))
+        and math.isfinite(float(solution.quality))
+        and math.isfinite(float(solution.rmse_px))
+    )
+
 def _ray(pixel, world_from_camera):
     u, v = pixel
     camera = np.array(((u - PRINCIPAL_PX[0]) / FOCAL_PX,
@@ -487,6 +500,8 @@ def _solve_metric_geometry(geometry, prior=None):
                          quality, groups)
 
 def _merge_current_evidence(metric, temporal):
+    metric = metric if _finite_solution(metric) else None
+    temporal = temporal if _finite_solution(temporal) else None
     if metric is None:
         return temporal
     if temporal is None:
@@ -668,6 +683,8 @@ def _independent_fusion(prior, evidence):
         float(np.clip(0.5 * (prior.quality + evidence.quality), 0.0, 1.0)), groups)
 
 def _posterior(prior, evidence):
+    prior = prior if _finite_solution(prior) else None
+    evidence = evidence if _finite_solution(evidence) else None
     if prior is None:
         return evidence
     if evidence is None:
@@ -791,23 +808,29 @@ class GatePublisher:
     def _update_state(self, state, detection, frame_key, origin, world_from_camera):
         pixels = _feature_pixels(detection.geometry)
         state.observed_frames += 1
+        prior = _reframe(state.solution, state.anchor_origin, state.anchor_rotation,
+                         origin, world_from_camera)
+        metric = _solve_metric_geometry(detection.geometry, prior)
+        use_temporal_solver = (
+            metric is None or metric.quality < METRIC_FAST_PATH_MIN_QUALITY)
         camera_features = {}
         for name, pixel in pixels.items():
             history = state.histories.setdefault(name, [])
             views = _current_views(history, _View(
                 frame_key, origin.copy(), world_from_camera.copy(), pixel.copy()))
-            solution = _solve_feature(views)
-            if solution is not None:
-                camera_features[name] = solution
+            if use_temporal_solver:
+                solution = _solve_feature(views)
+                if solution is not None:
+                    camera_features[name] = solution
         plane_view = _View(
             frame_key, origin.copy(), world_from_camera.copy(), pixels["center"].copy(),
             {name: pixel.copy() for name, pixel in pixels.items()})
         plane_views = _current_views(state.plane_history, plane_view)
-        plane_gate = _solve_plane(plane_views)
-        temporal = _fuse_gate(camera_features, plane_gate)
-        prior = _reframe(state.solution, state.anchor_origin, state.anchor_rotation,
-                         origin, world_from_camera)
-        metric = _solve_metric_geometry(detection.geometry, prior)
+        plane_gate = _solve_plane(plane_views) if use_temporal_solver else None
+        temporal = (
+            _fuse_gate(camera_features, plane_gate)
+            if use_temporal_solver else None
+        )
         evidence = _merge_current_evidence(metric, temporal)
         if evidence is not None:
             evidence = replace(evidence, views=max(
@@ -823,7 +846,15 @@ class GatePublisher:
     @staticmethod
     def _observation(state, detection, origin, world_from_camera):
         solved = state.solution
-        if solved is None:
+        if not _finite_solution(solved):
+            return None
+        axes = detection.geometry.ellipse.semi_axes_px
+        aspect_ratio = max(axes) / max(1.0, min(axes))
+        if (
+            aspect_ratio > SLENDER_PUBLICATION_MAX_ASPECT_RATIO
+            and detection.track.consecutive_frame_count
+            < SLENDER_PUBLICATION_MIN_CONSECUTIVE_FRAMES
+        ):
             return None
         camera = solved.position
         sigma = math.sqrt(max(0.0, float(np.max(np.linalg.eigvalsh(solved.covariance)))))
