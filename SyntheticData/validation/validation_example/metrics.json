@@ -1,0 +1,1111 @@
+{
+  "format_version": 1,
+  "created_utc": "2026-07-27T17:58:58.922731+00:00",
+  "run_name": "run_002",
+  "input_dir": "C:\\Users\\brend\\Projects\\UE_5\\TestProject\\ML\\reference\\test-frames",
+  "checkpoint": "C:\\Users\\brend\\Projects\\UE_5\\TestProject\\ML\\artifacts\\training-run-02\\last.pt",
+  "checkpoint_epoch": 30,
+  "score_threshold": 0.7,
+  "model_config": {
+    "architecture": "keypointrcnn_resnet50_fpn",
+    "pretrained_requested": false,
+    "pretrained_initialization": false,
+    "input_size": [
+      360,
+      640
+    ],
+    "score_threshold": 0.7,
+    "detections_per_image": 12,
+    "box_nms_threshold": 0.5,
+    "duplicate_iou_threshold": 0.25,
+    "suppress_contained_duplicates": true,
+    "duplicate_containment_area_ratio": 0.85,
+    "keypoint_order": [
+      "image_TL",
+      "image_TR",
+      "image_BL",
+      "image_BR"
+    ],
+    "yaw_period_degrees": 180
+  },
+  "timing": {
+    "note": "Measured around detect_gates_in_images for each batch; includes checkpoint/model setup performed by that helper.",
+    "total_model_seconds": 276.5752273998223,
+    "batch_timings": [
+      {
+        "start_frame": 1,
+        "end_frame": 4,
+        "frame_count": 4,
+        "elapsed_seconds": 2.0510953000048175,
+        "seconds_per_frame": 0.5127738250012044
+      },
+      {
+        "start_frame": 5,
+        "end_frame": 8,
+        "frame_count": 4,
+        "elapsed_seconds": 1.764464500010945,
+        "seconds_per_frame": 0.4411161250027362
+      },
+      {
+        "start_frame": 9,
+        "end_frame": 12,
+        "frame_count": 4,
+        "elapsed_seconds": 2.000046300003305,
+        "seconds_per_frame": 0.5000115750008263
+      },
+      {
+        "start_frame": 13,
+        "end_frame": 16,
+        "frame_count": 4,
+        "elapsed_seconds": 2.110361799946986,
+        "seconds_per_frame": 0.5275904499867465
+      },
+      {
+        "start_frame": 17,
+        "end_frame": 20,
+        "frame_count": 4,
+        "elapsed_seconds": 2.057128900079988,
+        "seconds_per_frame": 0.514282225019997
+      },
+      {
+        "start_frame": 21,
+        "end_frame": 24,
+        "frame_count": 4,
+        "elapsed_seconds": 1.894263599999249,
+        "seconds_per_frame": 0.47356589999981225
+      },
+      {
+        "start_frame": 25,
+        "end_frame": 28,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7009206999791786,
+        "seconds_per_frame": 0.42523017499479465
+      },
+      {
+        "start_frame": 29,
+        "end_frame": 32,
+        "frame_count": 4,
+        "elapsed_seconds": 1.6894353999523446,
+        "seconds_per_frame": 0.42235884998808615
+      },
+      {
+        "start_frame": 33,
+        "end_frame": 36,
+        "frame_count": 4,
+        "elapsed_seconds": 1.725520900101401,
+        "seconds_per_frame": 0.43138022502535023
+      },
+      {
+        "start_frame": 37,
+        "end_frame": 40,
+        "frame_count": 4,
+        "elapsed_seconds": 1.814519599894993,
+        "seconds_per_frame": 0.45362989997374825
+      },
+      {
+        "start_frame": 41,
+        "end_frame": 44,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8608029999304563,
+        "seconds_per_frame": 0.46520074998261407
+      },
+      {
+        "start_frame": 45,
+        "end_frame": 48,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7849591999547556,
+        "seconds_per_frame": 0.4462397999886889
+      },
+      {
+        "start_frame": 49,
+        "end_frame": 52,
+        "frame_count": 4,
+        "elapsed_seconds": 1.771506299963221,
+        "seconds_per_frame": 0.44287657499080524
+      },
+      {
+        "start_frame": 53,
+        "end_frame": 56,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7145773000083864,
+        "seconds_per_frame": 0.4286443250020966
+      },
+      {
+        "start_frame": 57,
+        "end_frame": 60,
+        "frame_count": 4,
+        "elapsed_seconds": 1.6531057000393048,
+        "seconds_per_frame": 0.4132764250098262
+      },
+      {
+        "start_frame": 61,
+        "end_frame": 64,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7483485999982804,
+        "seconds_per_frame": 0.4370871499995701
+      },
+      {
+        "start_frame": 65,
+        "end_frame": 68,
+        "frame_count": 4,
+        "elapsed_seconds": 1.808642200077884,
+        "seconds_per_frame": 0.452160550019471
+      },
+      {
+        "start_frame": 69,
+        "end_frame": 72,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8448095000348985,
+        "seconds_per_frame": 0.46120237500872463
+      },
+      {
+        "start_frame": 73,
+        "end_frame": 76,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8248811999801546,
+        "seconds_per_frame": 0.45622029999503866
+      },
+      {
+        "start_frame": 77,
+        "end_frame": 80,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8085258000064641,
+        "seconds_per_frame": 0.45213145000161603
+      },
+      {
+        "start_frame": 81,
+        "end_frame": 84,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7569270000094548,
+        "seconds_per_frame": 0.4392317500023637
+      },
+      {
+        "start_frame": 85,
+        "end_frame": 88,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7072565000271425,
+        "seconds_per_frame": 0.4268141250067856
+      },
+      {
+        "start_frame": 89,
+        "end_frame": 92,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7690965000074357,
+        "seconds_per_frame": 0.4422741250018589
+      },
+      {
+        "start_frame": 93,
+        "end_frame": 96,
+        "frame_count": 4,
+        "elapsed_seconds": 1.786416899994947,
+        "seconds_per_frame": 0.44660422499873675
+      },
+      {
+        "start_frame": 97,
+        "end_frame": 100,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7707984000444412,
+        "seconds_per_frame": 0.4426996000111103
+      },
+      {
+        "start_frame": 101,
+        "end_frame": 104,
+        "frame_count": 4,
+        "elapsed_seconds": 1.775622299988754,
+        "seconds_per_frame": 0.4439055749971885
+      },
+      {
+        "start_frame": 105,
+        "end_frame": 108,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7068198999622837,
+        "seconds_per_frame": 0.4267049749905709
+      },
+      {
+        "start_frame": 109,
+        "end_frame": 112,
+        "frame_count": 4,
+        "elapsed_seconds": 1.791862600017339,
+        "seconds_per_frame": 0.44796565000433475
+      },
+      {
+        "start_frame": 113,
+        "end_frame": 116,
+        "frame_count": 4,
+        "elapsed_seconds": 1.6066893000388518,
+        "seconds_per_frame": 0.40167232500971295
+      },
+      {
+        "start_frame": 117,
+        "end_frame": 120,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7301392001099885,
+        "seconds_per_frame": 0.4325348000274971
+      },
+      {
+        "start_frame": 121,
+        "end_frame": 124,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8469647999154404,
+        "seconds_per_frame": 0.4617411999788601
+      },
+      {
+        "start_frame": 125,
+        "end_frame": 128,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7886840000282973,
+        "seconds_per_frame": 0.4471710000070743
+      },
+      {
+        "start_frame": 129,
+        "end_frame": 132,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8301489000441507,
+        "seconds_per_frame": 0.45753722501103766
+      },
+      {
+        "start_frame": 133,
+        "end_frame": 136,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8571686999639496,
+        "seconds_per_frame": 0.4642921749909874
+      },
+      {
+        "start_frame": 137,
+        "end_frame": 140,
+        "frame_count": 4,
+        "elapsed_seconds": 1.983608299982734,
+        "seconds_per_frame": 0.4959020749956835
+      },
+      {
+        "start_frame": 141,
+        "end_frame": 144,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7759530000621453,
+        "seconds_per_frame": 0.4439882500155363
+      },
+      {
+        "start_frame": 145,
+        "end_frame": 148,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7352038000244647,
+        "seconds_per_frame": 0.4338009500061162
+      },
+      {
+        "start_frame": 149,
+        "end_frame": 152,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7729088999330997,
+        "seconds_per_frame": 0.44322722498327494
+      },
+      {
+        "start_frame": 153,
+        "end_frame": 156,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8858501999638975,
+        "seconds_per_frame": 0.47146254999097437
+      },
+      {
+        "start_frame": 157,
+        "end_frame": 160,
+        "frame_count": 4,
+        "elapsed_seconds": 1.877224399941042,
+        "seconds_per_frame": 0.4693060999852605
+      },
+      {
+        "start_frame": 161,
+        "end_frame": 164,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8670505000045523,
+        "seconds_per_frame": 0.4667626250011381
+      },
+      {
+        "start_frame": 165,
+        "end_frame": 168,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8600885999621823,
+        "seconds_per_frame": 0.4650221499905456
+      },
+      {
+        "start_frame": 169,
+        "end_frame": 172,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8439405999379233,
+        "seconds_per_frame": 0.4609851499844808
+      },
+      {
+        "start_frame": 173,
+        "end_frame": 176,
+        "frame_count": 4,
+        "elapsed_seconds": 1.9190738999750465,
+        "seconds_per_frame": 0.47976847499376163
+      },
+      {
+        "start_frame": 177,
+        "end_frame": 180,
+        "frame_count": 4,
+        "elapsed_seconds": 1.9596286000451073,
+        "seconds_per_frame": 0.4899071500112768
+      },
+      {
+        "start_frame": 181,
+        "end_frame": 184,
+        "frame_count": 4,
+        "elapsed_seconds": 1.9921264000004157,
+        "seconds_per_frame": 0.49803160000010394
+      },
+      {
+        "start_frame": 185,
+        "end_frame": 188,
+        "frame_count": 4,
+        "elapsed_seconds": 1.936299299937673,
+        "seconds_per_frame": 0.48407482498441823
+      },
+      {
+        "start_frame": 189,
+        "end_frame": 192,
+        "frame_count": 4,
+        "elapsed_seconds": 1.844886100036092,
+        "seconds_per_frame": 0.461221525009023
+      },
+      {
+        "start_frame": 193,
+        "end_frame": 196,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8208398000570014,
+        "seconds_per_frame": 0.45520995001425035
+      },
+      {
+        "start_frame": 197,
+        "end_frame": 200,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8629785999655724,
+        "seconds_per_frame": 0.4657446499913931
+      },
+      {
+        "start_frame": 201,
+        "end_frame": 204,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7672343000303954,
+        "seconds_per_frame": 0.44180857500759885
+      },
+      {
+        "start_frame": 205,
+        "end_frame": 208,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8297797000268474,
+        "seconds_per_frame": 0.45744492500671186
+      },
+      {
+        "start_frame": 209,
+        "end_frame": 212,
+        "frame_count": 4,
+        "elapsed_seconds": 1.893948399927467,
+        "seconds_per_frame": 0.4734870999818668
+      },
+      {
+        "start_frame": 213,
+        "end_frame": 216,
+        "frame_count": 4,
+        "elapsed_seconds": 1.800437600002624,
+        "seconds_per_frame": 0.450109400000656
+      },
+      {
+        "start_frame": 217,
+        "end_frame": 220,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8165238000219688,
+        "seconds_per_frame": 0.4541309500054922
+      },
+      {
+        "start_frame": 221,
+        "end_frame": 224,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8967277000192553,
+        "seconds_per_frame": 0.4741819250048138
+      },
+      {
+        "start_frame": 225,
+        "end_frame": 228,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8040052999276668,
+        "seconds_per_frame": 0.4510013249819167
+      },
+      {
+        "start_frame": 229,
+        "end_frame": 232,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8470499999821186,
+        "seconds_per_frame": 0.46176249999552965
+      },
+      {
+        "start_frame": 233,
+        "end_frame": 236,
+        "frame_count": 4,
+        "elapsed_seconds": 1.717888299957849,
+        "seconds_per_frame": 0.42947207498946227
+      },
+      {
+        "start_frame": 237,
+        "end_frame": 240,
+        "frame_count": 4,
+        "elapsed_seconds": 1.711127399932593,
+        "seconds_per_frame": 0.4277818499831483
+      },
+      {
+        "start_frame": 241,
+        "end_frame": 244,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7757437000982463,
+        "seconds_per_frame": 0.4439359250245616
+      },
+      {
+        "start_frame": 245,
+        "end_frame": 248,
+        "frame_count": 4,
+        "elapsed_seconds": 1.816789099946618,
+        "seconds_per_frame": 0.4541972749866545
+      },
+      {
+        "start_frame": 249,
+        "end_frame": 252,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8457757000578567,
+        "seconds_per_frame": 0.4614439250144642
+      },
+      {
+        "start_frame": 253,
+        "end_frame": 256,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8356294999830425,
+        "seconds_per_frame": 0.4589073749957606
+      },
+      {
+        "start_frame": 257,
+        "end_frame": 260,
+        "frame_count": 4,
+        "elapsed_seconds": 1.841106200008653,
+        "seconds_per_frame": 0.4602765500021633
+      },
+      {
+        "start_frame": 261,
+        "end_frame": 264,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7463637000182644,
+        "seconds_per_frame": 0.4365909250045661
+      },
+      {
+        "start_frame": 265,
+        "end_frame": 268,
+        "frame_count": 4,
+        "elapsed_seconds": 1.778371199965477,
+        "seconds_per_frame": 0.44459279999136925
+      },
+      {
+        "start_frame": 269,
+        "end_frame": 272,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7499462999403477,
+        "seconds_per_frame": 0.4374865749850869
+      },
+      {
+        "start_frame": 273,
+        "end_frame": 276,
+        "frame_count": 4,
+        "elapsed_seconds": 1.812988099991344,
+        "seconds_per_frame": 0.453247024997836
+      },
+      {
+        "start_frame": 277,
+        "end_frame": 280,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8649633000604808,
+        "seconds_per_frame": 0.4662408250151202
+      },
+      {
+        "start_frame": 281,
+        "end_frame": 284,
+        "frame_count": 4,
+        "elapsed_seconds": 1.87158969999291,
+        "seconds_per_frame": 0.4678974249982275
+      },
+      {
+        "start_frame": 285,
+        "end_frame": 288,
+        "frame_count": 4,
+        "elapsed_seconds": 1.9955581000540406,
+        "seconds_per_frame": 0.49888952501351014
+      },
+      {
+        "start_frame": 289,
+        "end_frame": 292,
+        "frame_count": 4,
+        "elapsed_seconds": 2.07366130000446,
+        "seconds_per_frame": 0.518415325001115
+      },
+      {
+        "start_frame": 293,
+        "end_frame": 296,
+        "frame_count": 4,
+        "elapsed_seconds": 2.0230215000919998,
+        "seconds_per_frame": 0.5057553750229999
+      },
+      {
+        "start_frame": 297,
+        "end_frame": 300,
+        "frame_count": 4,
+        "elapsed_seconds": 1.917892299941741,
+        "seconds_per_frame": 0.47947307498543523
+      },
+      {
+        "start_frame": 301,
+        "end_frame": 304,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8270789000671357,
+        "seconds_per_frame": 0.4567697250167839
+      },
+      {
+        "start_frame": 305,
+        "end_frame": 308,
+        "frame_count": 4,
+        "elapsed_seconds": 1.959591899998486,
+        "seconds_per_frame": 0.4898979749996215
+      },
+      {
+        "start_frame": 309,
+        "end_frame": 312,
+        "frame_count": 4,
+        "elapsed_seconds": 1.890076500014402,
+        "seconds_per_frame": 0.4725191250036005
+      },
+      {
+        "start_frame": 313,
+        "end_frame": 316,
+        "frame_count": 4,
+        "elapsed_seconds": 1.877916399971582,
+        "seconds_per_frame": 0.4694790999928955
+      },
+      {
+        "start_frame": 317,
+        "end_frame": 320,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7800030000507832,
+        "seconds_per_frame": 0.4450007500126958
+      },
+      {
+        "start_frame": 321,
+        "end_frame": 324,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7176357000134885,
+        "seconds_per_frame": 0.42940892500337213
+      },
+      {
+        "start_frame": 325,
+        "end_frame": 328,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8282971000298858,
+        "seconds_per_frame": 0.45707427500747144
+      },
+      {
+        "start_frame": 329,
+        "end_frame": 332,
+        "frame_count": 4,
+        "elapsed_seconds": 1.9094015000155196,
+        "seconds_per_frame": 0.4773503750038799
+      },
+      {
+        "start_frame": 333,
+        "end_frame": 336,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7765388000989333,
+        "seconds_per_frame": 0.4441347000247333
+      },
+      {
+        "start_frame": 337,
+        "end_frame": 340,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8376246999250725,
+        "seconds_per_frame": 0.4594061749812681
+      },
+      {
+        "start_frame": 341,
+        "end_frame": 344,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7763886000029743,
+        "seconds_per_frame": 0.44409715000074357
+      },
+      {
+        "start_frame": 345,
+        "end_frame": 348,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8120492999441922,
+        "seconds_per_frame": 0.45301232498604804
+      },
+      {
+        "start_frame": 349,
+        "end_frame": 352,
+        "frame_count": 4,
+        "elapsed_seconds": 1.902980100014247,
+        "seconds_per_frame": 0.47574502500356175
+      },
+      {
+        "start_frame": 353,
+        "end_frame": 356,
+        "frame_count": 4,
+        "elapsed_seconds": 1.972851900034584,
+        "seconds_per_frame": 0.493212975008646
+      },
+      {
+        "start_frame": 357,
+        "end_frame": 360,
+        "frame_count": 4,
+        "elapsed_seconds": 1.874160600011237,
+        "seconds_per_frame": 0.46854015000280924
+      },
+      {
+        "start_frame": 361,
+        "end_frame": 364,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8025448000989854,
+        "seconds_per_frame": 0.45063620002474636
+      },
+      {
+        "start_frame": 365,
+        "end_frame": 368,
+        "frame_count": 4,
+        "elapsed_seconds": 1.859134699916467,
+        "seconds_per_frame": 0.46478367497911677
+      },
+      {
+        "start_frame": 369,
+        "end_frame": 372,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8370419999118894,
+        "seconds_per_frame": 0.45926049997797236
+      },
+      {
+        "start_frame": 373,
+        "end_frame": 376,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8169639999978244,
+        "seconds_per_frame": 0.4542409999994561
+      },
+      {
+        "start_frame": 377,
+        "end_frame": 380,
+        "frame_count": 4,
+        "elapsed_seconds": 1.687536699930206,
+        "seconds_per_frame": 0.4218841749825515
+      },
+      {
+        "start_frame": 381,
+        "end_frame": 384,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7759425999829546,
+        "seconds_per_frame": 0.44398564999573864
+      },
+      {
+        "start_frame": 385,
+        "end_frame": 388,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8162201999220997,
+        "seconds_per_frame": 0.4540550499805249
+      },
+      {
+        "start_frame": 389,
+        "end_frame": 392,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7959281000075862,
+        "seconds_per_frame": 0.44898202500189655
+      },
+      {
+        "start_frame": 393,
+        "end_frame": 396,
+        "frame_count": 4,
+        "elapsed_seconds": 1.666901099961251,
+        "seconds_per_frame": 0.41672527499031276
+      },
+      {
+        "start_frame": 397,
+        "end_frame": 400,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7408313000341877,
+        "seconds_per_frame": 0.43520782500854693
+      },
+      {
+        "start_frame": 401,
+        "end_frame": 404,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7307511999970302,
+        "seconds_per_frame": 0.43268779999925755
+      },
+      {
+        "start_frame": 405,
+        "end_frame": 408,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8310284999897704,
+        "seconds_per_frame": 0.4577571249974426
+      },
+      {
+        "start_frame": 409,
+        "end_frame": 412,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7369684000732377,
+        "seconds_per_frame": 0.43424210001830943
+      },
+      {
+        "start_frame": 413,
+        "end_frame": 416,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8506520999362692,
+        "seconds_per_frame": 0.4626630249840673
+      },
+      {
+        "start_frame": 417,
+        "end_frame": 420,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7723692998988554,
+        "seconds_per_frame": 0.44309232497471385
+      },
+      {
+        "start_frame": 421,
+        "end_frame": 424,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7909625000320375,
+        "seconds_per_frame": 0.4477406250080094
+      },
+      {
+        "start_frame": 425,
+        "end_frame": 428,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8229395999806002,
+        "seconds_per_frame": 0.45573489999515004
+      },
+      {
+        "start_frame": 429,
+        "end_frame": 432,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8315803000004962,
+        "seconds_per_frame": 0.45789507500012405
+      },
+      {
+        "start_frame": 433,
+        "end_frame": 436,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7904563000192866,
+        "seconds_per_frame": 0.44761407500482164
+      },
+      {
+        "start_frame": 437,
+        "end_frame": 440,
+        "frame_count": 4,
+        "elapsed_seconds": 1.823515300056897,
+        "seconds_per_frame": 0.4558788250142243
+      },
+      {
+        "start_frame": 441,
+        "end_frame": 444,
+        "frame_count": 4,
+        "elapsed_seconds": 1.803135299938731,
+        "seconds_per_frame": 0.4507838249846827
+      },
+      {
+        "start_frame": 445,
+        "end_frame": 448,
+        "frame_count": 4,
+        "elapsed_seconds": 1.740344600053504,
+        "seconds_per_frame": 0.435086150013376
+      },
+      {
+        "start_frame": 449,
+        "end_frame": 452,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7506673999596387,
+        "seconds_per_frame": 0.4376668499899097
+      },
+      {
+        "start_frame": 453,
+        "end_frame": 456,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7778549999929965,
+        "seconds_per_frame": 0.4444637499982491
+      },
+      {
+        "start_frame": 457,
+        "end_frame": 460,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7251465000445023,
+        "seconds_per_frame": 0.4312866250111256
+      },
+      {
+        "start_frame": 461,
+        "end_frame": 464,
+        "frame_count": 4,
+        "elapsed_seconds": 1.737183199962601,
+        "seconds_per_frame": 0.43429579999065027
+      },
+      {
+        "start_frame": 465,
+        "end_frame": 468,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7710972999921069,
+        "seconds_per_frame": 0.4427743249980267
+      },
+      {
+        "start_frame": 469,
+        "end_frame": 472,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7154471999965608,
+        "seconds_per_frame": 0.4288617999991402
+      },
+      {
+        "start_frame": 473,
+        "end_frame": 476,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7161647999892011,
+        "seconds_per_frame": 0.4290411999973003
+      },
+      {
+        "start_frame": 477,
+        "end_frame": 480,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8280998000409454,
+        "seconds_per_frame": 0.45702495001023635
+      },
+      {
+        "start_frame": 481,
+        "end_frame": 484,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7392097000265494,
+        "seconds_per_frame": 0.43480242500663735
+      },
+      {
+        "start_frame": 485,
+        "end_frame": 488,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8616131999297068,
+        "seconds_per_frame": 0.4654032999824267
+      },
+      {
+        "start_frame": 489,
+        "end_frame": 492,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8085182999493554,
+        "seconds_per_frame": 0.45212957498733886
+      },
+      {
+        "start_frame": 493,
+        "end_frame": 496,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7879819000372663,
+        "seconds_per_frame": 0.4469954750093166
+      },
+      {
+        "start_frame": 497,
+        "end_frame": 500,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8417099999496713,
+        "seconds_per_frame": 0.46042749998741783
+      },
+      {
+        "start_frame": 501,
+        "end_frame": 504,
+        "frame_count": 4,
+        "elapsed_seconds": 1.910628099925816,
+        "seconds_per_frame": 0.477657024981454
+      },
+      {
+        "start_frame": 505,
+        "end_frame": 508,
+        "frame_count": 4,
+        "elapsed_seconds": 1.982296200003475,
+        "seconds_per_frame": 0.49557405000086874
+      },
+      {
+        "start_frame": 509,
+        "end_frame": 512,
+        "frame_count": 4,
+        "elapsed_seconds": 1.7789454000303522,
+        "seconds_per_frame": 0.44473635000758804
+      },
+      {
+        "start_frame": 513,
+        "end_frame": 516,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8009373999666423,
+        "seconds_per_frame": 0.45023434999166057
+      },
+      {
+        "start_frame": 517,
+        "end_frame": 520,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8583496999926865,
+        "seconds_per_frame": 0.4645874249981716
+      },
+      {
+        "start_frame": 521,
+        "end_frame": 524,
+        "frame_count": 4,
+        "elapsed_seconds": 1.9121182000963017,
+        "seconds_per_frame": 0.47802955002407543
+      },
+      {
+        "start_frame": 525,
+        "end_frame": 528,
+        "frame_count": 4,
+        "elapsed_seconds": 2.0168863999424502,
+        "seconds_per_frame": 0.5042215999856126
+      },
+      {
+        "start_frame": 529,
+        "end_frame": 532,
+        "frame_count": 4,
+        "elapsed_seconds": 1.9779731000307947,
+        "seconds_per_frame": 0.4944932750076987
+      },
+      {
+        "start_frame": 533,
+        "end_frame": 536,
+        "frame_count": 4,
+        "elapsed_seconds": 2.041601200005971,
+        "seconds_per_frame": 0.5104003000014927
+      },
+      {
+        "start_frame": 537,
+        "end_frame": 540,
+        "frame_count": 4,
+        "elapsed_seconds": 1.992221700027585,
+        "seconds_per_frame": 0.49805542500689626
+      },
+      {
+        "start_frame": 541,
+        "end_frame": 544,
+        "frame_count": 4,
+        "elapsed_seconds": 2.0381165000144392,
+        "seconds_per_frame": 0.5095291250036098
+      },
+      {
+        "start_frame": 545,
+        "end_frame": 548,
+        "frame_count": 4,
+        "elapsed_seconds": 2.0141507000662386,
+        "seconds_per_frame": 0.5035376750165597
+      },
+      {
+        "start_frame": 549,
+        "end_frame": 552,
+        "frame_count": 4,
+        "elapsed_seconds": 2.0472972999559715,
+        "seconds_per_frame": 0.5118243249889929
+      },
+      {
+        "start_frame": 553,
+        "end_frame": 556,
+        "frame_count": 4,
+        "elapsed_seconds": 2.056966800009832,
+        "seconds_per_frame": 0.514241700002458
+      },
+      {
+        "start_frame": 557,
+        "end_frame": 560,
+        "frame_count": 4,
+        "elapsed_seconds": 2.017513499944471,
+        "seconds_per_frame": 0.5043783749861177
+      },
+      {
+        "start_frame": 561,
+        "end_frame": 564,
+        "frame_count": 4,
+        "elapsed_seconds": 2.0154759000288323,
+        "seconds_per_frame": 0.5038689750072081
+      },
+      {
+        "start_frame": 565,
+        "end_frame": 568,
+        "frame_count": 4,
+        "elapsed_seconds": 2.0940430000191554,
+        "seconds_per_frame": 0.5235107500047889
+      },
+      {
+        "start_frame": 569,
+        "end_frame": 572,
+        "frame_count": 4,
+        "elapsed_seconds": 2.0732448999769986,
+        "seconds_per_frame": 0.5183112249942496
+      },
+      {
+        "start_frame": 573,
+        "end_frame": 576,
+        "frame_count": 4,
+        "elapsed_seconds": 1.966207699966617,
+        "seconds_per_frame": 0.49155192499165423
+      },
+      {
+        "start_frame": 577,
+        "end_frame": 580,
+        "frame_count": 4,
+        "elapsed_seconds": 2.0090966999996454,
+        "seconds_per_frame": 0.5022741749999113
+      },
+      {
+        "start_frame": 581,
+        "end_frame": 584,
+        "frame_count": 4,
+        "elapsed_seconds": 1.9865465000038967,
+        "seconds_per_frame": 0.49663662500097416
+      },
+      {
+        "start_frame": 585,
+        "end_frame": 588,
+        "frame_count": 4,
+        "elapsed_seconds": 1.6299071999965236,
+        "seconds_per_frame": 0.4074767999991309
+      },
+      {
+        "start_frame": 589,
+        "end_frame": 592,
+        "frame_count": 4,
+        "elapsed_seconds": 1.8056940000969917,
+        "seconds_per_frame": 0.4514235000242479
+      },
+      {
+        "start_frame": 593,
+        "end_frame": 596,
+        "frame_count": 4,
+        "elapsed_seconds": 1.6604425000259653,
+        "seconds_per_frame": 0.4151106250064913
+      },
+      {
+        "start_frame": 597,
+        "end_frame": 600,
+        "frame_count": 4,
+        "elapsed_seconds": 1.6998010999523103,
+        "seconds_per_frame": 0.4249502749880776
+      },
+      {
+        "start_frame": 601,
+        "end_frame": 601,
+        "frame_count": 1,
+        "elapsed_seconds": 0.7374335000058636,
+        "seconds_per_frame": 0.7374335000058636
+      }
+    ]
+  },
+  "metrics": {
+    "frame_count": 601,
+    "predicted_gate_count": 1663,
+    "empty_frame_count": 39,
+    "detections_per_frame_mean": 2.767054908485857,
+    "detections_per_frame_min": 0,
+    "detections_per_frame_max": 9,
+    "score_mean": 0.8883964579577053,
+    "score_min": 0.7000036835670471,
+    "score_max": 0.9999856948852539,
+    "pose_solved_count": 1663,
+    "model_seconds_total": 276.5752273998223,
+    "model_seconds_per_frame_mean": 0.4601917261228325,
+    "model_milliseconds_per_frame_mean": 460.1917261228325,
+    "model_seconds_per_frame_min_batch": 0.40167232500971295,
+    "model_seconds_per_frame_max_batch": 0.7374335000058636
+  }
+}
