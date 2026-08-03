@@ -1,5 +1,5 @@
 """Pathing primitives for gate-aware planning."""
 
-from .path_manager import PathManager, PathProjection, PlannedPath
+from .path_manager import PathCarrot, PathManager, PathProjection, PlannedPath
 
-__all__ = ["PathManager", "PathProjection", "PlannedPath"]
+__all__ = ["PathCarrot", "PathManager", "PathProjection", "PlannedPath"]

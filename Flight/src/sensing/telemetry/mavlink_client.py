@@ -220,24 +220,26 @@ class MavlinkClient:
         )
 
     def send_attitude_target(self, target: dict[str, Any]) -> None:
-        self.latest_attitude_target = target
+        type_mask = (
+            mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_BODY_ROLL_RATE_IGNORE |
+            mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_BODY_PITCH_RATE_IGNORE |
+            mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_BODY_YAW_RATE_IGNORE
+        )
+        quaternion = target.get(
+            "error_quaternion_target_scaled",
+            target.get("error_quaternion_target_converted", (1.0, 0.0, 0.0, 0.0)),
+        )
+        body_rates = (0.0, 0.0, 0.0)
+        thrust = target.get("thrust", 0.0)
+        self.latest_attitude_target = {
+            **target,
+            "mavlink_type_mask": int(type_mask),
+            "mavlink_quaternion": tuple(float(value) for value in quaternion),
+            "mavlink_body_rates_rps": tuple(float(value) for value in body_rates),
+        }
         if not self.is_live:
             return
         connection = self._require_connection()
-
-        if "body_rates_rps" not in target:
-            type_mask = (
-                mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_BODY_ROLL_RATE_IGNORE	|
-                mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_BODY_PITCH_RATE_IGNORE	|
-                mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_BODY_YAW_RATE_IGNORE
-            )
-
-        else:
-            type_mask = (mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_ATTITUDE_IGNORE)
-       
-        quaternion = target.get("quaternion", (1.0, 0.0, 0.0, 0.0))
-        body_rates = target.get("body_rates_rps", (0.0, 0.0, 0.0))
-        thrust = target.get("thrust", 0.0)
 
         connection.mav.set_attitude_target_send(
             self._time_boot_ms(),

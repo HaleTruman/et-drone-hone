@@ -1,0 +1,216 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>Flight Log Review</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div id="appShell">
+    <header id="topbar">
+      <div class="brand">
+        <strong>Flight Log Review</strong>
+        <span id="runSubtitle">loading runs</span>
+      </div>
+      <select id="runSelect" aria-label="Run log"></select>
+      <div class="frameNav">
+        <button id="prevButton" type="button" title="Previous frame">Prev</button>
+        <label>
+          <span id="frameReadout">Frame -</span>
+          <input id="frameSlider" type="range" min="0" max="0" value="0" step="1">
+        </label>
+        <button id="nextButton" type="button" title="Next frame">Next</button>
+      </div>
+      <div class="topActions">
+        <button id="playButton" type="button">Play</button>
+        <button id="refreshButton" type="button">Refresh</button>
+      </div>
+    </header>
+
+    <nav id="viewTabs" class="segmented" aria-label="Viewer page">
+      <button class="viewTab active" data-view="frame" type="button">Frame</button>
+      <button class="viewTab" data-view="map3d" type="button">3D Map</button>
+      <button class="viewTab" data-view="telemetry" type="button">Telemetry</button>
+    </nav>
+
+    <main id="workspace">
+      <aside id="leftPanel" class="panel">
+        <section class="panelBlock">
+          <div class="sectionHead"><strong>Run</strong><span id="runState">-</span></div>
+          <div id="summaryGrid" class="metricGrid"></div>
+        </section>
+        <section class="panelBlock">
+          <div class="sectionHead"><strong>Frames</strong><span id="frameCountLabel">-</span></div>
+          <canvas id="timelineCanvas" width="720" height="88" aria-label="Run frame timeline"></canvas>
+          <div id="nearbyFrames" class="frameList"></div>
+        </section>
+        <section class="panelBlock">
+          <div class="sectionHead"><strong>Overlay</strong><span id="overlayStatus">-</span></div>
+          <label class="toggleRow"><span>Observations</span><input id="showObservations" type="checkbox" checked></label>
+          <label class="toggleRow"><span>Gate estimate</span><input id="showGateBoxes" type="checkbox" checked></label>
+          <label class="toggleRow"><span>Center marks</span><input id="showCenters" type="checkbox" checked></label>
+          <label class="toggleRow"><span>Labels</span><input id="showLabels" type="checkbox" checked></label>
+          <label class="controlRow"><span>Opacity</span><input id="overlayOpacity" type="range" min="10" max="100" value="90"><output id="overlayOpacityValue">90%</output></label>
+          <label class="controlRow"><span>Gate size</span><input id="gateSize" type="range" min="0.5" max="5" step="0.05" value="2.7"><output id="gateSizeValue">2.70m</output></label>
+          <label class="controlRow"><span>Vert FOV</span><input id="verticalFov" type="range" min="45" max="130" step="0.1" value="58.7"><output id="verticalFovValue">58.7deg</output></label>
+        </section>
+      </aside>
+
+      <section id="stagePanel" class="viewPane active" data-view-pane="frame">
+        <div id="stageToolbar">
+          <div id="frameMeta">No frame loaded.</div>
+          <div class="zoomControls" role="group" aria-label="Frame zoom">
+            <button id="zoomOutButton" type="button" title="Zoom out">-</button>
+            <input id="zoomSlider" type="range" min="50" max="400" step="10" value="100" aria-label="Frame zoom">
+            <output id="zoomValue">100%</output>
+            <button id="zoomInButton" type="button" title="Zoom in">+</button>
+            <button id="zoomFitButton" type="button" title="Fit frame">Fit</button>
+          </div>
+        </div>
+        <div id="frameStage">
+          <div id="frameViewport">
+            <img id="frameImage" alt="Selected FPV frame">
+            <canvas id="overlayCanvas" width="1280" height="720" aria-label="Vision observation overlay"></canvas>
+          </div>
+          <div id="emptyFrame">Select a run with captured frames.</div>
+        </div>
+        <div id="stageFooter">
+          <span id="syncReadout">alignment pending</span>
+          <span id="hoverReadout">hover frame for projected coordinates</span>
+        </div>
+      </section>
+
+      <section id="map3dPanel" class="viewPane" data-view-pane="map3d">
+        <div id="map3dToolbar">
+          <div id="map3dMeta">No 3D scene loaded.</div>
+          <div class="map3dToggles" role="group" aria-label="3D map layers">
+            <label class="compactToggle"><span>Observations</span><input id="show3dObservations" type="checkbox" checked></label>
+            <label class="compactToggle"><span>Gate map</span><input id="show3dGateMap" type="checkbox" checked></label>
+            <label class="compactToggle"><span>Test path</span><input id="show3dTestPath" type="checkbox" checked></label>
+            <label class="compactToggle"><span>Planned path</span><input id="show3dPlannedPath" type="checkbox" checked></label>
+            <label class="compactToggle"><span>Trail</span><input id="show3dTrail" type="checkbox" checked></label>
+            <label class="compactToggle"><span>Velocity</span><input id="show3dVelocity" type="checkbox" checked></label>
+            <label class="compactToggle"><span>Desired accel</span><input id="show3dDesiredAcceleration" type="checkbox" checked></label>
+          </div>
+          <div class="zoomControls compact" role="group" aria-label="3D camera">
+            <button id="map3dResetButton" type="button" title="Reset 3D camera">Fit</button>
+          </div>
+        </div>
+        <div id="map3dStage">
+          <canvas id="map3dCanvas" aria-label="3D local NED map"></canvas>
+          <div id="map3dEmpty">Select a run with aligned telemetry.</div>
+          <div id="map3dLegend">
+            <span><i class="legendSwatch north"></i>N</span>
+            <span><i class="legendSwatch east"></i>E</span>
+            <span><i class="legendSwatch down"></i>D</span>
+            <span><i class="legendSwatch drone"></i>drone FRD</span>
+            <span><i class="legendSwatch gate"></i>gate frame</span>
+            <span><i class="legendSwatch path"></i>test path</span>
+            <span><i class="legendSwatch tightPath"></i>tight curve</span>
+            <span><i class="legendSwatch lookahead"></i>lookahead</span>
+            <span><i class="legendSwatch plannedPath"></i>planned path</span>
+            <span><i class="legendSwatch velocity"></i>velocity</span>
+            <span><i class="legendSwatch desiredAcceleration"></i>desired accel</span>
+          </div>
+        </div>
+        <div id="map3dFooter">
+          <span id="map3dReadout">orbit: drag | pan: right drag | zoom: wheel</span>
+          <span id="map3dCounts">0 observation gates | 0 test path points | 0 planned path points</span>
+        </div>
+      </section>
+
+      <section id="telemetryPanel" class="viewPane" data-view-pane="telemetry">
+        <div id="telemetryToolbar">
+          <div id="telemetryMeta">No telemetry loaded.</div>
+          <div class="telemetryToggles" aria-label="Telemetry visibility">
+            <label class="compactToggle"><span>Actual</span><input id="showTelemetryActual" type="checkbox" checked></label>
+            <label class="compactToggle"><span>Truth</span><input id="showTelemetryTruth" type="checkbox" checked></label>
+          </div>
+          <div id="telemetryLegend" aria-label="Telemetry plot legend"></div>
+        </div>
+        <div id="telemetryPlotGrid" aria-label="Telemetry plots"></div>
+        <div id="telemetryEmpty">Select a run with telemetry samples.</div>
+      </section>
+
+      <aside id="rightPanel" class="panel">
+        <section class="panelBlock">
+          <div class="sectionHead"><strong>Frame-Aligned Telemetry</strong><span id="telemetryStatus">-</span></div>
+          <div id="telemetryCards" class="telemetryCards"></div>
+        </section>
+        <section class="panelBlock">
+          <div class="sectionHead"><strong>Telemetry Trend</strong><span id="plotStatus">position</span></div>
+          <div class="tabRow">
+            <button class="plotTab active" data-plot="position" type="button">Pos</button>
+            <button class="plotTab" data-plot="velocity" type="button">Vel</button>
+            <button class="plotTab" data-plot="rates" type="button">Rates</button>
+          </div>
+          <canvas id="telemetryPlot" width="640" height="260" aria-label="Telemetry trend"></canvas>
+        </section>
+        <section class="panelBlock growBlock">
+          <div class="sectionHead inspectorHead">
+            <strong id="inspectorTitle">Telemetry JSON</strong>
+            <div class="inspectorActions">
+              <div class="segmented" role="group" aria-label="Inspector mode">
+                <button class="modeButton active" data-mode="telemetry" type="button">Telemetry</button>
+                <button class="modeButton" data-mode="observation" type="button">Observation</button>
+                <button class="modeButton" data-mode="raw" type="button">Raw</button>
+              </div>
+              <button id="jsonPopoutButton" class="iconButton maximizeButton" type="button" title="Maximize JSON inspector" aria-label="Maximize JSON inspector"></button>
+              <span id="jsonSize">-</span>
+            </div>
+          </div>
+          <pre id="jsonInspector"></pre>
+        </section>
+        <section class="panelBlock">
+          <div class="sectionHead"><strong>Observed Gates</strong><span id="gateCount">0</span></div>
+          <div id="gateList" class="gateList"></div>
+        </section>
+      </aside>
+    </main>
+
+    <footer id="statusbar">
+      <span id="statusText">initializing</span>
+      <span>Ctrl+arrows jump observations</span>
+    </footer>
+    <div id="controlsHelp" aria-label="Viewer controls">
+      <div class="controlsHelpHead">
+        <strong>Controls</strong>
+        <button id="controlsHelpClose" type="button" aria-label="Close controls">x</button>
+      </div>
+      <span><kbd>Left</kbd>/<kbd>Right</kbd> step frame</span>
+      <span><kbd>Ctrl</kbd> + <kbd>Left</kbd>/<kbd>Right</kbd> observed frame</span>
+      <span><kbd>Space</kbd> play/pause</span>
+      <span><kbd>+</kbd>/<kbd>-</kbd> or slider zoom</span>
+      <span><kbd>Ctrl</kbd> + wheel zoom</span>
+      <span><kbd>Fit</kbd> reset zoom</span>
+    </div>
+    <div id="jsonPopout" class="modalOverlay" hidden>
+      <section class="jsonModal" role="dialog" aria-modal="true" aria-labelledby="jsonPopoutTitle">
+        <div class="jsonModalHead">
+          <strong id="jsonPopoutTitle">Telemetry JSON</strong>
+          <div class="inspectorActions">
+            <div class="segmented" role="group" aria-label="Popout inspector mode">
+              <button class="modeButton active" data-mode="telemetry" type="button">Telemetry</button>
+              <button class="modeButton" data-mode="observation" type="button">Observation</button>
+              <button class="modeButton" data-mode="raw" type="button">Raw</button>
+            </div>
+            <button id="jsonPopoutClose" type="button" aria-label="Close JSON popout">Close</button>
+          </div>
+        </div>
+        <pre id="jsonPopoutInspector"></pre>
+      </section>
+    </div>
+  </div>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>

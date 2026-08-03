@@ -1,7 +1,10 @@
-"""Deterministic Vision Pipeline."""
+"""Public interface for the deterministic_v3 vision backend."""
 
-from .src.detection_vision import DetectionVision as DeterministicVision
+__all__ = ["DeterministicVision", "DetectionVision"]
 
-__all__ = [
-    "DeterministicVision"
-]
+
+def __getattr__(name):
+    if name in {"DeterministicVision", "DetectionVision"}:
+        from .src.detection_vision import DetectionVision
+        return DetectionVision
+    raise AttributeError(name)
