@@ -30,13 +30,13 @@ Restart Unreal Editor after enabling plugins. Then run the Unreal entrypoint
 from the Python terminal in Unreal Editor:
 
 ```python
-exec(open(r"C:\Users\brend\Projects\UE_5\TestProject\ML\SyntheticData\src\dataset_generation\generate.py").read())
+exec(open(r"C:\Path\To\Your\Project\SyntheticData\src\dataset_generation\generate.py").read())
 ```
 
 You can also use `Tools > Execute Python Script` and select:
 
 ```text
-C:\Users\brend\Projects\UE_5\TestProject\ML\SyntheticData\src\dataset_generation\generate.py
+C:\Path\To\Your\Project\SyntheticData\src\dataset_generation\generate.py
 ```
 
 Generation settings live in `src/dataset_generation/config.py`. The generation runtime randomizes gates first, waits for the track to finish rendering or settle, then starts dataset collection.

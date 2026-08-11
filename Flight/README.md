@@ -1,556 +1,252 @@
 # Flight
 
-`Flight/` is the Python flight-stack workspace for the drone racing project. It contains the live MAVLink bridge, vision ingestion and perception pipeline, gate mapping, guidance/control code, run logging, and the Dash run explorer.
+`Flight/` is the Python flight stack for an autonomous drone-racing project. It connects to an external simulator or vehicle bridge over MAVLink, receives FPV image frames, estimates vehicle state, maintains a persistent gate map, and sends quaternion attitude-target commands for gate-aware racing.
 
-The current stack assumes the simulator lives outside this repository and is reached through MAVLink. The old in-repo simulator has been removed. Runtime data now enters `Flight` through two live interfaces:
+```text
+MAVLink HIGHRES_IMU
+  -> VehicleStateEstimator
+  -> GateMap target / next-gate selection
+  -> AutiPilot gate-aware acceleration controller
+  -> MAVLink SET_ATTITUDE_TARGET
 
-- MAVLink UDP telemetry and commands, handled by `src/sensing/telemetry/mavlink_client.py`.
-- UDP FPV image packets, handled by `src/sensing/vision/vision_stream.py`.
+FPV image packets
+  -> VisionStreamReceiver
+  -> VisionPerceptionService
+  -> GateMap
+```
 
-`src/main.py` is the current live runtime entry point. `src/app.py` starts the local run viewer.
+Path planning, MPCC, geometric path following, hover control, and other controller workbenches still exist in the repository, but they are not the active command source in `src/main.py`.
+
+## What It Demonstrates
+
+- Real-time inner/outer loop orchestration for a drone flight stack.
+- MAVLink telemetry ingestion and attitude-target command output.
+- IMU-based state estimation with optional VIO and Kalman correction hooks.
+- Vision-driven gate detection and persistent gate-map target selection.
+- A gate-aware acceleration controller that outputs quaternion error targets and normalized thrust.
+- Structured run logging, frame capture, and a browser-based review UI.
 
 ## Quick Start
 
-From the `Flight/` directory:
+Install the Python dependencies from the `Flight/` directory:
 
 ```powershell
-$env:PYTHONPATH = "src"
-python src/app.py
+pip install -r requirements.txt
 ```
 
-To run the live stack against the external MAVLink simulator:
+Run the live stack:
 
 ```powershell
+python src/main.py
+```
+
+Run the local log viewer:
+
+```powershell
+cd ..\UI
+python app.py
+```
+
+The simulator is not owned by this repository. It is expected to provide MAVLink telemetry on the configured endpoint and FPV image packets on the configured vision port.
+
+## Configuration
+
+Runtime configuration lives in:
+
+```text
+config/flight.yaml
+```
+
+`src/core/initialization/initialization.py` loads that YAML file and wires the runtime objects from it. To run with a different config file:
+
+```powershell
+$env:FLIGHT_CONFIG_PATH = "C:\path\to\flight-local.yaml"
 $env:PYTHONPATH = "src"
 python src/main.py
 ```
 
-The runtime currently uses these defaults from `src/main.py`:
+Important defaults:
 
-```text
-MAVLINK_ENDPOINT = udpin:127.0.0.1:14550
-VISION_HOST      = 0.0.0.0
-VISION_PORT      = 5600
-LOOP_HZ          = 30.0
+```yaml
+simulator:
+  mavlink_endpoint: "udpin:127.0.0.1:14550"
+  sim_runtime: "VQ_2"
+
+vision:
+  host: "0.0.0.0"
+  port: 5600
+
+loops:
+  inner_loop_hz: 120.0
+  outer_loop_hz: 30.0
 ```
 
-The external simulator is expected to emit MAVLink on the configured endpoint and FPV image UDP packets on the configured vision port. The repository does not start or own the simulator process.
+Run logs include the resolved initialization constants, including the config path used for the run.
 
-## Current Source Layout
+## Source Layout
 
 ```text
 src/
-  main.py                         # Live MAVLink + vision runtime loop
-  app.py                          # Dash run viewer entry point
+  main.py                         # Live runtime entry point
 
   core/
-    schema.py                     # Runtime data shapes and MAVLink cache dataclasses
-    coordinates.py                # Quaternion/vector/frame helpers
-    logging/                      # Structured run logger
+    initialization/               # YAML config loading and object wiring
+    schema.py                     # Shared runtime dataclasses
+    coordinates.py                # Quaternion, frame, and vector helpers
     control/
-      body_rate_guidance/         # Current live body-rate guidance controller
-      forward_velocity/           # Forward velocity controller workbench
-      hover/                      # Hover controller
-      rate/                       # Rate controller
-      command_mapper.py           # Control payload helpers
-    modes/                        # Race/safety mode helpers
-    quadrotor/                    # Quadrotor parameters and dynamics
-    udp_relay/                    # Standalone UDP relay utilities
+      autipilot/                  # Active gate-aware controller
+      attitude/                   # Workbench attitude/body-rate controller
+      hover/                      # Workbench hover controller
+      path_follower/              # Workbench geometric path follower
+      command_mapper.py           # Command payload helpers
+    logging/                      # Structured run logging and MP4 generation
+    modes/                        # System mode state machine
+    quadrotor/                    # Vehicle model/parameter utilities
 
   sensing/
-    telemetry/                    # MAVLink client, bridge alias, telemetry sync
-    odometry/                     # VehicleStateEstimator and state integration
-    vision/                       # UDP frame receiver, CNN/regressor/landmarker pipeline
+    telemetry/                    # MAVLink client and telemetry cache
+    odometry/                     # State estimator, VIO, and filtering
+    vision/                       # Frame receiver and perception service
 
   mapping/
-    gates/                        # Persistent gate map state
-    perception/                   # Vision observations
+    gates/                        # Persistent gate records and target selection
 
   autonomy/
-    pathing/
-      path_manager.py           # Gate-map-derived path helper used by live loop/logs
-    planning/
-      mpcc/                       # MPCC planner workbench
+    pathing/                      # Path-manager workbench, inactive in main.py
+    planning/                     # MPCC/simple planning experiments
 
-  app/
-    dash_app.py                   # Dash app factory and live-frame file route
-    data.py                       # Run-log loading and normalization
-    live_data.py                  # Live run discovery/frame helpers
-    callbacks.py                  # Historical run dashboard callbacks
-    live_callbacks.py             # Live run dashboard callbacks
-    layout.py                     # Dash layout
-
-  validation/                     # Validation utilities
+../UI/
+  app.py                          # Local flight log review UI entry point
+  ui/
+    server.py                     # Flask server and API routes
+    data.py                       # Log loading and normalization
+    static/                       # Browser UI assets
 ```
 
-## Runtime Data Flow
+## Runtime Flow
 
-At a high level, `src/main.py` wires these pieces together:
+`src/main.py` is an orchestrator. It handles startup, timing, sensor ingestion, command dispatch, logging, and shutdown.
 
-```text
-External simulator
-  |-- MAVLink UDP: HEARTBEAT, TIMESYNC replies, HIGHRES_IMU, ACTUATOR_OUTPUT_STATUS, race packets
-  |     -> MavlinkClient
-  |     -> MavlinkTelemetry
-  |     -> VehicleStateEstimator IMU integration / guidance / perception / logs
-  |
-  |-- FPV image UDP packets
-        -> VisionStreamReceiver
-        -> VisionPerceptionService
-        -> VisionObservation
-        -> GateMap
-        -> BodyRateGuidanceController
-        -> MAVLink attitude target command
-```
+Startup:
 
-The loop in `main.py` runs at `LOOP_HZ` and does the following:
+1. Connect to MAVLink and wait for heartbeat.
+2. Start MAVLink heartbeat/timesync and telemetry subscriptions.
+3. Start the vision receiver.
+4. Reset the simulator and wait for fresh telemetry and vision.
+5. Calibrate stationary IMU bias from `HIGHRES_IMU`.
+6. Initialize vehicle state from stationary IMU samples.
+7. Arm the vehicle and enter `RACING` mode.
+8. Collect an initial gate map from live vision frames.
 
-1. Receives raw MAVLink telemetry from `MavlinkClient.get_telemetry()`.
-2. Receives at most one queued FPV frame from `VisionStreamReceiver.get_next_frame()`.
-3. Seeds or refreshes the authoritative gate map from simulator-provided track packets when available.
-4. Updates the internal `VehicleState` estimate through `VehicleStateEstimator` from `HIGHRES_IMU`.
-5. Initializes attitude from accelerometer gravity direction on the first IMU sample.
-6. Logs telemetry and cycle state.
-7. If a vision frame is available, runs perception and maps detected gates into local NED.
-8. Selects or holds a gate target.
-9. Builds a body-rate guidance command.
-10. Sends that command back to the simulator through MAVLink.
-11. Writes run, telemetry, gate-map, frame, command, and planned-path logs.
+Main loop:
 
-## MAVLink Interface
+1. Read MAVLink telemetry and latest IMU.
+2. Optionally feed IMU and frames into VIO.
+3. Update `VehicleStateEstimator`.
+4. Refresh gate crossed/target state in `GateMap`.
+5. Process completed vision jobs and update gate records.
+6. Compute an `AutiPilot` command from `target_gate` and `next_gate`.
+7. Send the command through `MavlinkClient.send_attitude_target()`.
+8. Log telemetry, command, gate-map, vision, VIO, and timing state.
 
-`src/sensing/telemetry/mavlink_client.py` is the only runtime owner of MAVLink transport. It connects to the external simulator using `pymavlink` when the endpoint looks live, or acts as an offline cache in tests.
+Shutdown:
 
-The current live endpoint is:
+1. Stop recording if enabled.
+2. Stop the vision executor and receiver.
+3. Preserve final shutdown telemetry.
+4. Close MAVLink.
+5. Save run logs and optionally generate an MP4.
 
-```text
-udpin:127.0.0.1:14550
-```
+## Active Controller
 
-### MAVLink Messages Consumed
+The active controller is `core/control/autipilot/controller.py`.
 
-The client currently handles:
+`AutiPilot.compute_control()` consumes:
 
-- `HEARTBEAT`
-  - Updates armed state and system status.
-  - Stored as `MavlinkHeartbeat`.
-- `TIMESYNC`
-  - Stored as `MavlinkTimesync`.
-  - A periodic timesync loop sends requests while live.
-- `HIGHRES_IMU`
-  - Raw body-frame accelerometer/gyro telemetry.
-  - Stored as `MavlinkHighresImu`.
-  - Included in `MavlinkTelemetry.imu`.
-- `ACTUATOR_OUTPUT_STATUS`
-  - Stored as `MavlinkActuatorOutputStatus`.
-- `COLLISION`
-  - Stored as `CollisionEvent`.
-- `DATA_TRANSMISSION_HANDSHAKE` and `ENCAPSULATED_DATA`
-  - Used to receive simulator track-gate data and race status.
-  - Track gates become `TrackGate`.
-  - Race status becomes `RaceStatus`.
+- `VehicleState`
+- current `GateRecord`
+- optional next `GateRecord`
+- time since takeoff
 
-The client does not depend on MAVLink `ODOMETRY`, `ATTITUDE`, or `LOCAL_POSITION_NED`. `MavlinkClient.get_telemetry()` returns raw MAVLink telemetry; `main.py` passes that into `VehicleStateEstimator.update_telemetry(telemetry)` and receives the flight-facing telemetry bundle with `MavlinkTelemetry.vehicle_state = vehicle_state_estimator.state`.
+It outputs a MAVLink-ready payload containing:
 
-### MAVLink Commands Sent
+- `error_quaternion`
+- `error_quaternion_target_converted`
+- `error_quaternion_target_scaled`
+- `error_quaternion_vector_scales`
+- `thrust`
+- diagnostic controller details
 
-The client can send:
-
-- Arm/disarm commands.
-- Simulator reset command using `MAVLINK_CMD_SIM_RESET = 31000`.
-- `SET_POSITION_TARGET_LOCAL_NED` payloads via `send_position_target()`.
-- `SET_ATTITUDE_TARGET` payloads via `send_attitude_target()`.
-- Actuator/motor target commands via `send_motor_target()`.
-
-The live loop currently uses body-rate guidance and sends attitude target commands through `send_attitude_target()`.
-
-### Reset and Startup Sequence
-
-When `RESET_ON_START = True`, `main.py` does this:
-
-1. Connects to MAVLink and waits for a heartbeat.
-2. Starts the heartbeat/timesync loop.
-3. Starts telemetry subscription.
-4. Sends the simulator reset command.
-5. Waits for stable post-reset estimated state.
-6. Waits briefly for track gates.
-7. Seeds the gate map from simulator track data.
-8. Arms the simulator if `ARM_ON_START = True`.
-9. Runs a short prelevel phase with low thrust before entering the main loop.
-
-The reset readiness helper watches the IMU-integrated `MavlinkTelemetry.vehicle_state.velocity_local_ned_mps` estimate and requires speed to remain below `RESET_STABLE_MAX_SPEED_MPS`.
-
-## Runtime Schemas and Boundaries
-
-Canonical dataclasses live in `src/core/schema.py`.
-
-### MAVLink Transport Shapes
-
-These dataclasses are raw or near-raw MAVLink cache shapes:
-
-- `MavlinkHeartbeat`
-- `MavlinkTimesync`
-- `MavlinkHighresImu`
-- `MavlinkActuatorOutputStatus`
-- `RaceStatus`
-- `TrackGate`
-- `CollisionEvent`
-
-`MavlinkTelemetry` is used in two places:
-
-- `MavlinkClient.get_telemetry()` returns raw simulator telemetry with `imu` populated and `vehicle_state` unset.
-- `VehicleStateEstimator.update_telemetry(telemetry)` returns flight-facing telemetry with `vehicle_state` set to `vehicle_state_estimator.state`.
-
-```text
-MavlinkTelemetry
-  sim_time_ns
-  vehicle_state: VehicleState | None
-  imu: MavlinkHighresImu | None
-  system_status
-  reset_count
-  raw
-```
-
-`MavlinkClient` does not fabricate normalized fields. Code that needs position, velocity, attitude, or body rates should first pass client telemetry through `VehicleStateEstimator.update_telemetry()`, then read the estimate from `telemetry.vehicle_state`.
-
-Examples:
-
-```python
-position = telemetry.vehicle_state.position_local_ned_m
-velocity = telemetry.vehicle_state.velocity_local_ned_mps
-attitude = telemetry.vehicle_state.attitude_quaternion
-body_rates = telemetry.vehicle_state.body_rates_frd_rps
-imu_accel = telemetry.imu.acceleration_body_frd_mps2 if telemetry.imu else None
-```
-
-### Estimator/Flight-State Shape
-
-`VehicleState` is the normalized state emitted by `VehicleStateEstimator`:
-
-```text
-VehicleState
-  sim_time_ns
-  position_local_ned_m
-  velocity_local_ned_mps
-  attitude_quaternion
-  body_rates_frd_rps
-  acceleration_local_ned_mps2
-```
-
-The boundary is intentional:
-
-- `MavlinkHighresImu` moves raw IMU telemetry from the simulator through the MAVLink client.
-- `VehicleStateEstimator.initialize_from_imu()` infers initial roll/pitch from accelerometer gravity direction.
-- `VehicleStateEstimator.update_from_imu()` integrates acceleration and gyro samples into `VehicleState`.
-
-This keeps simulator transport data separate from estimator output while avoiding any dependency on a simulator pose message.
-
-## Vehicle State
-
-`src/sensing/odometry/state.py` owns `VehicleStateEstimator`.
-
-`VehicleStateEstimator` is the mutable state estimator used by the live loop. It stores:
-
-- Local NED position and velocity.
-- Attitude quaternion.
-- Body angular velocity and angular acceleration.
-- Body-frame acceleration from IMU.
-- Local NED acceleration after attitude rotation and gravity handling.
-- Last IMU timestamp.
-
-Important methods:
-
-- `reset(vehicle_state: VehicleState | None = None) -> VehicleState`
-  - Clears internal state.
-  - Can seed from an already-normalized `VehicleState`.
-- `update_state(vehicle_state: VehicleState) -> VehicleState`
-  - Updates state from normalized estimator data.
-- `update_telemetry(telemetry: MavlinkTelemetry | None) -> MavlinkTelemetry | None`
-  - Updates from raw telemetry and returns flight-facing telemetry with `vehicle_state` set.
-- `initialize_from_imu(latest_imu: MavlinkHighresImu) -> VehicleState`
-  - Uses accelerometer gravity direction to initialize attitude.
-  - Leaves yaw at zero because yaw is not observable from accelerometer alone.
-- `update_from_imu(latest_imu: MavlinkHighresImu) -> VehicleState`
-  - Updates acceleration and body rates.
-  - Integrates acceleration and gyro deltas over time after the first IMU sample.
-
-`main.py` owns the live `VehicleStateEstimator` instance and updates it from raw client telemetry:
-
-```python
-raw_telemetry = mavlink_client.get_telemetry()
-telemetry = vehicle_state_estimator.update_telemetry(raw_telemetry)
-estimated_state = vehicle_state_estimator.state
-```
-
-## Vision Input
-
-`src/sensing/vision/vision_stream.py` receives FPV image data over UDP.
-
-The simulator sends frames as chunked UDP packets. The receiver:
-
-- Unpacks packet headers using `sensing.vision.io.udp_protocol`.
-- Reassembles chunks by `frame_id`.
-- Validates expected chunk count and JPEG size.
-- Saves each completed JPEG when `output_dir` is configured.
-- Appends frame metadata to `frames.jsonl`.
-- Keeps a bounded in-memory queue for the live loop.
-
-Runtime output location:
-
-```text
-logs/runs/run-<timestamp>/vision_frames/
-logs/runs/run-<timestamp>/frames.jsonl
-```
-
-`VisionFrame` contains:
-
-```text
-frame_id
-sim_time_ns
-jpeg_bytes
-image
-saved_path
-```
-
-The current live loop reads one queued frame per cycle with `vision.get_next_frame()`.
-
-## Vision Perception
-
-`src/sensing/vision/service.py` wraps the in-memory perception pipeline:
-
-```text
-JPEG bytes
-  -> jpeg_bytes_to_tensor()
-  -> LightmaskInference
-  -> RawLogitsFrame
-  -> LogitRegressor
-  -> Surveyer/regressor payload
-  -> optional Landmarker
-  -> VisionObservation
-```
-
-Configuration is held by `VisionPerceptionConfig`:
-
-- `checkpoint`
-  - CNN checkpoint, default `src/sensing/vision/models/cnn/cnn_last.pt`.
-- `regressor_checkpoint`
-  - Regressor checkpoint, default `src/sensing/vision/regressor/regressor_last.pt`.
-- `device`
-  - `"auto"` by default.
-- `run_landmarker`
-  - Whether to run the landmarker after regressor output.
-- `top_k`
-  - Gate targets retained for controller payloads.
-- `passthrough_regressor_targets`
-  - Preserves controller output shape while skipping landmark state/matching.
-- `gate_threshold`, `confidence_threshold`, `min_component_area`, `max_candidates`
-  - Regressor filtering parameters.
-
-In `main.py`, live perception is currently initialized as:
-
-```python
-VisionPerceptionService(VisionPerceptionConfig(run_landmarker=False))
-```
-
-That means the live loop currently runs CNN + regressor and returns `VisionObservation` directly from regressor output, without landmarker state/matching.
+The MAVLink client sends the scaled error quaternion as `SET_ATTITUDE_TARGET` with body-rate fields ignored.
 
 ## Gate Mapping
 
-Gate perception code lives under `src/mapping/perception/`; persistent gate map state lives under `src/mapping/gates/`.
+`GateMap` owns persistent gate records. New observations are merged into candidates or promoted gates. On every update, it:
 
-Key pieces:
+- marks gates crossed when the vehicle is within `gate_passed_distance_m`
+- selects `target_gate` as the closest uncrossed gate
+- selects `next_gate` as the second-closest uncrossed gate
+- exposes candidate target fields for logging and diagnostics
 
-- `VisionObservation`
-  - Typed representation of gates detected in a vision frame.
-- `GateMap` (`src/mapping/gates/gate_map.py`)
-  - Placeholder storage while gate mapping is rebuilt.
-- `GateRecord`
-  - Placeholder record shape used by current planning/control interfaces.
+This target selection does not depend on the path manager.
 
-Simulator track-gate seeding, camera-local pose mapping, and vision fusion have been cleared out for rebuild.
+## Coordinate Conventions
 
-## Guidance and Control
+- Inertial frame: local NED, with positive `z` down.
+- Body frame: FRD, with positive `z` down.
+- Quaternions are scalar-first `[w, x, y, z]`.
+- Controller attitude commands use the simulator-observed quaternion error convention prepared by `AutiPilot`.
 
-The live runtime currently uses `BodyRateGuidanceController` from:
+## Logging and Viewer
+
+Runs are written under the configured `logging.runs_root`, which defaults to:
 
 ```text
-src/core/control/body_rate_guidance/controller.py
+../Logs/flight/runs
 ```
 
-The controller consumes:
-
-- Current position from `telemetry.vehicle_state.position_local_ned_m`.
-- Current velocity from `telemetry.vehicle_state.velocity_local_ned_mps`.
-- Current attitude from `telemetry.vehicle_state.attitude_quaternion`.
-
-It outputs a command payload shaped for MAVLink attitude target commands:
+Each run includes structured JSON logs and captured vision frames:
 
 ```text
-quaternion
-thrust
-attitude_type_mask
-body_rates_rps
-source
-phase / guidance details
-```
-
-`main.py` builds the command with `BodyRateGuidanceController` and passes the finished payload to `MavlinkClient.send_attitude_target()`.
-
-If no active target exists, the controller emits a hold/no-target command. During shutdown, `main.py` sends a body-rate stop command before closing the MAVLink connection.
-
-Other controllers exist for workbench/testing:
-
-- `core/control/hover/`
-- `core/control/forward_velocity/`
-- `core/control/rate/`
-
-They are not the current live-loop control method.
-
-## Planning
-
-Planning code lives under `src/autonomy/planning/`.
-
-Currently active in the live loop:
-
-- `PathManager`
-  - Uses the gate map to generate a simple path representation.
-  - Logged as `planned_paths` and used for inspection.
-
-Workbench/development:
-
-- `autonomy/planning/mpcc/`
-  - Contains MPCC-related planning code.
-  - It is not the current command source in `main.py`.
-
-## Logging
-
-`src/core/logging/logging.py` writes structured run logs.
-
-Each live run writes to:
-
-```text
-logs/runs/run-<YYYYMMDDTHHMMSSZ>/
+run-<timestamp>/
   run.json
   telemetry.json
   gate_map.json
   frames.jsonl
   vision_frames/
-    frame-<frame_id>-<sim_time_ns>.jpg
 ```
 
-### `run.json`
+The review UI in `../UI/app.py` loads these runs for inspection and plotting.
 
-Contains:
+## Current Boundaries
 
-- `schema_version`
-- `metadata`
-- `events`
-- `cycles`
-- `vision_frames`
-- `planned_paths`
+Active in `main.py`:
 
-Cycle records include timing, telemetry, bridge snapshot, command payload, target tracker snapshot, body-rate guidance snapshot, and vision/perception status.
+- MAVLink telemetry and command transport
+- vision frame ingestion and perception
+- gate mapping
+- vehicle state estimation
+- optional VIO/Kalman hooks
+- `AutiPilot` command generation
+- logging, OBS recording, and video generation
 
-### `telemetry.json`
+Present but inactive in `main.py`:
 
-Sidecar containing:
+- `autonomy/pathing/PathManager`
+- `core/control/path_follower/GeometricPathFollower`
+- `core/control/hover/HoverController`
+- MPCC planning workbenches
 
-```text
-schema_version
-metadata
-samples[]
-```
+## Resume Notes
 
-Each telemetry sample contains the cycle/timing context and the serialized `MavlinkTelemetry`. IMU data is logged through:
+For review, the most important files are:
 
-```text
-sample.telemetry.imu
-```
+- `src/main.py`
+- `src/core/initialization/initialization.py`
+- `config/flight.yaml`
+- `src/core/control/autipilot/controller.py`
+- `src/mapping/gates/gate_map.py`
+- `src/sensing/telemetry/mavlink_client.py`
+- `src/sensing/odometry/state.py`
 
-Vehicle state data is logged through:
-
-```text
-sample.telemetry.vehicle_state
-```
-
-### `gate_map.json`
-
-Sidecar containing gate-map snapshots by cycle.
-
-### `frames.jsonl` and `vision_frames/`
-
-`VisionStreamReceiver` writes every completed JPEG frame to `vision_frames/` and records metadata in `frames.jsonl`. The Dash viewer serves those images through a Flask route instead of embedding all image bytes in the page.
-
-## Dash Run Viewer
-
-Start the viewer with:
-
-```powershell
-$env:PYTHONPATH = "src"
-python src/app.py
-```
-
-The Dash app is built in `src/app/dash_app.py`.
-
-The viewer discovers runs from:
-
-```text
-logs/run-*.json
-logs/run-*/run.json
-logs/runs/run-*/run.json
-```
-
-It also loads sidecars:
-
-```text
-telemetry.json
-gate_map.json
-frames.jsonl
-```
-
-The app normalizes telemetry for plotting in `src/app/data.py`. That normalization copies fields from `telemetry.vehicle_state` into legacy top-level plotting keys such as `position_local_ned_m`, `velocity_local_ned_mps`, and `attitude_quaternion`. It also reads older `telemetry.odometry` logs for compatibility; that compatibility layer is not the runtime telemetry contract.
-
-Frame images are served by:
-
-```text
-/live-frame?run=<run_path>&index=<frame_index>
-```
-
-The route verifies the requested run is discoverable before serving the JPEG file with Flask `send_file(..., conditional=True)`.
-
-
-## Important Current Contracts
-
-- The external simulator is authoritative for MAVLink telemetry.
-- The active MAVLink UDP stream provides `HEARTBEAT`, `HIGHRES_IMU`, `ACTUATOR_OUTPUT_STATUS`, race-status `ENCAPSULATED_DATA`, and `TIMESYNC` replies.
-- `HIGHRES_IMU` is the authoritative raw IMU telemetry message.
-- `MavlinkClient.get_telemetry()` returns raw telemetry once `HIGHRES_IMU` is available; its `vehicle_state` field is unset.
-- `VehicleStateEstimator.update_telemetry(telemetry)` is the state-estimation boundary and returns telemetry with `vehicle_state` set.
-- The flight-facing telemetry used inside `main.py` carries the local `VehicleState` estimate from `VehicleStateEstimator`, not a MAVLink odometry packet.
-- Runtime code should read estimated position/velocity/attitude through `telemetry.vehicle_state`.
-- Runtime code should read raw IMU through `telemetry.imu` or `mavlink_client.latest_imu`.
-- The Dash viewer may normalize logs for plotting, but that does not define the live runtime contract.
-
-## Removed / Not Present
-
-The following are intentionally no longer part of the active code path:
-
-- The old in-repo/home-built simulator under `src/simulator`.
-- Scenario JSON files for the removed local simulator.
-- `TelemetrySample`.
-- `ImuSample`.
-- `AttitudeSample`.
-- `diagnostic_odometry`.
-- Raw `MavlinkAttitude` and `MavlinkLocalPositionNed` schema classes.
-- `MavlinkTelemetry.attitude_sample`.
-- `MavlinkTelemetry.local_position`.
-- Compatibility construction of `MavlinkTelemetry` from normalized position/velocity/attitude args.
-- Helpers that converted estimator state back into `MavlinkTelemetry`.
-
-## Current Limitations and Follow-Up Areas
-
-- The live runtime constants in `main.py` are hardcoded module-level values, not loaded from a runtime config file.
-- The vision perception service is wired with `run_landmarker=False` in the live entry point.
-- MPCC code exists but is not the active live command source.
-- The Dash viewer intentionally keeps compatibility normalization for older logs.
-- The simulator protocol is external; any changes to MAVLink message availability or frame IDs should be reflected in `MavlinkClient` and tests.
+Together they show the real-time loop, configuration boundary, control law, perception-to-map bridge, MAVLink integration, and estimator design.

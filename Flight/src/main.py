@@ -24,32 +24,6 @@ from core.initialization import initialize
 from core.logging import generate_mp4
 from core.schema import MavlinkHighresImu, StateRecord, VioCorrection
 from core.utils import time_since
-from core.coordinates import normalize_quaternion, quaternion_from_roll_pitch_yaw_deg
-
-
-def _mavlink_error_quaternion_command(
-    control_target: dict,
-    *,
-    error_quaternion_scales: np.ndarray,
-) -> dict:
-    error_quaternion = normalize_quaternion(
-        control_target.get("error_quaternion", (1.0, 0.0, 0.0, 0.0))
-    )
-    converted = (
-        float(error_quaternion[0]),
-        -float(error_quaternion[1]),
-        float(error_quaternion[2]),
-        -float(error_quaternion[3]),
-    )
-    scaled = np.asarray(converted, dtype=float)
-    scaled[1:4] *= np.asarray(error_quaternion_scales, dtype=float)
-    scaled = normalize_quaternion(scaled)
-    return {
-        **control_target,
-        "quaternion_command_mode": "error_quaternion",
-        "error_quaternion_target_converted": converted,
-        "error_quaternion_target_scaled": tuple(float(value) for value in scaled),
-    }
 
 def main() -> int:
     (
@@ -64,11 +38,7 @@ def main() -> int:
         obs_recorder,
         system_mode_manager,
         gate_map,
-        path_manager,
-        attitude_controller,
-        geometric_path_follower,
         autipilot,
-        hover_controller,
     ) = initialize()
 
     print(f"Starting run at {settings.run_dir}...")
@@ -80,9 +50,6 @@ def main() -> int:
     imu_data_t = None
     telemetry = None
     latest_frame = None
-    observation = None
-    planned_path = None
-    control_target = None
     autipilot_target = None
     autipilot_command = None
     vision_pending = None
@@ -206,7 +173,7 @@ def main() -> int:
         while time.perf_counter() < gate_map_init_deadline_s: # rate: settings.outer_loop_hz
             latest_frame = vision_rx.get_next_frame()
 
-            # init gate map and path plan
+            # init gate map
             if latest_frame is not None:
                 observation = vision_perception.process_vision_frame(
                     latest_frame,
@@ -241,11 +208,6 @@ def main() -> int:
                     source=observation.source,
                 )
 
-                planned_path = path_manager.plan(
-                    gates=gate_map.gates,
-                    vehicle_state=vehicle_state_estimator.state,
-                )
-
             else:
                 logger.log_event("vision_calibration_skipped", reason="no_latest_frame")
 
@@ -255,19 +217,6 @@ def main() -> int:
 
             if sleep_s > 0.0:
                 time.sleep(sleep_s)
-
-        if path_manager.test_path is not None:
-            logger.log_test_path(
-                path_manager.test_path.to_log_dict(origin_local_ned_m=vehicle_state.position_local_ned_m),
-                cycle=inner_cycle,
-                planner="straight_line_test_path",
-            )
-        if planned_path is not None:
-            logger.log_planned_path(
-                planned_path.to_log_dict(origin_local_ned_m=vehicle_state.position_local_ned_m),
-                cycle=inner_cycle,
-                planner=path_manager.planning_mode,
-            )
 
 
         ## MAIN LOOP
@@ -348,11 +297,6 @@ def main() -> int:
                             observer_position_local_ned_m=frame_vehicle_state.position_local_ned_m,
                         )
 
-                        planned_path = path_manager.plan(
-                            gates=gate_map.gates,
-                            vehicle_state=frame_vehicle_state,
-                        )
-
                         # Log
                         logger.log_vision_observation(
                             observation,
@@ -380,14 +324,6 @@ def main() -> int:
                             sim_time_ns=frame_log["sim_time_ns"],
                             gate_count=len(gate_map.gates),
                             source=observation.source,
-                        )
-                        logger.log_planned_path(
-                            planned_path.to_log_dict(origin_local_ned_m=frame_vehicle_state.position_local_ned_m),
-                            time_since_startup_s = time_since(started_s),
-                            cycle=inner_cycle,
-                            outer_cycle=outer_cycle,
-                            frame_id=frame_log["frame_id"],
-                            planner=path_manager.planning_mode,
                         )
 
                     except Exception as error:  # noqa: BLE001
@@ -436,36 +372,6 @@ def main() -> int:
                         vehicle_state,
                     )
 
-                # Computer outer loop command
-                if settings.allow_flight and system_mode_manager.is_racing():
-                    path_projection = path_manager.project(vehicle_state.position_local_ned_m)
-                    path_error_m = float(path_projection.cross_track_error_m)
-
-                    if path_error_m > settings.failsafe_distance_m:
-                        logger.log_event(
-                            "path_failsafe_exceeded",
-                            reason="path_deviation_exceeded",
-                            cross_track_error_m=path_error_m,
-                            failsafe_distance_m=settings.failsafe_distance_m,
-                            projection=path_projection.to_log_dict(),
-                            system_mode=system_mode_manager.system_mode.value,
-                            inner_cycle=inner_cycle,
-                            outer_cycle=outer_cycle,
-                            sim_time_ns=vehicle_state.sim_time_ns,
-                        )
-                    path_carrot = path_manager.carrot(
-                        vehicle_state.position_local_ned_m,
-                        geometric_path_follower.lookahead_m,
-                        geometric_path_follower.speed_lookahead_m,
-                    )
-                    control_target = geometric_path_follower.compute_control(
-                        vehicle_state,
-                        carrot=path_carrot,
-                        time_since_takeoff_s=time_since(takeoff_started_s),
-                    )
-                else:
-                    control_target = None
-
                 outer_cycle += 1
             # ======================== OUTER LOOP END ========================
 
@@ -484,10 +390,7 @@ def main() -> int:
                         next_gate=autipilot_next_gate,
                         time_since_takeoff_s=time_since(takeoff_started_s),
                     )
-                    autipilot_command = _mavlink_error_quaternion_command(
-                        autipilot_target,
-                        error_quaternion_scales=attitude_controller.error_quaternion_scales,
-                    )
+                    autipilot_command = autipilot_target
                 except Exception as error:  # noqa: BLE001
                     autipilot_target = {
                         "source": "autipilot",
@@ -501,68 +404,50 @@ def main() -> int:
                 command_result = {
                     "emitted": False,
                     "sim_time_ns": telemetry.sim_time_ns if telemetry else None,
-                    "reason": "missing_highres_imu"
+                    "reason": "missing_highres_imu",
+                    "system_mode": system_mode_manager.system_mode.value,
+                    "modes": {
+                        "system": system_mode_manager.system_mode.value,
+                    },
                 }
 
             else:
                 command_result = None
 
-                if settings.allow_flight:
-                    if system_mode_manager.is_racing():
-                        if autipilot_command is not None:
-                            mavlink_client.send_attitude_target(autipilot_command)
+                if settings.allow_flight and system_mode_manager.is_racing():
+                    if autipilot_command is not None:
+                        mavlink_client.send_attitude_target(autipilot_command)
 
-                        command_result = {
-                            "emitted": autipilot_command is not None,
-                            "sim_time_ns": telemetry.sim_time_ns,
-                            "reason": (
-                                "autipilot"
-                                if autipilot_command is not None
-                                else "missing_autipilot_target"
-                            ),
-                            "control_target": autipilot_command,
-                            "geometric_control_target": control_target,
-                            "inner_loop_cycle": inner_cycle,
-                            "outer_loop_cycle": outer_cycle,
-                        }
-                    else:
-                        hover_target = hover_controller.compute_control(vehicle_state)
-                        control_target = attitude_controller.compute_control(
-                            vehicle_state,
-                            desired_attitude_quaternion=hover_target["quaternion"],
-                            thrust=hover_target["thrust"],
-                        )
-
-                        mavlink_client.send_attitude_target(control_target)
-
-                        command_result = {
-                            "emitted": True,
-                            "sim_time_ns": telemetry.sim_time_ns,
-                            "reason": "finished_hover",
-                            "control_target": control_target,
-                            "inner_loop_cycle": inner_cycle,
-                            "outer_loop_cycle": outer_cycle,
-                        }
+                    command_result = {
+                        "emitted": autipilot_command is not None,
+                        "sim_time_ns": telemetry.sim_time_ns,
+                        "reason": (
+                            "autipilot"
+                            if autipilot_command is not None
+                            else "missing_autipilot_target"
+                        ),
+                        "control_target": autipilot_command,
+                        "inner_loop_cycle": inner_cycle,
+                        "outer_loop_cycle": outer_cycle,
+                        "system_mode": system_mode_manager.system_mode.value,
+                        "modes": {
+                            "system": system_mode_manager.system_mode.value,
+                        },
+                    }
                 else:
                     command_result = {
-                            "emitted": False,
-                            "sim_time_ns": telemetry.sim_time_ns if telemetry else None,
-                            "reason": "flight_disabled" if not settings.allow_flight else "system_mode_not_racing",
-                            "control_target": control_target,
-                            "inner_loop_cycle": inner_cycle,
-                            "outer_loop_cycle": outer_cycle,
-                        }
+                        "emitted": False,
+                        "sim_time_ns": telemetry.sim_time_ns if telemetry else None,
+                        "reason": "flight_disabled" if not settings.allow_flight else "system_mode_not_racing",
+                        "control_target": None,
+                        "inner_loop_cycle": inner_cycle,
+                        "outer_loop_cycle": outer_cycle,
+                        "system_mode": system_mode_manager.system_mode.value,
+                        "modes": {
+                            "system": system_mode_manager.system_mode.value,
+                        },
+                    }
 
-
-            # timing
-            if isinstance(command_result, dict):
-                command_result.setdefault("system_mode", system_mode_manager.system_mode.value)
-                command_result.setdefault(
-                    "modes",
-                    {
-                        "system": system_mode_manager.system_mode.value,
-                    },
-                )
 
             next_inner_cycle_s += inner_period_s
             sleep_s = max(0.0, next_inner_cycle_s - time.perf_counter())
@@ -610,7 +495,6 @@ def main() -> int:
                     "hz": settings.outer_loop_hz,
                     "ran": outer_loop_ran,
                 },
-                geometric_path_follower=geometric_path_follower.last_payload,
                 autipilot=autipilot_target,
                 autipilot_command=autipilot_command,
                 vision={

@@ -1,0 +1,114 @@
+simulator:
+  mavlink_endpoint: "udpin:127.0.0.1:14550"
+  sim_runtime: "VQ_2"
+
+vision:
+  host: "0.0.0.0"
+  port: 5600
+  perception_backend: "deterministic_v3_2"
+  executor_max_workers: 1
+  executor_thread_prefix: "vision"
+
+loops:
+  inner_loop_hz: 120.0
+  outer_loop_hz: 30.0
+  run_s: null
+
+startup:
+  heartbeat_timeout_s: 120.0
+  startup_data_timeout_s: 4.0
+  imu_init_timeout_s: 1.5
+  gate_map_init_timeout_s: 1.5
+  post_reset_delay_s: 0.7
+  arm_timeout_s: 5.0
+
+gate_map:
+  merge_distance_m: 5.0
+  required_minimum_observation_count: 5
+  lock_observation_count: 500
+  max_observation_distance_m: 40.0
+  target_candidate_min_observation_count: 2
+  target_candidate_min_position_confidence: 0.35
+  target_candidate_max_average_residual_m: 2.5
+  target_candidate_max_distance_m: 45.0
+  gate_passed_distance_m: 1.7
+
+flight:
+  allow_flight: true
+
+mavlink_attitude_target:
+  error_quaternion_roll_scale: 1.65
+  error_quaternion_pitch_scale: 1.65
+  error_quaternion_yaw_scale: 1.65
+
+gyro_spike_filter:
+  enabled: false
+  max_rate_rps: 20.0
+  max_delta_rps: 10.0
+  max_rejections: 1
+
+autipilot:
+  v_max_mps: 25.0
+  v_min_mps: 2.0
+  a_lat_max_mps2: 36.0
+  medium_turn_angle_deg: 40.0
+  tight_turn_angle_deg: 95.0
+  medium_turn_a_lat_mps2: 24.0
+  tight_turn_a_lat_mps2: 15.0
+  kp_speed: 0.7
+  near_gate_speed_gain_near_m: 1.0
+  near_gate_speed_gain_far_m: 5.0
+  near_gate_speed_gain_min_scale: 1.0
+  near_gate_speed_gain_ramp_s: 0.5
+  kp_dir: 1.5
+  kd_dir: 0.6
+  kp_lat: 1.7
+  kd_lat: 2.1
+  kp_z: 2.6
+  kd_z: 1.8
+  lookahead_near_m: 0.6
+  lookahead_far_m: 2.6
+  fly_through_enabled: true
+  fly_through_turn_angle_start_deg: 70.0
+  fly_through_turn_angle_full_deg: 120.0
+  fly_through_next_gate_distance_start_m: 12.0
+  fly_through_next_gate_distance_full_m: 30.0
+  fly_through_lookahead_min_scale: 0.25
+  gate_cross_velocity_damping: 2.0
+  gate_cross_velocity_cancel_near_m: 2.0
+  gate_cross_velocity_cancel_far_m: 8.0
+  approach_gain_min_scale: 0.8
+  post_cross_turn_scale: 0.12
+  post_cross_ramp_distance_m: 8.0
+  launch_speed_ramp_s: 0.25
+  max_specific_thrust_mps2: 37.090204236006045
+  min_normalized_thrust: 0.05
+  max_normalized_thrust: 0.95
+  max_commanded_acceleration_mps2: 28.0
+  gate_switch_acceleration_ramp_s: 0.35
+  max_commanded_jerk_mps3: 40.0
+
+recording:
+  create_video: false
+  record_screen: false
+
+vio:
+  enabled: false
+  camera_horizontal_fov_deg: 90.0
+  camera_tilt_deg: 20.0
+  body_to_camera_translation_body_frd_m: [0.0, 0.0, 0.0]
+  position_alpha: 0.02
+  velocity_alpha: 0.05
+  attitude_alpha: 0.03
+
+kalman:
+  enabled: false
+  initial_position_variance_m2: 0.0
+  initial_velocity_variance_m2ps2: 0.0
+  acceleration_process_noise_mps2: 1.0
+  vio_position_measurement_variance_m2: 0.25
+  vio_velocity_measurement_variance_m2ps2: 1.0
+  min_measurement_confidence: 0.05
+
+logging:
+  runs_root: "../Logs/flight/runs"

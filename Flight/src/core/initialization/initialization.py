@@ -6,14 +6,13 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import time
 
-from autonomy.pathing import PathManager
-from core.control.attitude import AttitudeController
+import yaml
+
 from core.control.autipilot import AutiPilot, AutiPilotGains
-from core.control.hover.controller import HoverController
-from core.control.path_follower import GeometricPathFollower
 from core.logging import Logger
 from core.logging.obs import OBSRecorder
 from core.modes.system_mode import SystemModeManager
@@ -32,226 +31,175 @@ from sensing.vision.service import VisionPerceptionConfig, VisionPerceptionServi
 
 # DEFINE START TIME
 DEFINED_START_TIME_NS: float = time.perf_counter_ns()
+FLIGHT_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_CONFIG_PATH = FLIGHT_ROOT / "config" / "flight.yaml"
+CONFIG_PATH = Path(os.environ.get("FLIGHT_CONFIG_PATH", DEFAULT_CONFIG_PATH))
+
+
+def _load_config(path: Path) -> dict[str, object]:
+    with path.open("r", encoding="utf-8") as file:
+        config = yaml.safe_load(file)
+    if not isinstance(config, dict):
+        raise ValueError(f"Flight config must be a YAML mapping: {path}")
+    return config
+
+
+def _config_value(*keys: str) -> object:
+    value: object = _CONFIG
+    for key in keys:
+        if not isinstance(value, dict) or key not in value:
+            dotted = ".".join(keys)
+            raise KeyError(f"Missing Flight config key: {dotted}")
+        value = value[key]
+    return value
+
+
+def _config_path(*keys: str) -> Path:
+    value = str(_config_value(*keys))
+    path = Path(value)
+    return path if path.is_absolute() else (FLIGHT_ROOT / path).resolve()
+
+
+_CONFIG = _load_config(CONFIG_PATH)
 
 # Simulator and network endpoints.
-MAVLINK_ENDPOINT = "udpin:127.0.0.1:14550"  # selects the MAVLink UDP endpoint used to talk to the simulator or vehicle bridge.
-SIM_RUNTIME = "VQ_2"  # identifies the simulator/runtime profile passed into the MAVLink client.
-VISION_HOST = "0.0.0.0"  # is the local interface where the vision receiver listens for incoming frames.
-VISION_PORT = 5600  # is the UDP/TCP port used by the vision frame receiver.
+MAVLINK_ENDPOINT = str(_config_value("simulator", "mavlink_endpoint"))
+SIM_RUNTIME = str(_config_value("simulator", "sim_runtime"))
+VISION_HOST = str(_config_value("vision", "host"))
+VISION_PORT = int(_config_value("vision", "port"))
 
 # Control loop timing.
-INNER_LOOP_HZ = 120.0  # is the fast control loop rate used for state updates and attitude commands.
-OUTER_LOOP_HZ = 30.0  # is the slower loop rate used for vision, path planning, and path-following targets.
-RUN_S: float | None = None  # optionally limits flight duration in seconds; None runs until interrupted or finished.
+INNER_LOOP_HZ = float(_config_value("loops", "inner_loop_hz"))
+OUTER_LOOP_HZ = float(_config_value("loops", "outer_loop_hz"))
+RUN_S: float | None = (
+    None
+    if _config_value("loops", "run_s") is None
+    else float(_config_value("loops", "run_s"))
+)
 
 # Startup, reset, and arming timeouts.
-HEARTBEAT_TIMEOUT_S = 120.0  # is how long startup waits for the MAVLink heartbeat before failing.
-STARTUP_DATA_TIMEOUT_S = 4.0  # is how long startup waits for fresh telemetry and vision data.
-IMU_INIT_TIMEOUT_S = 1.5  # is the stationary sample window used for initial IMU bias estimation.
-GATE_MAP_INIT_TIMEOUT_S = 1.5  # is the startup window used to collect initial vision observations and build a path.
-POST_RESET_DELAY_S = 0.7  # gives the simulator time to settle after a reset command.
-ARM_TIMEOUT_S = 5.0  # is how long the system waits for the vehicle to arm successfully.
+HEARTBEAT_TIMEOUT_S = float(_config_value("startup", "heartbeat_timeout_s"))
+STARTUP_DATA_TIMEOUT_S = float(_config_value("startup", "startup_data_timeout_s"))
+IMU_INIT_TIMEOUT_S = float(_config_value("startup", "imu_init_timeout_s"))
+GATE_MAP_INIT_TIMEOUT_S = float(_config_value("startup", "gate_map_init_timeout_s"))
+POST_RESET_DELAY_S = float(_config_value("startup", "post_reset_delay_s"))
+ARM_TIMEOUT_S = float(_config_value("startup", "arm_timeout_s"))
 
 # Gate mapping
-GATE_MERGE_DISTANCE_M = 5.0  # merges repeated gate observations within this local-NED distance.
-REQUIRED_MINIMUM_OBSERVATION_COUNT = 5  # requires this many merged observations before a gate is published.
-GATE_LOCKOUT_COUNT = 500  # locks a gate pose after this many merged observations.
-GATE_MAX_OBSERVATION_DISTANCE_M = 40.0  # ignores gate observations farther than this from the vehicle.
-GATE_TARGET_CANDIDATE_MIN_OBSERVATION_COUNT = 2  # allows tentative target use before full gate-map publication.
-GATE_TARGET_CANDIDATE_MIN_POSITION_CONFIDENCE = 0.35  # rejects weak candidate targets from noisy detections.
-GATE_TARGET_CANDIDATE_MAX_AVERAGE_RESIDUAL_M = 2.5  # rejects candidate targets whose merged positions are unstable.
-GATE_TARGET_CANDIDATE_MAX_DISTANCE_M = 45.0  # ignores tentative target candidates too far from the vehicle.
-
-# Path planning.
-PLANNING_MODE = "test"  # chooses the PathManager strategy: test or gate.
-PATH_UPDATE_MODE = "persist_crossed"  # chooses how new plans replace the active path: original, projected, persist_crossed, or splice.
-PATH_UPDATE_OBSERVATION_INTERVAL = 50  # updates the planned path after this many processed vision observations; 1 updates every observation.
-GATE_PASSED_DISTANCE_M = 1.7  # treats gates closer than this as already passed for planning purposes.
-PATH_CROSSED_GATE_PERSIST_DISTANCE_M = 15.0  # keeps a crossed gate as the path start anchor while the drone is near it.
-PATH_CROSSED_GATE_CURVATURE_PRESERVE_M = 3.0  # preserves this much active-path curvature after a persisted crossed gate.
-SPLINE_CORNER_TIGHTNESS = 0.03  # controls how tightly generated splines follow corner anchor points.
-ADAPTIVE_SPLINE_TIGHTNESS = False  # enables automatic corner tightness changes based on segment geometry.
-DISTANT_SPLINE_CORNER_TIGHTNESS = 0.10  # is the looser spline tightness used for distant or gentle turns.
-MIN_SPLINE_CORNER_TIGHTNESS = 0.20  # is the lower bound for adaptive spline tightness near turns.
-MAX_SPLINE_CORNER_TIGHTNESS = 0.95  # is the upper bound for adaptive spline tightness near sharp turns.
-GENTLE_TURN_ANGLE_DEG = 20.0  # defines the turn angle below which corners are treated as gentle.
-SHARP_TURN_ANGLE_DEG = 60.0  # defines the turn angle at which corners receive maximum adaptive tightness.
-SHORT_SEGMENT_REFERENCE_M = 5.0  # marks the segment length where nearby turns become more tightly constrained.
-LONG_SEGMENT_REFERENCE_M = 25.0  # marks the segment length where distance-based spline tightening fades out.
-PATH_SPACING_M = 0.25  # is the waypoint spacing used when sampling generated paths.
-PATH_TAIL_LENGTH_M = 10.0  # extends planned paths beyond the last gate along the terminal gate-to-gate tangent.
-PATH_SPLICE_LOOKAHEAD_GAIN_S = 1.5  # multiplies vehicle speed to choose how far ahead on the active path a new plan is spliced.
+GATE_MERGE_DISTANCE_M = float(_config_value("gate_map", "merge_distance_m"))
+REQUIRED_MINIMUM_OBSERVATION_COUNT = int(_config_value("gate_map", "required_minimum_observation_count"))
+GATE_LOCKOUT_COUNT = int(_config_value("gate_map", "lock_observation_count"))
+GATE_MAX_OBSERVATION_DISTANCE_M = float(_config_value("gate_map", "max_observation_distance_m"))
+GATE_TARGET_CANDIDATE_MIN_OBSERVATION_COUNT = int(_config_value("gate_map", "target_candidate_min_observation_count"))
+GATE_TARGET_CANDIDATE_MIN_POSITION_CONFIDENCE = float(_config_value("gate_map", "target_candidate_min_position_confidence"))
+GATE_TARGET_CANDIDATE_MAX_AVERAGE_RESIDUAL_M = float(_config_value("gate_map", "target_candidate_max_average_residual_m"))
+GATE_TARGET_CANDIDATE_MAX_DISTANCE_M = float(_config_value("gate_map", "target_candidate_max_distance_m"))
+GATE_PASSED_DISTANCE_M = float(_config_value("gate_map", "gate_passed_distance_m"))
 
 # Control mode and safety envelope.
-CONTROL_METHOD = "geometric_path_follower"  # selects which path-following controller produces the attitude target.
-FAILSAFE_DISTANCE = 10  # is the maximum allowed cross-track path error before ending racing flight.
-ALLOW_FLIGHT = True  # enables sending flight commands when the system mode allows it.
+ALLOW_FLIGHT = bool(_config_value("flight", "allow_flight"))
 
-# Attitude inner-loop response.
-ATTITUDE_ERROR_QUATERNION_ROLL_SCALE = 1.65  # Test-only sim command boost; increase to bank faster when sending quaternion error targets.
-ATTITUDE_ERROR_QUATERNION_PITCH_SCALE = 1.65  # Test-only sim command boost for pitch error quaternion vector component.
-ATTITUDE_ERROR_QUATERNION_YAW_SCALE = 1.65  # Test-only sim command boost for yaw error quaternion vector component.
-ATTITUDE_ROLL_GAIN = 1.5  # Roll attitude P gain; increase for faster banking, decrease if roll oscillates.
-ATTITUDE_PITCH_GAIN = 1.5  # Pitch attitude P gain; increase for faster pitch response, decrease if pitch oscillates.
-ATTITUDE_YAW_GAIN = 1.5  # Yaw attitude P gain; increase for faster heading alignment, decrease if yaw hunts.
-ATTITUDE_DAMPING = 0.2  # Body-rate damping; increase to reduce attitude overshoot, decrease if response feels sluggish.
-ATTITUDE_RATE_FILTER_ALPHA = 0.8  # Body-rate filter alpha; higher follows gyro faster, lower smooths noisy damping.
-ATTITUDE_MAX_BODY_RATE_RPS = 7.0  # Body-rate command cap; increase for faster attitude changes, decrease for gentler motion.
+# MAVLink attitude target scaling.
+ATTITUDE_ERROR_QUATERNION_ROLL_SCALE = float(_config_value("mavlink_attitude_target", "error_quaternion_roll_scale"))
+ATTITUDE_ERROR_QUATERNION_PITCH_SCALE = float(_config_value("mavlink_attitude_target", "error_quaternion_pitch_scale"))
+ATTITUDE_ERROR_QUATERNION_YAW_SCALE = float(_config_value("mavlink_attitude_target", "error_quaternion_yaw_scale"))
 
 # IMU gyro spike rejection.
-GYRO_SPIKE_FILTER_ENABLED = False  # Rejects isolated angular-rate spikes before attitude integration and control use.
-GYRO_SPIKE_MAX_RATE_RPS = 20.0  # Rejects a single gyro sample above this body-rate norm unless it persists.
-GYRO_SPIKE_MAX_DELTA_RPS = 10.0  # Rejects a single gyro sample whose rate jump from the previous accepted rate exceeds this norm.
-GYRO_SPIKE_MAX_REJECTIONS = 1  # Accepts the sample after this many consecutive rejections so real sustained motion is not hidden.
-
-# Path lookahead and preview.
-CARROT_LOOKAHEAD_M = 4.0 # Carrot-point preview distance; increase to turn earlier/smoother, decrease to track nearby path more tightly.
-SPEED_LOOKAHEAD_M = 30  # Curvature preview distance for speed planning; increase to slow earlier, decrease to react later.
-
-# Cross-track position hold: horizontal component.
-GEOMETRIC_CROSS_TRACK_GAIN = 3.5  # Horizontal cross-track P gain; increase to pull harder toward the path, decrease if it weaves.
-GEOMETRIC_CROSS_TRACK_DAMPING =  2.0 # Horizontal cross-track D gain; increase to damp sideways drift, decrease if turns feel over-braked.
-
-# Cross-track position hold: vertical component.
-GEOMETRIC_VERTICAL_CROSS_TRACK_GAIN = 3.5  # Vertical cross-track P gain; increase to correct altitude error sooner, decrease if altitude oscillates.
-GEOMETRIC_VERTICAL_CROSS_TRACK_DAMPING = 2.0  # Vertical cross-track D gain; increase to damp climb/descent rate, decrease if altitude lags.
-
-# Cross-track gain scheduling from upcoming curvature.
-GEOMETRIC_CROSS_GAIN_CURVATURE_DEADBAND = 0.25  # Curvature below this leaves cross-track gains unchanged; raise to ignore gentler turns.
-GEOMETRIC_CROSS_GAIN_CURVATURE_RAMP = 0.5  # Curvature span to full scheduled gain; lower makes boosts arrive faster, higher makes them gradual.
-GEOMETRIC_HORIZONTAL_CROSS_GAIN_CURVATURE_BOOST = 2.3  # Max fractional horizontal gain boost in curves; increase for tighter turns.
-GEOMETRIC_VERTICAL_CROSS_GAIN_CURVATURE_BOOST = 1.3  # Max fractional vertical gain boost in curves; keep modest to avoid altitude coupling.
-
-# Command smoothing.
-GEOMETRIC_ACCELERATION_FILTER_ALPHA = 0.2  # Desired-acceleration filter alpha; 1 disables smoothing, lower softens command jumps.
-
-# Along-track speed loop and curve speed planning.
-GEOMETRIC_SPEED_GAIN = 0.65  # Along-track speed P gain; increase to reach target speed faster, decrease if it surges.
-GEOMETRIC_SPEED_DAMPING = 0.6  # Along-track speed D gain on acceleration; increase to reduce speed overshoot, decrease for quicker response.
-GEOMETRIC_MAX_SPEED_MPS = 10  # Straight-path target speed cap; increase for faster runs, decrease if tracking cannot keep up.
-GEOMETRIC_MAX_LATERAL_ACCELERATION_MPS2 = 50.0  # Curve-speed lateral accel budget; increase to carry more speed through turns.
-GEOMETRIC_CURVATURE_SPEED_DEADBAND = 0.25  # Curvature below this commands max speed; raise to ignore mild curves, lower to slow sooner.
-GEOMETRIC_CURVATURE_SPEED_RAMP = 0.1  # Curvature softening ramp for speed reduction; reduce for a lower speed in tight corners.
-GEOMETRIC_CROSS_TRACK_SPEED_DERATE_START_M = 0.5  # Cross-track error where speed derating starts; raise to ignore small tracking errors.
-GEOMETRIC_CROSS_TRACK_SPEED_DERATE_FULL_M = 2.0  # Cross-track error where derating reaches full strength; lower to slow harder sooner.
-GEOMETRIC_CROSS_TRACK_SPEED_DERATE_MIN_SCALE = 0.7  # Minimum speed scale at full derate; lower to slow more while far off path.
-GEOMETRIC_LAUNCH_SPEED_RAMP_S = 1.7  # Seconds to ramp path-following speed from zero after takeoff; increase to soften launch.
-
-# Curvature turn feed-forward.
-GEOMETRIC_CURVATURE_FEEDFORWARD_GAIN = 0.7  # Turn feed-forward gain; increase to bank into turns earlier, decrease if it over-turns.
-GEOMETRIC_CURVATURE_FEEDFORWARD_MAX_ACCELERATION_MPS2 = 10.0  # Feed-forward accel cap; increase for stronger turn anticipation.
-
-# Geometric acceleration, tilt, and thrust limits.
-GEOMETRIC_HOVER_THRUST = 0.2644  # Normalized hover thrust; tune to the thrust that holds level hover.
-GEOMETRIC_MAX_COMMANDED_ACCELERATION_MPS2 = 20  # Total desired-accel cap; decrease to soften all path-follower commands.
-GEOMETRIC_MAX_COMMANDED_JERK_MPS3 = 50.0  # Desired-accel slew cap; decrease to soften command-vector jumps.
-GEOMETRIC_MAX_UPWARD_ACCELERATION_MPS2 = 15.0  # Upward accel cap in NED (-Z); increase for harder climbs, decrease to prevent pop-ups.
-GEOMETRIC_MAX_DOWNWARD_ACCELERATION_MPS2 = 9.0  # Downward accel cap in NED (+Z); increase to descend faster, keep below gravity for margin.
-GEOMETRIC_MAX_TILT_DEG = 90  # Desired tilt cap; increase for more aggressive banking/inversion, decrease for upright flight.
-GEOMETRIC_TILT_THRUST_ALIGNMENT_MIN = 0.0 # Minimum thrust scale while actual tilt catches desired tilt; raise to preserve thrust, lower to suppress climb-before-bank.
-
-# Gate-aware acceleration controller.
+GYRO_SPIKE_FILTER_ENABLED = bool(_config_value("gyro_spike_filter", "enabled"))
+GYRO_SPIKE_MAX_RATE_RPS = float(_config_value("gyro_spike_filter", "max_rate_rps"))
+GYRO_SPIKE_MAX_DELTA_RPS = float(_config_value("gyro_spike_filter", "max_delta_rps"))
+GYRO_SPIKE_MAX_REJECTIONS = int(_config_value("gyro_spike_filter", "max_rejections"))
 
 # Speed limits and turn-speed shaping.
-AUTIPILOT_MAX_SPEED_MPS = 25  # Straight speed cap; raise for faster straights, lower if braking into turns is too abrupt.
-AUTIPILOT_MIN_SPEED_MPS = 2.0  # Minimum curvature-limited speed; raise to avoid crawling, lower to permit very slow tight turns.
-AUTIPILOT_MAX_LATERAL_ACCELERATION_MPS2 = 36.0  # Default turn-speed accel budget; raise to carry more speed, lower to slow earlier.
-AUTIPILOT_MEDIUM_TURN_ANGLE_DEG = 40.0  # Angle where medium-turn speed shaping starts; lower to affect gentler turns sooner.
-AUTIPILOT_TIGHT_TURN_ANGLE_DEG = 95.0  # Angle where tight-turn speed shaping is full; lower to treat more turns as tight.
-AUTIPILOT_MEDIUM_TURN_LATERAL_ACCELERATION_MPS2 = 24.0  # Medium-turn speed budget; raise to fly through medium turns faster, lower to slow them more.
-AUTIPILOT_TIGHT_TURN_LATERAL_ACCELERATION_MPS2 = 15.0  # Tight-turn speed budget; raise to carry speed through sharp turns, lower to stay tighter/slower.
+AUTIPILOT_MAX_SPEED_MPS = float(_config_value("autipilot", "v_max_mps"))
+AUTIPILOT_MIN_SPEED_MPS = float(_config_value("autipilot", "v_min_mps"))
+AUTIPILOT_MAX_LATERAL_ACCELERATION_MPS2 = float(_config_value("autipilot", "a_lat_max_mps2"))
+AUTIPILOT_MEDIUM_TURN_ANGLE_DEG = float(_config_value("autipilot", "medium_turn_angle_deg"))
+AUTIPILOT_TIGHT_TURN_ANGLE_DEG = float(_config_value("autipilot", "tight_turn_angle_deg"))
+AUTIPILOT_MEDIUM_TURN_LATERAL_ACCELERATION_MPS2 = float(_config_value("autipilot", "medium_turn_a_lat_mps2"))
+AUTIPILOT_TIGHT_TURN_LATERAL_ACCELERATION_MPS2 = float(_config_value("autipilot", "tight_turn_a_lat_mps2"))
 
 # Speed control near gates.
-AUTIPILOT_SPEED_GAIN = 0.7  # Along-aim speed P gain; raise for harder accel/braking, lower to reduce pitch-up/pitch-down snaps.
-AUTIPILOT_NEAR_GATE_SPEED_GAIN_NEAR_M = 1.0  # Distance where speed gain reaches minimum; raise to soften speed control earlier.
-AUTIPILOT_NEAR_GATE_SPEED_GAIN_FAR_M = 5.0  # Distance where speed gain starts reducing; raise to begin pitch/brake suppression farther out.
-AUTIPILOT_NEAR_GATE_SPEED_GAIN_MIN_SCALE = 1.0  # Minimum speed-gain multiplier near gates; lower to reduce pitch from accel/braking more.
-AUTIPILOT_NEAR_GATE_SPEED_GAIN_RAMP_S = 0.5  # Time to slew speed-gain scale up/down; raise for smoother changes, lower for faster response.
+AUTIPILOT_SPEED_GAIN = float(_config_value("autipilot", "kp_speed"))
+AUTIPILOT_NEAR_GATE_SPEED_GAIN_NEAR_M = float(_config_value("autipilot", "near_gate_speed_gain_near_m"))
+AUTIPILOT_NEAR_GATE_SPEED_GAIN_FAR_M = float(_config_value("autipilot", "near_gate_speed_gain_far_m"))
+AUTIPILOT_NEAR_GATE_SPEED_GAIN_MIN_SCALE = float(_config_value("autipilot", "near_gate_speed_gain_min_scale"))
+AUTIPILOT_NEAR_GATE_SPEED_GAIN_RAMP_S = float(_config_value("autipilot", "near_gate_speed_gain_ramp_s"))
 
 # Direction, lateral, and vertical gains.
-AUTIPILOT_DIRECTION_GAIN = 1.5  # Velocity alignment P gain; raise to point velocity toward aim faster, lower if lateral commands are twitchy.
-AUTIPILOT_DIRECTION_DAMPING = 0.6  # Measured lateral-accel damping; raise to resist oscillation, lower if response feels sluggish.
-AUTIPILOT_LATERAL_POSITION_GAIN = 1.7  # Gate-line position correction; raise to pull harder to the aim line, lower to allow more drift/fly-through.
-AUTIPILOT_LATERAL_DAMPING = 2.1  # Lateral velocity damping; raise to kill sideways drift sooner, lower if it over-corrects near gates.
-AUTIPILOT_VERTICAL_POSITION_GAIN = 2.6  # Gate altitude P gain; raise to hit gate height harder, lower to reduce pop-up/drop-through behavior.
-AUTIPILOT_VERTICAL_DAMPING = 1.8  # Vertical velocity damping; raise to suppress climb/descent rate, lower if altitude response is too lazy.
+AUTIPILOT_DIRECTION_GAIN = float(_config_value("autipilot", "kp_dir"))
+AUTIPILOT_DIRECTION_DAMPING = float(_config_value("autipilot", "kd_dir"))
+AUTIPILOT_LATERAL_POSITION_GAIN = float(_config_value("autipilot", "kp_lat"))
+AUTIPILOT_LATERAL_DAMPING = float(_config_value("autipilot", "kd_lat"))
+AUTIPILOT_VERTICAL_POSITION_GAIN = float(_config_value("autipilot", "kp_z"))
+AUTIPILOT_VERTICAL_DAMPING = float(_config_value("autipilot", "kd_z"))
 
 # Next-gate lookahead and fly-through behavior.
-AUTIPILOT_LOOKAHEAD_NEAR_M = 0.6  # Distance where next-gate lookahead reaches full blend; raise to delay full turn-in closer to gate.
-AUTIPILOT_LOOKAHEAD_FAR_M = 2.6  # Distance where next-gate lookahead begins; raise to start turning earlier, lower to stay aimed at current gate longer.
-AUTIPILOT_FLY_THROUGH_ENABLED = True  # Temporarily disables fly-through lookahead scaling; set True to restore this group.
-AUTIPILOT_FLY_THROUGH_TURN_ANGLE_START_DEG = 70.0  # Turn angle where long-exit fly-through starts; lower to enable it on milder turns.
-AUTIPILOT_FLY_THROUGH_TURN_ANGLE_FULL_DEG = 120.0  # Turn angle for maximum fly-through; lower for stronger effect on less severe turns.
-AUTIPILOT_FLY_THROUGH_NEXT_GATE_DISTANCE_START_M = 12.0  # Next-gate distance where fly-through starts; lower to enable it on shorter exits.
-AUTIPILOT_FLY_THROUGH_NEXT_GATE_DISTANCE_FULL_M = 30.0  # Next-gate distance for maximum fly-through; lower to reach full effect sooner.
-AUTIPILOT_FLY_THROUGH_LOOKAHEAD_MIN_SCALE = 0.25  # Minimum next-gate lookahead scale; lower to fly straighter through gates, raise for earlier turn-in.
+AUTIPILOT_LOOKAHEAD_NEAR_M = float(_config_value("autipilot", "lookahead_near_m"))
+AUTIPILOT_LOOKAHEAD_FAR_M = float(_config_value("autipilot", "lookahead_far_m"))
+AUTIPILOT_FLY_THROUGH_ENABLED = bool(_config_value("autipilot", "fly_through_enabled"))
+AUTIPILOT_FLY_THROUGH_TURN_ANGLE_START_DEG = float(_config_value("autipilot", "fly_through_turn_angle_start_deg"))
+AUTIPILOT_FLY_THROUGH_TURN_ANGLE_FULL_DEG = float(_config_value("autipilot", "fly_through_turn_angle_full_deg"))
+AUTIPILOT_FLY_THROUGH_NEXT_GATE_DISTANCE_START_M = float(_config_value("autipilot", "fly_through_next_gate_distance_start_m"))
+AUTIPILOT_FLY_THROUGH_NEXT_GATE_DISTANCE_FULL_M = float(_config_value("autipilot", "fly_through_next_gate_distance_full_m"))
+AUTIPILOT_FLY_THROUGH_LOOKAHEAD_MIN_SCALE = float(_config_value("autipilot", "fly_through_lookahead_min_scale"))
 
 # Gate crossing and post-cross recovery.
-AUTIPILOT_GATE_CROSS_VELOCITY_DAMPING = 2.0  # Near-gate cross-velocity cancel gain; raise to stop lateral gate drift, lower if it spikes a_des.
-AUTIPILOT_GATE_CROSS_VELOCITY_CANCEL_NEAR_M = 2.0  # Distance for full cross-velocity cancel; raise to apply full damping earlier.
-AUTIPILOT_GATE_CROSS_VELOCITY_CANCEL_FAR_M = 8.0  # Distance where cross-velocity cancel starts; raise to start drift cancellation earlier.
-AUTIPILOT_APPROACH_GAIN_MIN_SCALE = 0.8  # Minimum lateral gain near crossing; lower to relax through gates, raise to hold the aim line.
-AUTIPILOT_POST_CROSS_TURN_SCALE = 0.12  # Post-cross turn gain boost; raise to turn harder after crossing, lower to soften gate-exit snaps.
-AUTIPILOT_POST_CROSS_RAMP_DISTANCE_M = 8.0  # Distance to ramp post-cross gain; raise for slower recovery, lower for faster turn commitment.
+AUTIPILOT_GATE_CROSS_VELOCITY_DAMPING = float(_config_value("autipilot", "gate_cross_velocity_damping"))
+AUTIPILOT_GATE_CROSS_VELOCITY_CANCEL_NEAR_M = float(_config_value("autipilot", "gate_cross_velocity_cancel_near_m"))
+AUTIPILOT_GATE_CROSS_VELOCITY_CANCEL_FAR_M = float(_config_value("autipilot", "gate_cross_velocity_cancel_far_m"))
+AUTIPILOT_APPROACH_GAIN_MIN_SCALE = float(_config_value("autipilot", "approach_gain_min_scale"))
+AUTIPILOT_POST_CROSS_TURN_SCALE = float(_config_value("autipilot", "post_cross_turn_scale"))
+AUTIPILOT_POST_CROSS_RAMP_DISTANCE_M = float(_config_value("autipilot", "post_cross_ramp_distance_m"))
 
 # Launch, thrust, and command limiting.
-AUTIPILOT_LAUNCH_SPEED_RAMP_S = 0.25  # Launch speed ramp time; raise to soften launch, lower to reach speed sooner.
-AUTIPILOT_MAX_SPECIFIC_THRUST_MPS2 = 37.090204236006045  # Thrust scaling reference; adjust only when hover thrust calibration changes.
-AUTIPILOT_MIN_NORMALIZED_THRUST = 0.05  # Lower thrust clamp; raise to prevent low-thrust drops, lower to allow stronger unloading.
-AUTIPILOT_MAX_NORMALIZED_THRUST = 0.95  # Upper thrust clamp; raise for more authority, lower to cap climb/accel spikes.
-AUTIPILOT_MAX_COMMANDED_ACCELERATION_MPS2 = 28.0  # Total a_des magnitude cap; lower to soften all commands, raise for more aggressive control.
-AUTIPILOT_GATE_SWITCH_ACCELERATION_RAMP_S = 0.35  # Gate-switch a_des blend time; raise to soften target changes, lower for faster response.
-AUTIPILOT_MAX_COMMANDED_JERK_MPS3 = 40.0  # Desired-accel slew cap; lower to smooth command jumps, raise for sharper response.
+AUTIPILOT_LAUNCH_SPEED_RAMP_S = float(_config_value("autipilot", "launch_speed_ramp_s"))
+AUTIPILOT_MAX_SPECIFIC_THRUST_MPS2 = float(_config_value("autipilot", "max_specific_thrust_mps2"))
+AUTIPILOT_MIN_NORMALIZED_THRUST = float(_config_value("autipilot", "min_normalized_thrust"))
+AUTIPILOT_MAX_NORMALIZED_THRUST = float(_config_value("autipilot", "max_normalized_thrust"))
+AUTIPILOT_MAX_COMMANDED_ACCELERATION_MPS2 = float(_config_value("autipilot", "max_commanded_acceleration_mps2"))
+AUTIPILOT_GATE_SWITCH_ACCELERATION_RAMP_S = float(_config_value("autipilot", "gate_switch_acceleration_ramp_s"))
+AUTIPILOT_MAX_COMMANDED_JERK_MPS3 = float(_config_value("autipilot", "max_commanded_jerk_mps3"))
 
 # Output and recording.
-CREATE_VIDEO = False  # enables post-run MP4 generation from logged visual outputs.
-RECORD_SCREEN = False  # enables OBS screen recording during the run.
+CREATE_VIDEO = bool(_config_value("recording", "create_video"))
+RECORD_SCREEN = bool(_config_value("recording", "record_screen"))
 
 # Visual odometry configuration.
-ENABLE_VIO = False  # enables monocular visual-inertial odometry corrections.
-VIO_CAMERA_HORIZONTAL_FOV_DEG = 90.0  # is the camera horizontal field of view used by the VIO frontend.
-VIO_CAMERA_TILT_DEG = 20.0  # is the camera pitch angle relative to the vehicle body.
-VIO_BODY_TO_CAMERA_TRANSLATION_BODY_FRD_M = (0.0, 0.0, 0.0)  # is the camera offset from the body origin in FRD coordinates.
-VIO_POSITION_ALPHA = 0.02  # controls how strongly VIO position corrections affect the state estimate.
-VIO_VELOCITY_ALPHA = 0.05  # controls how strongly VIO velocity corrections affect the state estimate.
-VIO_ATTITUDE_ALPHA = 0.03  # controls how strongly VIO attitude corrections affect the state estimate.
+ENABLE_VIO = bool(_config_value("vio", "enabled"))
+VIO_CAMERA_HORIZONTAL_FOV_DEG = float(_config_value("vio", "camera_horizontal_fov_deg"))
+VIO_CAMERA_TILT_DEG = float(_config_value("vio", "camera_tilt_deg"))
+VIO_BODY_TO_CAMERA_TRANSLATION_BODY_FRD_M = tuple(
+    float(value)
+    for value in _config_value("vio", "body_to_camera_translation_body_frd_m")
+)
+VIO_POSITION_ALPHA = float(_config_value("vio", "position_alpha"))
+VIO_VELOCITY_ALPHA = float(_config_value("vio", "velocity_alpha"))
+VIO_ATTITUDE_ALPHA = float(_config_value("vio", "attitude_alpha"))
 
 # State-estimator Kalman filter configuration.
-ENABLE_KALMAN_FILTER = False  # enables Kalman filtering for position and velocity estimation.
-KALMAN_INITIAL_POSITION_VARIANCE_M2 = 0.0  # sets initial position uncertainty for the Kalman state.
-KALMAN_INITIAL_VELOCITY_VARIANCE_M2PS2 = 0.0  # sets initial velocity uncertainty for the Kalman state.
-KALMAN_ACCELERATION_PROCESS_NOISE_MPS2 = 1.0  # controls how much IMU acceleration uncertainty grows covariance.
-KALMAN_VIO_POSITION_MEASUREMENT_VARIANCE_M2 = 0.25  # sets trusted variance for VIO position measurements.
-KALMAN_VIO_VELOCITY_MEASUREMENT_VARIANCE_M2PS2 = 1.0  # sets trusted variance for VIO velocity measurements.
-KALMAN_MIN_MEASUREMENT_CONFIDENCE = 0.05  # prevents low-confidence VIO updates from becoming infinitely noisy.
+ENABLE_KALMAN_FILTER = bool(_config_value("kalman", "enabled"))
+KALMAN_INITIAL_POSITION_VARIANCE_M2 = float(_config_value("kalman", "initial_position_variance_m2"))
+KALMAN_INITIAL_VELOCITY_VARIANCE_M2PS2 = float(_config_value("kalman", "initial_velocity_variance_m2ps2"))
+KALMAN_ACCELERATION_PROCESS_NOISE_MPS2 = float(_config_value("kalman", "acceleration_process_noise_mps2"))
+KALMAN_VIO_POSITION_MEASUREMENT_VARIANCE_M2 = float(_config_value("kalman", "vio_position_measurement_variance_m2"))
+KALMAN_VIO_VELOCITY_MEASUREMENT_VARIANCE_M2PS2 = float(_config_value("kalman", "vio_velocity_measurement_variance_m2ps2"))
+KALMAN_MIN_MEASUREMENT_CONFIDENCE = float(_config_value("kalman", "min_measurement_confidence"))
 
 # Initialization defaults.
-VISION_PERCEPTION_BACKEND = "deterministic_v3_2"  # selects the gate perception implementation used for vision frames.
-VISION_EXECUTOR_MAX_WORKERS = 1  # controls the number of background workers for vision processing.
-VISION_EXECUTOR_THREAD_PREFIX = "vision"  # names background vision worker threads for debugging.
-PATH_MAX_POINTS = 1000  # caps the number of sampled waypoints kept in a generated path.
-TEST_PATH_GATE_POINTS_LOCAL_NED_M = [
-    (10.9, 0.0, -0.5),
-    (26, 8.5, -2.8),
-    (34.535, 11.5, -2.252),
-    (43.9, 3.7, -1.2),
-    (60.848, -13.544, -0.085),
-]  # mock gate centers used by build_test_path() when PLANNING_MODE is test.
-
-# Finish-hover velocity damping.
-HOVER_LATERAL_VELOCITY_GAIN = 2.5  # Hover horizontal velocity damping; increase to stop XY drift faster, decrease if it rocks.
-HOVER_VERTICAL_VELOCITY_GAIN = 0.18  # Hover vertical velocity damping; increase to stop climb/descent faster, decrease if it bounces.
-HOVER_VERTICAL_ACCELERATION_GAIN = 0.035  # Hover vertical accel damping; increase to resist vertical acceleration, decrease if noisy.
+VISION_PERCEPTION_BACKEND = str(_config_value("vision", "perception_backend"))
+VISION_EXECUTOR_MAX_WORKERS = int(_config_value("vision", "executor_max_workers"))
+VISION_EXECUTOR_THREAD_PREFIX = str(_config_value("vision", "executor_thread_prefix"))
 
 # Logging.
-RUNS_ROOT = Path(__file__).resolve().parents[4] / "Logs" / "flight" / "runs"  # is the root directory where timestamped run logs are created.
+RUNS_ROOT = _config_path("logging", "runs_root")
 
 
 def _initialization_constants() -> dict[str, object]:
     return {
         name: _constant_log_value(value)
         for name, value in globals().items()
-        if name.isupper()
+        if name.isupper() and not name.startswith("_")
     }
 
 
@@ -283,10 +231,6 @@ class RuntimeSettings:
     gate_map_init_timeout_s: float
     post_reset_delay_s: float
     arm_timeout_s: float
-    planning_mode: str
-    path_update_observation_interval: int
-    control_method: str
-    failsafe_distance_m: float
     allow_flight: bool
     create_video: bool
     record_screen: bool
@@ -305,11 +249,7 @@ def initialize() -> tuple[
     OBSRecorder,
     SystemModeManager,
     GateMap,
-    PathManager,
-    AttitudeController,
-    GeometricPathFollower,
     AutiPilot,
-    HoverController,
 ]:
     run_dir = Logger.timestamped_dir(RUNS_ROOT)
     log_path = run_dir / "run.json"
@@ -325,10 +265,6 @@ def initialize() -> tuple[
         gate_map_init_timeout_s=GATE_MAP_INIT_TIMEOUT_S,
         post_reset_delay_s=POST_RESET_DELAY_S,
         arm_timeout_s=ARM_TIMEOUT_S,
-        planning_mode=PLANNING_MODE,
-        path_update_observation_interval=max(1, int(PATH_UPDATE_OBSERVATION_INTERVAL)),
-        control_method=CONTROL_METHOD,
-        failsafe_distance_m=FAILSAFE_DISTANCE,
         allow_flight=ALLOW_FLIGHT,
         create_video=CREATE_VIDEO,
         record_screen=RECORD_SCREEN,
@@ -344,8 +280,6 @@ def initialize() -> tuple[
             "loop_hz": INNER_LOOP_HZ,
             "inner_loop_hz": INNER_LOOP_HZ,
             "outer_loop_hz": OUTER_LOOP_HZ,
-            "control_method": CONTROL_METHOD,
-            "planning_mode": PLANNING_MODE,
             "initialization_constants": _initialization_constants(),
         }
     )
@@ -411,79 +345,6 @@ def initialize() -> tuple[
             GATE_TARGET_CANDIDATE_MAX_AVERAGE_RESIDUAL_M
         ),
         candidate_target_max_distance_m=GATE_TARGET_CANDIDATE_MAX_DISTANCE_M,
-    )
-
-    path_manager = PathManager(
-        spline_corner_tightness=SPLINE_CORNER_TIGHTNESS,
-        adaptive_spline_tightness=ADAPTIVE_SPLINE_TIGHTNESS,
-        distant_spline_corner_tightness=DISTANT_SPLINE_CORNER_TIGHTNESS,
-        min_spline_corner_tightness=MIN_SPLINE_CORNER_TIGHTNESS,
-        max_spline_corner_tightness=MAX_SPLINE_CORNER_TIGHTNESS,
-        gentle_turn_angle_deg=GENTLE_TURN_ANGLE_DEG,
-        sharp_turn_angle_deg=SHARP_TURN_ANGLE_DEG,
-        short_segment_reference_m=SHORT_SEGMENT_REFERENCE_M,
-        long_segment_reference_m=LONG_SEGMENT_REFERENCE_M,
-        planning_mode=PLANNING_MODE,
-        path_update_mode=PATH_UPDATE_MODE,
-        path_crossed_gate_persist_distance_m=PATH_CROSSED_GATE_PERSIST_DISTANCE_M,
-        path_crossed_gate_curvature_preserve_m=PATH_CROSSED_GATE_CURVATURE_PRESERVE_M,
-        spacing_m=PATH_SPACING_M,
-        path_tail_length_m=PATH_TAIL_LENGTH_M,
-        path_splice_lookahead_gain_s=PATH_SPLICE_LOOKAHEAD_GAIN_S,
-        max_points=PATH_MAX_POINTS,
-    )
-    if PLANNING_MODE == "test":
-        path_manager.build_test_path(
-            gate_points_local_ned_m=TEST_PATH_GATE_POINTS_LOCAL_NED_M,
-        )
-
-    attitude_controller = AttitudeController(
-        roll_gain=ATTITUDE_ROLL_GAIN,
-        pitch_gain=ATTITUDE_PITCH_GAIN,
-        yaw_gain=ATTITUDE_YAW_GAIN,
-        damping=ATTITUDE_DAMPING,
-        rate_filter_alpha=ATTITUDE_RATE_FILTER_ALPHA,
-        max_body_rate_rps=ATTITUDE_MAX_BODY_RATE_RPS,
-        error_quaternion_roll_scale=ATTITUDE_ERROR_QUATERNION_ROLL_SCALE,
-        error_quaternion_pitch_scale=ATTITUDE_ERROR_QUATERNION_PITCH_SCALE,
-        error_quaternion_yaw_scale=ATTITUDE_ERROR_QUATERNION_YAW_SCALE,
-    )
-
-    geometric_path_follower = GeometricPathFollower(
-        kp_cross=GEOMETRIC_CROSS_TRACK_GAIN,
-        kd_cross=GEOMETRIC_CROSS_TRACK_DAMPING,
-        kp_cross_vertical=GEOMETRIC_VERTICAL_CROSS_TRACK_GAIN,
-        kd_cross_vertical=GEOMETRIC_VERTICAL_CROSS_TRACK_DAMPING,
-        cross_gain_curvature_deadband=GEOMETRIC_CROSS_GAIN_CURVATURE_DEADBAND,
-        cross_gain_curvature_ramp=GEOMETRIC_CROSS_GAIN_CURVATURE_RAMP,
-        horizontal_cross_gain_curvature_boost=(
-            GEOMETRIC_HORIZONTAL_CROSS_GAIN_CURVATURE_BOOST
-        ),
-        vertical_cross_gain_curvature_boost=GEOMETRIC_VERTICAL_CROSS_GAIN_CURVATURE_BOOST,
-        kp_speed=GEOMETRIC_SPEED_GAIN,
-        kd_speed=GEOMETRIC_SPEED_DAMPING,
-        acceleration_filter_alpha=GEOMETRIC_ACCELERATION_FILTER_ALPHA,
-        lookahead_m=CARROT_LOOKAHEAD_M,
-        speed_lookahead_m=SPEED_LOOKAHEAD_M,
-        v_max=GEOMETRIC_MAX_SPEED_MPS,
-        a_lat_max=GEOMETRIC_MAX_LATERAL_ACCELERATION_MPS2,
-        curvature_speed_deadband=GEOMETRIC_CURVATURE_SPEED_DEADBAND,
-        curvature_speed_ramp=GEOMETRIC_CURVATURE_SPEED_RAMP,
-        cross_track_speed_derate_start_m=GEOMETRIC_CROSS_TRACK_SPEED_DERATE_START_M,
-        cross_track_speed_derate_full_m=GEOMETRIC_CROSS_TRACK_SPEED_DERATE_FULL_M,
-        cross_track_speed_derate_min_scale=GEOMETRIC_CROSS_TRACK_SPEED_DERATE_MIN_SCALE,
-        launch_speed_ramp_s=GEOMETRIC_LAUNCH_SPEED_RAMP_S,
-        curvature_feedforward_gain=GEOMETRIC_CURVATURE_FEEDFORWARD_GAIN,
-        curvature_feedforward_max_acceleration_mps2=(
-            GEOMETRIC_CURVATURE_FEEDFORWARD_MAX_ACCELERATION_MPS2
-        ),
-        hover_thrust=GEOMETRIC_HOVER_THRUST,
-        max_commanded_acceleration_mps2=GEOMETRIC_MAX_COMMANDED_ACCELERATION_MPS2,
-        max_commanded_jerk_mps3=GEOMETRIC_MAX_COMMANDED_JERK_MPS3,
-        max_upward_acceleration_mps2=GEOMETRIC_MAX_UPWARD_ACCELERATION_MPS2,
-        max_downward_acceleration_mps2=GEOMETRIC_MAX_DOWNWARD_ACCELERATION_MPS2,
-        max_tilt_deg=GEOMETRIC_MAX_TILT_DEG,
-        tilt_thrust_alignment_min=GEOMETRIC_TILT_THRUST_ALIGNMENT_MIN,
     )
 
     autipilot = AutiPilot(
@@ -553,13 +414,12 @@ def initialize() -> tuple[
             max_commanded_acceleration_mps2=AUTIPILOT_MAX_COMMANDED_ACCELERATION_MPS2,
             gate_switch_acceleration_ramp_s=AUTIPILOT_GATE_SWITCH_ACCELERATION_RAMP_S,
             max_commanded_jerk_mps3=AUTIPILOT_MAX_COMMANDED_JERK_MPS3,
-        )
-    )
-
-    hover_controller = HoverController(
-        lateral_velocity_gain=HOVER_LATERAL_VELOCITY_GAIN,
-        vertical_velocity_gain=HOVER_VERTICAL_VELOCITY_GAIN,
-        vertical_acceleration_gain=HOVER_VERTICAL_ACCELERATION_GAIN,
+        ),
+        error_quaternion_scales=(
+            ATTITUDE_ERROR_QUATERNION_ROLL_SCALE,
+            ATTITUDE_ERROR_QUATERNION_PITCH_SCALE,
+            ATTITUDE_ERROR_QUATERNION_YAW_SCALE,
+        ),
     )
 
     return (
@@ -574,9 +434,5 @@ def initialize() -> tuple[
         obs_recorder,
         system_mode_manager,
         gate_map,
-        path_manager,
-        attitude_controller,
-        geometric_path_follower,
         autipilot,
-        hover_controller,
     )
