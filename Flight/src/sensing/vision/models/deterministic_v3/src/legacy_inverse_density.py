@@ -15,7 +15,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 MODELS_ROOT = ROOT.parent
 RUNS = MODELS_ROOT / "detection_v2" / "runs"
-LOG_RUNS = ROOT.parents[5] / "Logs" / "flight" / "runs"
+LOG_RUNS = ROOT.parents[5] / "Viewer" / "logs" / "flight" / "runs"
 REVIEWS = ROOT / "legacy_review_runs"
 MANIFEST = ROOT / "ui" / "frontend" / "data" / "legacy-runs-manifest.json"
 LUT_PATH = ROOT / "assets" / "color_lut_v1.npz"

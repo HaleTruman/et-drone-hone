@@ -3,7 +3,7 @@
 `LegacyVision.review_pipeline.evaluate_reference_dataset` compares the live
 Flight `deterministic_v3` and `deterministic_v3_2` backends against Unreal
 reference truth. It resets both backends at every run boundary and writes
-replaceable artifacts under `Logs/evaluation/runs`.
+replaceable artifacts under `Viewer/logs/evaluation/runs`.
 
 ## Run
 

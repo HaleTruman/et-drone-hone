@@ -202,7 +202,7 @@ This target selection does not depend on the path manager.
 Runs are written under the configured `logging.runs_root`, which defaults to:
 
 ```text
-../Logs/flight/runs
+../Viewer/logs/flight/runs
 ```
 
 Each run includes structured JSON logs and captured vision frames:

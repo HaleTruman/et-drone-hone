@@ -1,2 +1,0 @@
-"""Gate layout generation package."""
-

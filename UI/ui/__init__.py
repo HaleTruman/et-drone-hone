@@ -1,2 +1,0 @@
-"""Flight log review UI."""
-

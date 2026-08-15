@@ -17,7 +17,7 @@ from gate_map_orientation_view import show_gate_map_orientation_view
 
 
 frame_path = SRC.parent / Path(
-    r"Logs\flight\runs\run-20260722T033600Z\vision_frames\frame-00000445-1784691374665223300.jpg"
+    r"Viewer\logs\flight\runs\run-20260722T033600Z\vision_frames\frame-00000445-1784691374665223300.jpg"
 )
 
 

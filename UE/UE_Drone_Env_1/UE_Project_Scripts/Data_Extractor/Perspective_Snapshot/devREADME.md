@@ -1,1 +1,0 @@
-Need to cature perspective snapshots on path sline with position cm + axis. 
