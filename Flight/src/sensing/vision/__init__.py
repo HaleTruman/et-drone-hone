@@ -1,7 +1,7 @@
 """Vision stream ingestion."""
 
 from .io.udp_protocol import VISION_HEADER, VISION_HEADER_SIZE
-from .vision_stream import VisionFrame, VisionStreamReceiver
+from .io.vision_stream import VisionFrame, VisionStreamReceiver
 
 __all__ = [
     "VISION_HEADER",

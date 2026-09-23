@@ -11,7 +11,7 @@ MAVLink HIGHRES_IMU
 
 FPV image packets
   -> VisionStreamReceiver
-  -> VisionPerceptionService
+  -> VisionPerceptionService (aigp_vision)
   -> GateMap
 ```
 
@@ -28,10 +28,11 @@ Path planning, MPCC, geometric path following, hover control, and other controll
 
 ## Quick Start
 
-Install the Python dependencies from the `Flight/` directory:
+From the `Flight/` directory, install the dependencies and the sibling Vision
+library with the same Python interpreter used to run Flight:
 
 ```powershell
-pip install -r requirements.txt
+python -m pip install -r requirements.txt ../Vision
 ```
 
 Run the live stack:
@@ -106,7 +107,9 @@ src/
   sensing/
     telemetry/                    # MAVLink client and telemetry cache
     odometry/                     # State estimator, VIO, and filtering
-    vision/                       # Frame receiver and perception service
+    vision/
+      io/                         # Frame receiver and UDP protocol
+      service.py                  # Reexports the aigp_vision service and config
 
   mapping/
     gates/                        # Persistent gate records and target selection
@@ -114,6 +117,9 @@ src/
   autonomy/
     pathing/                      # Path-manager workbench, inactive in main.py
     planning/                     # MPCC/simple planning experiments
+
+../Vision/
+  src/aigp_vision/                 # Gate perception models, assets, and service
 
 ../UI/
   app.py                          # Local flight log review UI entry point
