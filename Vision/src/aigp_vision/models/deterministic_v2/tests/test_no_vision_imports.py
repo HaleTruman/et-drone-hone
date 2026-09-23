@@ -4,7 +4,12 @@ from pathlib import Path
 def test_runtime_python_files_do_not_import_legacy_workbench_modules():
     root = Path(__file__).resolve().parents[1]
     offenders = []
-    runtime_paths = [root / "main.py", *sorted((root / "src").rglob("*.py"))]
+    runtime_paths = [
+        root / "__init__.py",
+        root / "config.py",
+        root / "service.py",
+        *sorted((root / "src").rglob("*.py")),
+    ]
     for path in runtime_paths:
         text = path.read_text(encoding="utf-8")
         banned = [

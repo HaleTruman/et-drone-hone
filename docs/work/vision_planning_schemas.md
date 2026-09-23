@@ -9,8 +9,8 @@ Schema id: `vision_frame_to_planning_v1`
 
 Producer:
 
-- `sensing.vision.vision_stream.VisionStreamReceiver`
-- `sensing.vision.service.VisionPerceptionService`
+- `sensing.vision.io.vision_stream.VisionStreamReceiver`
+- `sensing.vision.service.VisionPerceptionService` (reexported from `aigp_vision`)
 - `sensing.perception.GatePoseEstimator`
 
 Consumer:

@@ -1,16 +1,19 @@
-"""Integration checks against the untouched Flight source in this repository."""
+"""Library parity against frozen Flight source and current Flight integration."""
 
+import io
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import tarfile
 
 import pytest
 
 
 VISION_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = VISION_ROOT.parent
+BASELINE_COMMIT = "b8821ebe1ce5c13b752933f108f5377c5c8555c4"
 
 
 def run_python(args, source, cwd):
@@ -25,10 +28,26 @@ def run_python(args, source, cwd):
 
 @pytest.fixture(scope="module")
 def implementations(tmp_path_factory):
-    flight_source = REPO_ROOT / "Flight/src"
-    if not (flight_source / "sensing/vision/service.py").exists():
-        pytest.skip("Original Flight source is required for extraction parity checks")
     scratch = tmp_path_factory.mktemp("vision-parity")
+    try:
+        archive = subprocess.run(
+            ["git", "archive", "--format=tar", BASELINE_COMMIT, "Flight/src"],
+            cwd=REPO_ROOT, capture_output=True, timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        pytest.fail(f"Unable to read the frozen Flight baseline using Git: {error}")
+    if archive.returncode:
+        pytest.fail(
+            f"Frozen Flight baseline {BASELINE_COMMIT} is unavailable. "
+            f"From the repository root run `git fetch origin {BASELINE_COMMIT}` "
+            "or use a checkout containing the full Git history, then rerun pytest. "
+            "Tests never fetch from the network. Git reported: "
+            + archive.stderr.decode(errors="replace"),
+            pytrace=False,
+        )
+    with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as source_archive:
+        source_archive.extractall(scratch, filter="data")
+    flight_source = scratch / "Flight/src"
     runner = Path(__file__).with_name("_parity_runner.py")
     return {
         target: json.loads(run_python([str(runner), target], source, scratch))
@@ -49,6 +68,13 @@ class RejectFlightImports(importlib.abc.MetaPathFinder):
             raise AssertionError('Library imports Flight: ' + fullname)
 
 sys.meta_path.insert(0, RejectFlightImports())
+# Bootstrap declared dependencies before measuring the library: torchvision
+# 0.24 creates a generated-code directory on sys.path during its own import.
+import numpy
+import cv2
+import PIL
+import torch
+import torchvision
 original_path = list(sys.path)
 import aigp_vision
 from aigp_vision import (
@@ -74,8 +100,6 @@ assert Path(VisionPerceptionConfig().regressor_checkpoint).is_file()
 @pytest.mark.parametrize("first", ["flight", "library"])
 def test_flight_objects_and_library_coexist_in_either_import_order(tmp_path, first):
     flight_source = REPO_ROOT / "Flight/src"
-    if not (flight_source / "sensing/vision/service.py").exists():
-        pytest.skip("Original Flight source is required for coexistence checks")
     source_paths = os.pathsep.join(map(str, (flight_source, VISION_ROOT / "src")))
     run_python(["-c", """
 import importlib
@@ -89,7 +113,6 @@ for target in (sys.argv[1], 'library' if sys.argv[1] == 'flight' else 'flight'):
     modules[target] = (
         importlib.import_module(package + '.service'),
         importlib.import_module('core.schema' if target == 'flight' else 'aigp_vision.schema'),
-        importlib.import_module(package + '.models.deterministic.service'),
     )
     for name, module in original_modules.items():
         assert sys.modules[name] is module, 'Import replaced module: ' + name
@@ -98,14 +121,17 @@ for target in (sys.argv[1], 'library' if sys.argv[1] == 'flight' else 'flight'):
         if name.partition('.')[0] in {'core', 'sensing', 'aigp_vision'}
     })
 
-flight_service, flight_schema, flight_v1 = modules['flight']
-service, schema, library_v1 = modules['library']
+flight_service, flight_schema = modules['flight']
+service, schema = modules['library']
 assert flight_schema is sys.modules['core.schema']
 assert flight_schema.VisionFrame is not schema.VisionFrame
-assert flight_service.VisionPerceptionService is not service.VisionPerceptionService
-assert flight_v1.DeterministicVisionBackend is not library_v1.DeterministicVisionBackend
-assert flight_v1.VisionFrame is flight_schema.VisionFrame
-assert library_v1.VisionFrame is schema.VisionFrame
+assert flight_schema.VehicleState is not schema.VehicleState
+assert flight_service.VisionPerceptionService is service.VisionPerceptionService
+assert flight_service.VisionPerceptionConfig is service.VisionPerceptionConfig
+from sensing.vision import VisionFrame, VisionStreamReceiver
+from sensing.vision.io.vision_stream import VisionStreamReceiver as IoReceiver
+assert VisionFrame is flight_schema.VisionFrame
+assert VisionStreamReceiver is IoReceiver
 assert all(
     module.__name__ == name for name, module in original_modules.items()
     if name.partition('.')[0] in {'core', 'sensing'}
@@ -121,8 +147,8 @@ state = flight_schema.VehicleState(
     body_rates_frd_rps=(0.0, 0.0, 0.0),
     acceleration_local_ned_mps2=(0.0, 0.0, 0.0),
 )
-vision = service.VisionPerceptionService(
-    service.VisionPerceptionConfig(backend='deterministic_v3_2', device='cpu')
+vision = flight_service.VisionPerceptionService(
+    flight_service.VisionPerceptionConfig(backend='deterministic_v3_2', device='cpu')
 )
 observation = vision.process_vision_frame(frame, vehicle_state=state)
 assert isinstance(observation, schema.VisionObservation)
@@ -134,6 +160,13 @@ for name, module in original_modules.items():
     assert sys.modules[name] is module
 vision.shutdown()
 """, first], source_paths, tmp_path)
+
+
+@pytest.mark.parametrize("scenario", ["reassembly", "invalid", "buffering", "downstream"])
+def test_flight_ingestion_and_observation_consumers(tmp_path, scenario):
+    source_paths = os.pathsep.join(map(str, (REPO_ROOT / "Flight/src", VISION_ROOT / "src")))
+    runner = Path(__file__).with_name("_flight_runner.py")
+    run_python([str(runner), scenario, str(tmp_path)], source_paths, tmp_path)
 
 
 def test_public_schema_and_frame_contracts_match_flight(implementations):

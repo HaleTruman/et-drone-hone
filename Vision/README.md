@@ -1,10 +1,13 @@
 # Vision
 
-A callable copy of Flight's existing perception service and models, extracted
+The gate perception service and models were extracted
 from remote `dev` at `b8821ebe1ce5c13b752933f108f5377c5c8555c4`.
 Flight owns frame acquisition and supplies frames, timestamps, and optional
 vehicle state. This package performs perception and returns `VisionObservation`.
-Flight's existing files and imports are unchanged.
+
+Flight's `sensing.vision.service` module reexports this library's service and
+configuration, preserving its callers' existing imports. The receiver remains
+in `Flight/src/sensing/vision/io/`; prediction models and assets live here.
 
 ## Install
 
@@ -46,6 +49,12 @@ thresholds, coordinate conventions, and outputs are unchanged. The service's
 default backend remains `cnn_regressor`; the example explicitly selects Flight's
 current configured backend.
 
+The standalone deterministic-v2 CLI and CNN batch wrappers are retired. Their
+`RegressorPipelineConfig`, `RegressorPipelineStats`, `run_regressor_pipeline`,
+`LandmarkerPipelineConfig`, `LandmarkerPipelineStats`, and
+`run_landmarker_pipeline` exports are also removed. Use the callable service
+shown above; all model implementations are retained.
+
 ## Existing limitations
 
 The older `deterministic_0721` backend lacks its default LUT/review assets in
@@ -56,13 +65,19 @@ Offline review/CLI workflows are not part of the callable interface.
 For the older deterministic backends, use their existing configuration's
 `scratch_root` option to choose a writable working directory when needed.
 No receiver, clock, flight initialization, telemetry, or controller is included.
-Installing this package does not switch Flight to it.
 
 ## Verify
 
+Run from the repository root in Flight's development environment, including its
+`pymavlink` dependency:
+
 ```sh
+python -m pip install "./Vision[test]"
 cd Vision
 python -m pytest
 ```
 
-Parity tests compare this copy with the original Flight code in the checkout.
+Parity tests compare the library with Flight vision source archived from the
+pinned `dev` commit above; that commit must be available in the local Git
+repository. Integration checks cover Flight's service bridge and frame schemas
+without starting Flight or opening receiver sockets.

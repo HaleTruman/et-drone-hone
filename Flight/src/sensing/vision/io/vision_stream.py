@@ -13,7 +13,7 @@ from typing import Any, Iterable
 
 from core.schema import VisionFrame
 
-from .io.udp_protocol import VISION_HEADER, VISION_HEADER_SIZE, unpack_packet
+from .udp_protocol import VISION_HEADER, VISION_HEADER_SIZE, unpack_packet
 
 VISION_HEADER_FORMAT = VISION_HEADER.format
 
