@@ -21,19 +21,22 @@ test = ["pytest>=8"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["aigp_vision*"]
+include = ["models*"]
 exclude = ["*.tests", "*.tests.*"]
 
+[tool.setuptools]
+py-modules = ["schema", "service"]
+
 [tool.setuptools.package-data]
-aigp_vision = [
-    "models/**/*.pt",
-    "models/**/*.npz",
-    "models/**/*.json",
-    "models/**/*.jpg",
-    "models/**/*.png",
-    "models/**/*.md",
+models = [
+    "**/*.pt",
+    "**/*.npz",
+    "**/*.json",
+    "**/*.jpg",
+    "**/*.png",
+    "**/*.md",
 ]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
-testpaths = ["tests", "src/aigp_vision/models/deterministic_v2/tests"]
+testpaths = ["tests", "src/models/deterministic_v2/tests"]
