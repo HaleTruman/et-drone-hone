@@ -14,9 +14,7 @@ import torch
 
 def contract(schema, service):
     def signature(value):
-        return str(inspect.signature(value)).replace("core.schema.", "").replace(
-            "aigp_vision.schema.", ""
-        )
+        return str(inspect.signature(value)).replace("core.schema.", "").replace("schema.", "")
 
     gate = schema.VisionGateObservation.from_payload(
         {
@@ -74,9 +72,8 @@ def payload(observation, schema):
 def exercise(target):
     torch.set_num_threads(1)
     torch.manual_seed(0)
-    module = "sensing.vision" if target == "flight" else "aigp_vision"
-    service = importlib.import_module(f"{module}.service")
-    schema = importlib.import_module("core.schema" if target == "flight" else "aigp_vision.schema")
+    service = importlib.import_module("sensing.vision.service" if target == "flight" else "service")
+    schema = importlib.import_module("core.schema" if target == "flight" else "schema")
     model_root = Path(service.__file__).parent / "models"
     jpeg = (model_root / "deterministic_v2/assets/frame-00068527-1784514770942906700.jpg").read_bytes()
     result = {"contract": contract(schema, service), "cnn": {}, "deterministic": {}}

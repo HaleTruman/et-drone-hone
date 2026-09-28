@@ -24,7 +24,7 @@ use `python -m pip install --no-deps -e ./Vision`.
 ## Call
 
 ```python
-from aigp_vision import VisionPerceptionConfig, VisionPerceptionService
+from service import VisionPerceptionConfig, VisionPerceptionService
 
 vision = VisionPerceptionService(
     VisionPerceptionConfig(backend="deterministic_v3_2")
@@ -37,7 +37,7 @@ finally:
 ```
 
 The existing `VisionFrame` and `VehicleState` field layouts are also exported by
-`aigp_vision`. Flight's existing objects can be passed directly; the copied
+the flattened Vision modules. Flight's existing objects can be passed directly; the copied
 dataclasses have separate Python class identities but the same fields and
 payload methods. Alternatively, call
 `vision.process_frame(frame_id=frame_id, sim_time_ns=sim_time_ns,

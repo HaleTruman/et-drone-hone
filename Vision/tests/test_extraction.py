@@ -76,9 +76,10 @@ import PIL
 import torch
 import torchvision
 original_path = list(sys.path)
-import aigp_vision
-from aigp_vision import (
+from schema import (
     VehicleState, VisionFrame, VisionGateObservation, VisionObservation,
+)
+from service import (
     VisionPerceptionConfig, VisionPerceptionService,
 )
 for name in (
@@ -87,7 +88,7 @@ for name in (
     'models.deterministic_v3.src.detection_vision',
     'models.deterministic_v3_2.src.detection_vision',
 ):
-    importlib.import_module('aigp_vision.' + name)
+    importlib.import_module(name)
 assert sys.path == original_path
 assert not any(name.partition('.')[0] in {'core', 'sensing'} for name in sys.modules)
 assert VisionPerceptionConfig().backend == 'cnn_regressor'
@@ -109,16 +110,15 @@ import sys
 modules = {}
 original_modules = {}
 for target in (sys.argv[1], 'library' if sys.argv[1] == 'flight' else 'flight'):
-    package = 'sensing.vision' if target == 'flight' else 'aigp_vision'
     modules[target] = (
-        importlib.import_module(package + '.service'),
-        importlib.import_module('core.schema' if target == 'flight' else 'aigp_vision.schema'),
+        importlib.import_module('sensing.vision.service' if target == 'flight' else 'service'),
+        importlib.import_module('core.schema' if target == 'flight' else 'schema'),
     )
     for name, module in original_modules.items():
         assert sys.modules[name] is module, 'Import replaced module: ' + name
     original_modules.update({
         name: module for name, module in sys.modules.items()
-        if name.partition('.')[0] in {'core', 'sensing', 'aigp_vision'}
+        if name.partition('.')[0] in {'core', 'sensing', 'schema', 'service', 'models'}
     })
 
 flight_service, flight_schema = modules['flight']

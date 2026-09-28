@@ -11,8 +11,8 @@ import cv2
 import numpy as np
 import torch
 
-from aigp_vision import VisionObservation, VisionPerceptionConfig, VisionPerceptionService
-from aigp_vision import service as vision_service
+from service import VisionObservation, VisionPerceptionConfig, VisionPerceptionService
+import service as vision_service
 from core.schema import MavlinkTelemetry, VehicleState, VisionFrame
 from core import utils
 from sensing.vision import VisionStreamReceiver
