@@ -17,6 +17,7 @@ import numpy as np
 from core.control.command_mapper import CommandMapper
 from core.coordinates import (
     GRAVITY_MPS2,
+    normalize_quaternion,
     quaternion_from_rotation_matrix,
     quat_wxyz,
 )
@@ -75,10 +76,15 @@ class AutiPilot:
         *,
         gravity_mps2: float = GRAVITY_MPS2,
         command_mapper: CommandMapper | None = None,
+        error_quaternion_scales: Vec3 = (1.0, 1.0, 1.0),
     ) -> None:
         self.gains = gains or AutiPilotGains()
         self.gravity_ned = np.array((0.0, 0.0, float(gravity_mps2)), dtype=float)
         self.command_mapper = command_mapper or CommandMapper()
+        self.error_quaternion_scales = _vec3(
+            error_quaternion_scales,
+            "error_quaternion_scales",
+        )
         self.last_payload: dict[str, Any] | None = None
         self._last_target_gate_key: str | None = None
         self._gate_switch_ramp_start_time_s: float | None = None
@@ -155,8 +161,35 @@ class AutiPilot:
             ],
             "thrust_control": payload["thrust_control"],
         }
+        command = self._mavlink_error_quaternion_command(command)
         self.last_payload = command
         return command
+
+    def _mavlink_error_quaternion_command(
+        self,
+        control_target: dict[str, Any],
+    ) -> dict[str, Any]:
+        error_quaternion = normalize_quaternion(
+            control_target.get("error_quaternion", (1.0, 0.0, 0.0, 0.0))
+        )
+        converted = (
+            float(error_quaternion[0]),
+            -float(error_quaternion[1]),
+            float(error_quaternion[2]),
+            -float(error_quaternion[3]),
+        )
+        scaled = np.asarray(converted, dtype=float)
+        scaled[1:4] *= self.error_quaternion_scales
+        scaled = normalize_quaternion(scaled)
+        return {
+            **control_target,
+            "quaternion_command_mode": "error_quaternion",
+            "error_quaternion_target_converted": converted,
+            "error_quaternion_target_scaled": tuple(float(value) for value in scaled),
+            "error_quaternion_vector_scales": tuple(
+                float(value) for value in self.error_quaternion_scales
+            ),
+        }
 
     def _compute_payload(
         self,

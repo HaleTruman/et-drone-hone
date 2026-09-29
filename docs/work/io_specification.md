@@ -175,7 +175,7 @@ class VisionObservation:
 `VisionObservation` must include the minimum fields above, but the library may
 also expose richer output data similar to the current deterministic-v2
 `VisionResults` schema at
-`Flight/src/sensing/vision/models/deterministic_v2/src/schema.py`.
+`Vision/src/models/deterministic_v2/src/schema.py`.
 
 Optional result metadata may include:
 

@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aigp-vision"
+version = "0.1.0"
+description = "Callable perception models extracted from Flight"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy==2.5.1",
+    "opencv-python==5.0.0.93",
+    "pillow==11.3.0",
+    "torch==2.9.0",
+    "torchvision==0.24.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["models*"]
+exclude = ["*.tests", "*.tests.*"]
+
+[tool.setuptools]
+py-modules = ["schema", "service"]
+
+[tool.setuptools.package-data]
+models = [
+    "**/*.pt",
+    "**/*.npz",
+    "**/*.json",
+    "**/*.jpg",
+    "**/*.png",
+    "**/*.md",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests", "src/models/deterministic_v2/tests"]

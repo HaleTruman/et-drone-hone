@@ -32,7 +32,7 @@ from sensing.vision import VisionStreamReceiver  # noqa: E402
 DEFAULT_MAVLINK_ENDPOINT = "udpin:127.0.0.1:14550"
 DEFAULT_VISION_HOST = "0.0.0.0"
 DEFAULT_VISION_PORT = 5600
-DEFAULT_OUTPUT_ROOT = SRC_DIR.parents[1] / "Logs" / "flight" / "validation"
+DEFAULT_OUTPUT_ROOT = SRC_DIR.parents[1] / "Viewer" / "logs" / "flight" / "validation"
 
 
 def main() -> int:
@@ -171,7 +171,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--top-n", type=int, default=16)
     parser.add_argument("--recent-frames", type=int, default=5)
     parser.add_argument("--max-vision-frames", type=int, default=120)
-    parser.add_argument("--output-dir", type=Path, default=None, help="Run output directory. Defaults to Logs/flight/validation/<timestamp>.")
+    parser.add_argument("--output-dir", type=Path, default=None, help="Run output directory. Defaults to Viewer/logs/flight/validation/<timestamp>.")
     parser.add_argument("--send-timesync", action="store_true")
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args()
