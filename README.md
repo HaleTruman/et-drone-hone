@@ -3,11 +3,13 @@
 Monorepository for autonomous drone-racing experiments. The active stack is split into small Python subprojects: `Flight` owns the live control loop, `Vision` owns perception models and gate observations, and `Viewer` owns local run review. `Legacy`, `Examples`, and `Docs` preserve earlier work, reference implementations, and design notes.
 
 <p align="center">
-  <video src="Examples/video/racing-preview.mp4" poster="Examples/video/racing-preview-poster.jpg" controls muted playsinline width="900">
-    <source src="Examples/video/racing-preview.webm" type="video/webm">
-    <source src="Examples/video/racing-preview.mp4" type="video/mp4">
-    <a href="Examples/video/racing-preview.mp4">Watch the racing preview video</a>
-  </video>
+  <a href="Examples/video/racing-preview.mp4">
+    <img src="Examples/video/racing-preview-poster.jpg" alt="Drone racing preview video" width="900">
+  </a>
+</p>
+
+<p align="center">
+  <a href="Examples/video/racing-preview.mp4">Watch the racing preview video</a>
 </p>
 
 ## Repository Layout
