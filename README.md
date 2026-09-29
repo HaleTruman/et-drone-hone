@@ -1,5 +1,12 @@
 # et-drone-hone
 
+<p align="center">
+  <a href="https://www.selsus.ai/projects/autonomous-drone-racing/index.html">
+    <img alt="Read the project description on our site" src="https://img.shields.io/badge/READ%20ABOUT%20THE%20PROJECT%20ON%20OUR%20SITE-Selsus%20AI%20-7c3aed?style=for-the-badge">
+  </a>
+</p>
+
+
 Monorepository for autonomous drone-racing experiments. The active stack is split into small Python subprojects: `Flight` owns the live control loop, `Vision` owns perception models and gate observations, and `Viewer` owns local run review. `Legacy`, `Examples`, and `Docs` preserve earlier work, reference implementations, and design notes.
 
 <p align="center">
